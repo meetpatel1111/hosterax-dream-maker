@@ -14,7 +14,254 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      databases: {
+        Row: {
+          connection_string: string | null
+          created_at: string
+          engine: Database["public"]["Enums"]["db_engine"]
+          id: string
+          name: string
+          project_id: string
+          size_mb: number
+          status: Database["public"]["Enums"]["db_status"]
+        }
+        Insert: {
+          connection_string?: string | null
+          created_at?: string
+          engine: Database["public"]["Enums"]["db_engine"]
+          id?: string
+          name: string
+          project_id: string
+          size_mb?: number
+          status?: Database["public"]["Enums"]["db_status"]
+        }
+        Update: {
+          connection_string?: string | null
+          created_at?: string
+          engine?: Database["public"]["Enums"]["db_engine"]
+          id?: string
+          name?: string
+          project_id?: string
+          size_mb?: number
+          status?: Database["public"]["Enums"]["db_status"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "databases_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      deployment_logs: {
+        Row: {
+          created_at: string
+          deployment_id: string
+          id: string
+          level: Database["public"]["Enums"]["log_level"]
+          message: string
+        }
+        Insert: {
+          created_at?: string
+          deployment_id: string
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message: string
+        }
+        Update: {
+          created_at?: string
+          deployment_id?: string
+          id?: string
+          level?: Database["public"]["Enums"]["log_level"]
+          message?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deployment_logs_deployment_id_fkey"
+            columns: ["deployment_id"]
+            isOneToOne: false
+            referencedRelation: "deployments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      deployments: {
+        Row: {
+          branch: string
+          commit_message: string | null
+          commit_sha: string
+          created_at: string
+          duration_ms: number | null
+          finished_at: string | null
+          id: string
+          project_id: string
+          started_at: string | null
+          status: Database["public"]["Enums"]["deployment_status"]
+          triggered_by: string | null
+        }
+        Insert: {
+          branch?: string
+          commit_message?: string | null
+          commit_sha: string
+          created_at?: string
+          duration_ms?: number | null
+          finished_at?: string | null
+          id?: string
+          project_id: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["deployment_status"]
+          triggered_by?: string | null
+        }
+        Update: {
+          branch?: string
+          commit_message?: string | null
+          commit_sha?: string
+          created_at?: string
+          duration_ms?: number | null
+          finished_at?: string | null
+          id?: string
+          project_id?: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["deployment_status"]
+          triggered_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "deployments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      env_vars: {
+        Row: {
+          created_at: string
+          environment: Database["public"]["Enums"]["env_scope"]
+          id: string
+          is_secret: boolean
+          key: string
+          project_id: string
+          updated_at: string
+          value: string
+        }
+        Insert: {
+          created_at?: string
+          environment?: Database["public"]["Enums"]["env_scope"]
+          id?: string
+          is_secret?: boolean
+          key: string
+          project_id: string
+          updated_at?: string
+          value: string
+        }
+        Update: {
+          created_at?: string
+          environment?: Database["public"]["Enums"]["env_scope"]
+          id?: string
+          is_secret?: boolean
+          key?: string
+          project_id?: string
+          updated_at?: string
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "env_vars_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          created_at: string
+          email: string | null
+          full_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      projects: {
+        Row: {
+          branch: string
+          build_command: string | null
+          created_at: string
+          id: string
+          name: string
+          owner_id: string
+          port: number | null
+          region: string
+          repo_url: string | null
+          root_dir: string | null
+          slug: string
+          stack: string
+          start_command: string | null
+          status: Database["public"]["Enums"]["project_status"]
+          subdomain: string | null
+          updated_at: string
+        }
+        Insert: {
+          branch?: string
+          build_command?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          owner_id: string
+          port?: number | null
+          region?: string
+          repo_url?: string | null
+          root_dir?: string | null
+          slug: string
+          stack?: string
+          start_command?: string | null
+          status?: Database["public"]["Enums"]["project_status"]
+          subdomain?: string | null
+          updated_at?: string
+        }
+        Update: {
+          branch?: string
+          build_command?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          owner_id?: string
+          port?: number | null
+          region?: string
+          repo_url?: string | null
+          root_dir?: string | null
+          slug?: string
+          stack?: string
+          start_command?: string | null
+          status?: Database["public"]["Enums"]["project_status"]
+          subdomain?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +270,18 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      db_engine: "postgres" | "mysql" | "mongodb" | "redis"
+      db_status: "provisioning" | "running" | "stopped" | "failed"
+      deployment_status:
+        | "queued"
+        | "building"
+        | "deploying"
+        | "success"
+        | "failed"
+        | "cancelled"
+      env_scope: "production" | "preview" | "development"
+      log_level: "info" | "warn" | "error" | "success" | "debug"
+      project_status: "active" | "building" | "failed" | "sleeping" | "archived"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +408,20 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      db_engine: ["postgres", "mysql", "mongodb", "redis"],
+      db_status: ["provisioning", "running", "stopped", "failed"],
+      deployment_status: [
+        "queued",
+        "building",
+        "deploying",
+        "success",
+        "failed",
+        "cancelled",
+      ],
+      env_scope: ["production", "preview", "development"],
+      log_level: ["info", "warn", "error", "success", "debug"],
+      project_status: ["active", "building", "failed", "sleeping", "archived"],
+    },
   },
 } as const
