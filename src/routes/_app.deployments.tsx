@@ -39,10 +39,16 @@ function DeploymentsPage() {
                 <div className="flex items-center gap-3">
                   <StatusBadge status={d.status} />
                   <div>
-                    <div className="text-sm font-medium">{d.projects?.name} <span className="text-muted-foreground">/ {d.commit_message ?? "—"}</span></div>
-                    <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                    <div className="text-sm font-medium">
+                      {d.projects?.name} <span className="text-muted-foreground">/ {d.commit_message ?? "—"}</span>
+                      {d.version && <span className="ml-2 rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] text-primary">{d.version}</span>}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span className="font-mono">{d.commit_sha}</span>
                       <span>·</span><span>{d.branch}</span>
+                      <span>·</span><span className="rounded bg-surface-2 px-1.5 py-0.5">{d.environment}</span>
+                      <span>·</span><span className="uppercase tracking-wide">{d.trigger_type}</span>
+                      {d.phase && <><span>·</span><span>phase: {d.phase}</span></>}
                       <span>·</span><span>{format(new Date(d.created_at), "MMM d, HH:mm")}</span>
                     </div>
                   </div>
