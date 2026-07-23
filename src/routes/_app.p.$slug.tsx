@@ -225,6 +225,14 @@ function MetricCard({ icon: Icon, label, value }: any) {
 }
 
 function Deployments({ projectId }: { projectId: string }) {
+  const qc = useQueryClient();
+  const { data: project } = useQuery({
+    queryKey: ["project-raw", projectId],
+    queryFn: async () => {
+      const { data } = await supabase.from("projects").select("*").eq("id", projectId).maybeSingle();
+      return data;
+    },
+  });
   const { data: deployments = [] } = useQuery({
     queryKey: ["deployments", projectId],
     queryFn: async () => {
@@ -233,29 +241,54 @@ function Deployments({ projectId }: { projectId: string }) {
     },
     refetchInterval: 2000,
   });
+
+  async function doRollback(dep: any) {
+    if (!project) return;
+    if (!confirm(`Rollback to ${dep.version ?? dep.commit_sha}? A new build will be queued from this snapshot.`)) return;
+    try {
+      await rollbackTo(project as any, dep.id, dep.version);
+      toast.success("Rollback queued");
+      qc.invalidateQueries({ queryKey: ["deployments", projectId] });
+    } catch (e: any) {
+      toast.error(e?.message ?? "Rollback failed");
+    }
+  }
+
   return (
     <div className="rounded-lg border border-border bg-card">
       {deployments.length === 0 ? (
         <div className="p-8 text-center text-sm text-muted-foreground">No deployments yet.</div>
       ) : (
         <div className="divide-y divide-border">
-          {deployments.map((d: any) => (
+          {deployments.map((d: any, idx: number) => (
             <div key={d.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
               <div className="flex items-center gap-3">
                 <StatusBadge status={d.status} />
                 <div>
-                  <div className="text-sm font-medium">{d.commit_message ?? "Deployment"}</div>
-                  <div className="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    {d.commit_message ?? "Deployment"}
+                    {d.version && <span className="rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] text-primary">{d.version}</span>}
+                    {d.rollback_of && <span className="rounded bg-warning/20 px-1.5 py-0.5 text-[10px] text-warning">rollback</span>}
+                  </div>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="font-mono">{d.commit_sha}</span>
-                    <span>·</span>
-                    <span>{d.branch}</span>
-                    <span>·</span>
-                    <span>{format(new Date(d.created_at), "MMM d, HH:mm:ss")}</span>
+                    <span>·</span><span>{d.branch}</span>
+                    <span>·</span><span className="rounded bg-surface-2 px-1.5 py-0.5">{d.environment}</span>
+                    <span>·</span><span className="uppercase">{d.trigger_type}</span>
+                    <span>·</span><span>phase: {d.phase ?? "—"}</span>
+                    <span>·</span><span>{format(new Date(d.created_at), "MMM d, HH:mm:ss")}</span>
                   </div>
                 </div>
               </div>
-              <div className="text-xs text-muted-foreground">
-                {d.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "—"}
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-muted-foreground">
+                  {d.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "—"}
+                </div>
+                {d.status === "success" && idx !== 0 && (
+                  <button onClick={() => doRollback(d)} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:border-primary/60 hover:text-primary">
+                    <RotateCcw className="h-3 w-3" /> Rollback here
+                  </button>
+                )}
               </div>
             </div>
           ))}
