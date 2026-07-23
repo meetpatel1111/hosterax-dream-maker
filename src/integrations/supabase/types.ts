@@ -14,6 +14,45 @@ export type Database = {
   }
   public: {
     Tables: {
+      access_tokens: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          id: string
+          last_used_at: string | null
+          name: string
+          owner_id: string
+          project_grants: string[]
+          scopes: Database["public"]["Enums"]["token_scope"][]
+          token_hash: string
+          token_prefix: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          last_used_at?: string | null
+          name: string
+          owner_id: string
+          project_grants?: string[]
+          scopes?: Database["public"]["Enums"]["token_scope"][]
+          token_hash: string
+          token_prefix: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          last_used_at?: string | null
+          name?: string
+          owner_id?: string
+          project_grants?: string[]
+          scopes?: Database["public"]["Enums"]["token_scope"][]
+          token_hash?: string
+          token_prefix?: string
+        }
+        Relationships: []
+      }
       databases: {
         Row: {
           connection_string: string | null
@@ -89,43 +128,64 @@ export type Database = {
       }
       deployments: {
         Row: {
+          artifact_url: string | null
           branch: string
           commit_message: string | null
           commit_sha: string
           created_at: string
           duration_ms: number | null
+          environment: Database["public"]["Enums"]["env_scope"]
           finished_at: string | null
           id: string
+          phase: Database["public"]["Enums"]["deploy_phase"]
           project_id: string
+          rollback_of: string | null
+          source_url: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["deployment_status"]
+          trigger_type: Database["public"]["Enums"]["deploy_trigger"]
           triggered_by: string | null
+          version: string | null
         }
         Insert: {
+          artifact_url?: string | null
           branch?: string
           commit_message?: string | null
           commit_sha: string
           created_at?: string
           duration_ms?: number | null
+          environment?: Database["public"]["Enums"]["env_scope"]
           finished_at?: string | null
           id?: string
+          phase?: Database["public"]["Enums"]["deploy_phase"]
           project_id: string
+          rollback_of?: string | null
+          source_url?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["deployment_status"]
+          trigger_type?: Database["public"]["Enums"]["deploy_trigger"]
           triggered_by?: string | null
+          version?: string | null
         }
         Update: {
+          artifact_url?: string | null
           branch?: string
           commit_message?: string | null
           commit_sha?: string
           created_at?: string
           duration_ms?: number | null
+          environment?: Database["public"]["Enums"]["env_scope"]
           finished_at?: string | null
           id?: string
+          phase?: Database["public"]["Enums"]["deploy_phase"]
           project_id?: string
+          rollback_of?: string | null
+          source_url?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["deployment_status"]
+          trigger_type?: Database["public"]["Enums"]["deploy_trigger"]
           triggered_by?: string | null
+          version?: string | null
         }
         Relationships: [
           {
@@ -133,6 +193,13 @@ export type Database = {
             columns: ["project_id"]
             isOneToOne: false
             referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "deployments_rollback_of_fkey"
+            columns: ["rollback_of"]
+            isOneToOne: false
+            referencedRelation: "deployments"
             referencedColumns: ["id"]
           },
         ]
@@ -178,6 +245,139 @@ export type Database = {
           },
         ]
       }
+      git_webhooks: {
+        Row: {
+          actor: string | null
+          commit_sha: string | null
+          created_at: string
+          event_type: string
+          id: string
+          payload: Json | null
+          project_id: string
+          ref: string | null
+        }
+        Insert: {
+          actor?: string | null
+          commit_sha?: string | null
+          created_at?: string
+          event_type: string
+          id?: string
+          payload?: Json | null
+          project_id: string
+          ref?: string | null
+        }
+        Update: {
+          actor?: string | null
+          commit_sha?: string | null
+          created_at?: string
+          event_type?: string
+          id?: string
+          payload?: Json | null
+          project_id?: string
+          ref?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "git_webhooks_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      oauth_clients: {
+        Row: {
+          client_id: string
+          client_secret_hash: string | null
+          created_at: string
+          description: string | null
+          id: string
+          is_mcp: boolean
+          is_public: boolean
+          logo_url: string | null
+          name: string
+          owner_id: string
+          redirect_uris: string[]
+          scopes: string[]
+        }
+        Insert: {
+          client_id: string
+          client_secret_hash?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_mcp?: boolean
+          is_public?: boolean
+          logo_url?: string | null
+          name: string
+          owner_id: string
+          redirect_uris?: string[]
+          scopes?: string[]
+        }
+        Update: {
+          client_id?: string
+          client_secret_hash?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_mcp?: boolean
+          is_public?: boolean
+          logo_url?: string | null
+          name?: string
+          owner_id?: string
+          redirect_uris?: string[]
+          scopes?: string[]
+        }
+        Relationships: []
+      }
+      oauth_grants: {
+        Row: {
+          client_id: string
+          created_at: string
+          expires_at: string | null
+          grant_type: Database["public"]["Enums"]["oauth_grant_type"]
+          id: string
+          last_used_at: string | null
+          refresh_token_hash: string | null
+          revoked: boolean
+          scopes: string[]
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          expires_at?: string | null
+          grant_type: Database["public"]["Enums"]["oauth_grant_type"]
+          id?: string
+          last_used_at?: string | null
+          refresh_token_hash?: string | null
+          revoked?: boolean
+          scopes?: string[]
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          expires_at?: string | null
+          grant_type?: Database["public"]["Enums"]["oauth_grant_type"]
+          id?: string
+          last_used_at?: string | null
+          refresh_token_hash?: string | null
+          revoked?: boolean
+          scopes?: string[]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "oauth_grants_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "oauth_clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -209,7 +409,10 @@ export type Database = {
         Row: {
           branch: string
           build_command: string | null
+          build_timeout_minutes: number
           created_at: string
+          current_version: string | null
+          git_provider: string
           id: string
           name: string
           owner_id: string
@@ -218,16 +421,24 @@ export type Database = {
           repo_url: string | null
           root_dir: string | null
           slug: string
+          ssh_host: string | null
+          ssh_user: string | null
           stack: string
           start_command: string | null
           status: Database["public"]["Enums"]["project_status"]
           subdomain: string | null
+          target_type: Database["public"]["Enums"]["deploy_target"]
           updated_at: string
+          webhook_secret: string | null
+          workspace_type: Database["public"]["Enums"]["workspace_type"]
         }
         Insert: {
           branch?: string
           build_command?: string | null
+          build_timeout_minutes?: number
           created_at?: string
+          current_version?: string | null
+          git_provider?: string
           id?: string
           name: string
           owner_id: string
@@ -236,16 +447,24 @@ export type Database = {
           repo_url?: string | null
           root_dir?: string | null
           slug: string
+          ssh_host?: string | null
+          ssh_user?: string | null
           stack?: string
           start_command?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           subdomain?: string | null
+          target_type?: Database["public"]["Enums"]["deploy_target"]
           updated_at?: string
+          webhook_secret?: string | null
+          workspace_type?: Database["public"]["Enums"]["workspace_type"]
         }
         Update: {
           branch?: string
           build_command?: string | null
+          build_timeout_minutes?: number
           created_at?: string
+          current_version?: string | null
+          git_provider?: string
           id?: string
           name?: string
           owner_id?: string
@@ -254,11 +473,16 @@ export type Database = {
           repo_url?: string | null
           root_dir?: string | null
           slug?: string
+          ssh_host?: string | null
+          ssh_user?: string | null
           stack?: string
           start_command?: string | null
           status?: Database["public"]["Enums"]["project_status"]
           subdomain?: string | null
+          target_type?: Database["public"]["Enums"]["deploy_target"]
           updated_at?: string
+          webhook_secret?: string | null
+          workspace_type?: Database["public"]["Enums"]["workspace_type"]
         }
         Relationships: []
       }
@@ -272,6 +496,22 @@ export type Database = {
     Enums: {
       db_engine: "postgres" | "mysql" | "mongodb" | "redis"
       db_status: "provisioning" | "running" | "stopped" | "failed"
+      deploy_phase:
+        | "queued"
+        | "building"
+        | "deploying"
+        | "ready"
+        | "failed"
+        | "cancelled"
+      deploy_target: "docker" | "process" | "ssh" | "cloud"
+      deploy_trigger:
+        | "git"
+        | "manual"
+        | "upload"
+        | "url"
+        | "cli"
+        | "api"
+        | "rollback"
       deployment_status:
         | "queued"
         | "building"
@@ -281,7 +521,25 @@ export type Database = {
         | "cancelled"
       env_scope: "production" | "preview" | "development"
       log_level: "info" | "warn" | "error" | "success" | "debug"
+      oauth_grant_type:
+        | "authorization_code"
+        | "refresh_token"
+        | "client_credentials"
       project_status: "active" | "building" | "failed" | "sleeping" | "archived"
+      token_scope: "read" | "deploy" | "admin"
+      workspace_type:
+        | "none"
+        | "pnpm"
+        | "npm"
+        | "yarn"
+        | "rush"
+        | "cargo"
+        | "go"
+        | "uv"
+        | "elixir"
+        | "maven"
+        | "gradle"
+        | "dotnet"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -411,6 +669,24 @@ export const Constants = {
     Enums: {
       db_engine: ["postgres", "mysql", "mongodb", "redis"],
       db_status: ["provisioning", "running", "stopped", "failed"],
+      deploy_phase: [
+        "queued",
+        "building",
+        "deploying",
+        "ready",
+        "failed",
+        "cancelled",
+      ],
+      deploy_target: ["docker", "process", "ssh", "cloud"],
+      deploy_trigger: [
+        "git",
+        "manual",
+        "upload",
+        "url",
+        "cli",
+        "api",
+        "rollback",
+      ],
       deployment_status: [
         "queued",
         "building",
@@ -421,7 +697,27 @@ export const Constants = {
       ],
       env_scope: ["production", "preview", "development"],
       log_level: ["info", "warn", "error", "success", "debug"],
+      oauth_grant_type: [
+        "authorization_code",
+        "refresh_token",
+        "client_credentials",
+      ],
       project_status: ["active", "building", "failed", "sleeping", "archived"],
+      token_scope: ["read", "deploy", "admin"],
+      workspace_type: [
+        "none",
+        "pnpm",
+        "npm",
+        "yarn",
+        "rush",
+        "cargo",
+        "go",
+        "uv",
+        "elixir",
+        "maven",
+        "gradle",
+        "dotnet",
+      ],
     },
   },
 } as const
