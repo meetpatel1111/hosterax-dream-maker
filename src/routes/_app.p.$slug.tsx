@@ -3,13 +3,13 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { StatusBadge } from "@/components/hx/status-badge";
-import { STACKS } from "@/lib/stacks";
-import { triggerDeployment } from "@/lib/deploy-sim";
+import { STACKS, ENVIRONMENTS } from "@/lib/stacks";
+import { triggerDeployment, rollbackTo } from "@/lib/deploy-sim";
 import { toast } from "sonner";
 import { formatDistanceToNow, format } from "date-fns";
 import {
   ArrowLeft, Rocket, GitBranch, Globe, Trash2, Eye, EyeOff,
-  Plus, ExternalLink, Cpu, MemoryStick, Network, HardDrive, Copy,
+  Plus, ExternalLink, Cpu, MemoryStick, Network, HardDrive, Copy, RotateCcw, Tag,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_app/p/$slug")({
