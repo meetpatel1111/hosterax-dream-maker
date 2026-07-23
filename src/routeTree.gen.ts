@@ -14,6 +14,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppTokensRouteImport } from './routes/_app.tokens'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
+import { Route as AppOauthRouteImport } from './routes/_app.oauth'
 import { Route as AppNewRouteImport } from './routes/_app.new'
 import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
 import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
@@ -43,6 +44,11 @@ const AppTokensRoute = AppTokensRouteImport.update({
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOauthRoute = AppOauthRouteImport.update({
+  id: '/oauth',
+  path: '/oauth',
   getParentRoute: () => AppRoute,
 } as any)
 const AppNewRoute = AppNewRouteImport.update({
@@ -84,6 +90,7 @@ export interface FileRoutesByFullPath {
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
   '/new': typeof AppNewRoute
+  '/oauth': typeof AppOauthRoute
   '/settings': typeof AppSettingsRoute
   '/tokens': typeof AppTokensRoute
   '/p/$slug': typeof AppPSlugRoute
@@ -96,6 +103,7 @@ export interface FileRoutesByTo {
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
   '/new': typeof AppNewRoute
+  '/oauth': typeof AppOauthRoute
   '/settings': typeof AppSettingsRoute
   '/tokens': typeof AppTokensRoute
   '/p/$slug': typeof AppPSlugRoute
@@ -110,6 +118,7 @@ export interface FileRoutesById {
   '/_app/databases': typeof AppDatabasesRoute
   '/_app/deployments': typeof AppDeploymentsRoute
   '/_app/new': typeof AppNewRoute
+  '/_app/oauth': typeof AppOauthRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/tokens': typeof AppTokensRoute
   '/_app/p/$slug': typeof AppPSlugRoute
@@ -124,6 +133,7 @@ export interface FileRouteTypes {
     | '/databases'
     | '/deployments'
     | '/new'
+    | '/oauth'
     | '/settings'
     | '/tokens'
     | '/p/$slug'
@@ -136,6 +146,7 @@ export interface FileRouteTypes {
     | '/databases'
     | '/deployments'
     | '/new'
+    | '/oauth'
     | '/settings'
     | '/tokens'
     | '/p/$slug'
@@ -149,6 +160,7 @@ export interface FileRouteTypes {
     | '/_app/databases'
     | '/_app/deployments'
     | '/_app/new'
+    | '/_app/oauth'
     | '/_app/settings'
     | '/_app/tokens'
     | '/_app/p/$slug'
@@ -195,6 +207,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/oauth': {
+      id: '/_app/oauth'
+      path: '/oauth'
+      fullPath: '/oauth'
+      preLoaderRoute: typeof AppOauthRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/new': {
@@ -248,6 +267,7 @@ interface AppRouteChildren {
   AppDatabasesRoute: typeof AppDatabasesRoute
   AppDeploymentsRoute: typeof AppDeploymentsRoute
   AppNewRoute: typeof AppNewRoute
+  AppOauthRoute: typeof AppOauthRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTokensRoute: typeof AppTokensRoute
   AppPSlugRoute: typeof AppPSlugRoute
@@ -259,6 +279,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDatabasesRoute: AppDatabasesRoute,
   AppDeploymentsRoute: AppDeploymentsRoute,
   AppNewRoute: AppNewRoute,
+  AppOauthRoute: AppOauthRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTokensRoute: AppTokensRoute,
   AppPSlugRoute: AppPSlugRoute,
