@@ -24,6 +24,7 @@ function ProjectPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("overview");
+  const [environment, setEnvironment] = useState<"production" | "preview" | "development">("production");
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", slug],
