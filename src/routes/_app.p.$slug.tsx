@@ -59,13 +59,15 @@ function ProjectPage() {
 
   const stack = STACKS.find((s) => s.id === project.stack);
 
-  async function deploy() {
+  async function deploy(trigger: "manual" | "git" | "upload" | "url" | "cli" | "api" = "manual") {
     try {
       await triggerDeployment({
         id: project!.id, name: project!.name, branch: project!.branch,
         stack: stack?.name ?? project!.stack, port: project!.port, subdomain: project!.subdomain,
-      });
-      toast.success("Deployment started");
+        target_type: project!.target_type, workspace_type: project!.workspace_type,
+        current_version: project!.current_version, build_command: project!.build_command,
+      }, { trigger, environment });
+      toast.success(`Deploy queued (${trigger} → ${environment})`);
       setTab("logs");
       qc.invalidateQueries({ queryKey: ["deployments", project!.id] });
     } catch (e: any) {
