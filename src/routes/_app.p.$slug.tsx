@@ -113,10 +113,31 @@ function ProjectPage() {
             </div>
           </div>
         </div>
-        <button onClick={deploy} className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
-          <Rocket className="h-4 w-4" /> Deploy
-        </button>
+        <div className="flex items-center gap-2">
+          <select
+            value={environment}
+            onChange={(e) => setEnvironment(e.target.value as any)}
+            className="rounded-md border border-input bg-input/40 px-2 py-2 text-xs outline-none focus:border-primary"
+          >
+            {ENVIRONMENTS.map((e) => <option key={e.id} value={e.id}>{e.icon} {e.name}</option>)}
+          </select>
+          <button onClick={() => deploy("manual")} className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
+            <Rocket className="h-4 w-4" /> Deploy
+          </button>
+        </div>
       </div>
+
+      {project.current_version && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Tag className="h-3 w-3 text-primary" />
+          current release <span className="font-mono text-primary">{project.current_version}</span>
+          <span>·</span>
+          <span>target: {project.target_type ?? "docker"}</span>
+          {project.workspace_type && project.workspace_type !== "none" && (
+            <><span>·</span><span>workspace: {project.workspace_type}</span></>
+          )}
+        </div>
+      )}
 
       <div className="border-b border-border">
         <div className="-mb-px flex gap-1 overflow-x-auto">
