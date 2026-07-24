@@ -16,6 +16,7 @@ import { Route as AppTokensRouteImport } from './routes/_app.tokens'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
 import { Route as AppNewRouteImport } from './routes/_app.new'
+import { Route as AppLocalRouteImport } from './routes/_app.local'
 import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
 import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
@@ -56,6 +57,11 @@ const AppNewRoute = AppNewRouteImport.update({
   path: '/new',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLocalRoute = AppLocalRouteImport.update({
+  id: '/local',
+  path: '/local',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppDeploymentsRoute = AppDeploymentsRouteImport.update({
   id: '/deployments',
   path: '/deployments',
@@ -89,6 +95,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof AppDashboardRoute
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
+  '/local': typeof AppLocalRoute
   '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
   '/settings': typeof AppSettingsRoute
@@ -102,6 +109,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof AppDashboardRoute
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
+  '/local': typeof AppLocalRoute
   '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
   '/settings': typeof AppSettingsRoute
@@ -117,6 +125,7 @@ export interface FileRoutesById {
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/databases': typeof AppDatabasesRoute
   '/_app/deployments': typeof AppDeploymentsRoute
+  '/_app/local': typeof AppLocalRoute
   '/_app/new': typeof AppNewRoute
   '/_app/oauth': typeof AppOauthRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -132,6 +141,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/databases'
     | '/deployments'
+    | '/local'
     | '/new'
     | '/oauth'
     | '/settings'
@@ -145,6 +155,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/databases'
     | '/deployments'
+    | '/local'
     | '/new'
     | '/oauth'
     | '/settings'
@@ -159,6 +170,7 @@ export interface FileRouteTypes {
     | '/_app/dashboard'
     | '/_app/databases'
     | '/_app/deployments'
+    | '/_app/local'
     | '/_app/new'
     | '/_app/oauth'
     | '/_app/settings'
@@ -223,6 +235,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/local': {
+      id: '/_app/local'
+      path: '/local'
+      fullPath: '/local'
+      preLoaderRoute: typeof AppLocalRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/deployments': {
       id: '/_app/deployments'
       path: '/deployments'
@@ -266,6 +285,7 @@ interface AppRouteChildren {
   AppDashboardRoute: typeof AppDashboardRoute
   AppDatabasesRoute: typeof AppDatabasesRoute
   AppDeploymentsRoute: typeof AppDeploymentsRoute
+  AppLocalRoute: typeof AppLocalRoute
   AppNewRoute: typeof AppNewRoute
   AppOauthRoute: typeof AppOauthRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -278,6 +298,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDashboardRoute: AppDashboardRoute,
   AppDatabasesRoute: AppDatabasesRoute,
   AppDeploymentsRoute: AppDeploymentsRoute,
+  AppLocalRoute: AppLocalRoute,
   AppNewRoute: AppNewRoute,
   AppOauthRoute: AppOauthRoute,
   AppSettingsRoute: AppSettingsRoute,
@@ -295,13 +316,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

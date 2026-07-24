@@ -1,0 +1,16 @@
+{
+  "name": "hosterax-engine",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": { "hosterax-engine": "./src/index.mjs" },
+  "scripts": {
+    "start": "node src/index.mjs",
+    "dev": "node --watch src/index.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "ws": "^8.18.0"
+  },
+  "engines": { "node": ">=20" }
+}

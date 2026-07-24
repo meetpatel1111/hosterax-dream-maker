@@ -1,0 +1,17 @@
+{
+  "name": "hosterax-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-packager . HosteraX --overwrite --out=./dist --ignore=node_modules/.cache"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "@electron/packager": "^18.3.5"
+  },
+  "dependencies": {
+    "hosterax-engine": "file:../engine"
+  }
+}
