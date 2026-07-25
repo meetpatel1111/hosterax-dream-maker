@@ -75,6 +75,23 @@ CREATE TABLE IF NOT EXISTS backups (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_backups_dbid ON backups(database_id);
+CREATE TABLE IF NOT EXISTS webhooks (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'github',
+  secret TEXT NOT NULL,
+  branch TEXT NOT NULL DEFAULT 'main',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS installed_apps (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  container_id TEXT,
+  port INTEGER,
+  status TEXT NOT NULL DEFAULT 'installing',
+  created_at INTEGER NOT NULL
+);
 `);
 
 // Migrations
