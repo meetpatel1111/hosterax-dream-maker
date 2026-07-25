@@ -638,6 +638,23 @@ const server = http.createServer(async (req, res) => {
       db.prepare("DELETE FROM tokens WHERE token=?").run(m[1]); return json(res, 200, { ok: true });
     }
 
+    // ────────── github webhooks (config) ──────────
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook$/)) && req.method === "GET") {
+      const wh = db.prepare("SELECT id, project, provider, branch, created_at FROM webhooks WHERE project=?").get(m[1]);
+      return json(res, 200, wh || null);
+    }
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook$/)) && req.method === "POST") {
+      const b = await readBody(req);
+      const proj = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
+      if (!proj) return json(res, 404, { error: "project not found" });
+      db.prepare("DELETE FROM webhooks WHERE project=?").run(m[1]);
+      const id = "wh_" + crypto.randomBytes(6).toString("hex");
+      const secret = crypto.randomBytes(24).toString("hex");
+      db.prepare("INSERT INTO webhooks VALUES (?,?,?,?,?,?)")
+        .run(id, m[1], "github", secret, b.branch || "main", Date.now());
+      return json(res, 200, { id, secret, branch: b.branch || "main", url: `/webhooks/github/${m[1]}` });
+    }
+
     // ────────── one-click apps (via docker) ──────────
     if (url.pathname === "/api/apps" && req.method === "GET")
       return json(res, 200, db.prepare("SELECT * FROM installed_apps ORDER BY created_at DESC").all());
