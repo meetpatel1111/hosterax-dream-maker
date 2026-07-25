@@ -342,6 +342,28 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/health") return json(res, 200, { ok: true, version: "0.2.0" });
+
+  // GitHub webhook — public but HMAC-verified
+  if (url.pathname.startsWith("/webhooks/github/") && req.method === "POST") {
+    const project = url.pathname.split("/").pop();
+    const wh = db.prepare("SELECT * FROM webhooks WHERE project=?").get(project);
+    if (!wh) return json(res, 404, { error: "no webhook configured" });
+    let raw = ""; req.on("data", (c) => raw += c);
+    return req.on("end", async () => {
+      const sig = req.headers["x-hub-signature-256"] || "";
+      const expected = "sha256=" + crypto.createHmac("sha256", wh.secret).update(raw).digest("hex");
+      const a = Buffer.from(sig), b = Buffer.from(expected);
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return json(res, 401, { error: "bad signature" });
+      try {
+        const payload = JSON.parse(raw);
+        const branch = (payload.ref || "").replace("refs/heads/", "");
+        if (branch !== wh.branch) return json(res, 200, { skipped: true, branch });
+        const r = await runDeployment(project, { trigger: "git" });
+        return json(res, 200, { deployed: r.id });
+      } catch (e) { return json(res, 500, { error: String(e) }); }
+    });
+  }
+
   if (!authOk(req)) return json(res, 401, { error: "unauthorized" });
 
   try {
