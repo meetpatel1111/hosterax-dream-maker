@@ -615,6 +615,42 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/tokens\/([^/]+)$/)) && req.method === "DELETE") {
       db.prepare("DELETE FROM tokens WHERE token=?").run(m[1]); return json(res, 200, { ok: true });
     }
+
+    // ────────── one-click apps (via docker) ──────────
+    if (url.pathname === "/api/apps" && req.method === "GET")
+      return json(res, 200, db.prepare("SELECT * FROM installed_apps ORDER BY created_at DESC").all());
+    if (url.pathname === "/api/apps" && req.method === "POST") {
+      const b = await readBody(req);
+      if (!b.slug || !b.image) return json(res, 400, { error: "slug and image required" });
+      const id = "app_" + crypto.randomBytes(6).toString("hex");
+      const port = b.port || null;
+      db.prepare("INSERT INTO installed_apps VALUES (?,?,?,?,?,?,?)")
+        .run(id, b.slug, b.name || b.slug, null, port, "installing", Date.now());
+      // spawn docker run detached; if docker missing, mark failed
+      const cname = `hx_app_${b.slug}_${id.slice(-6)}`;
+      const portFlag = port ? `-p ${port}:${port}` : "";
+      const cmd = `docker run -d --name ${cname} ${portFlag} ${b.image}`;
+      const child = spawn(process.platform === "win32" ? "cmd.exe" : "sh",
+        process.platform === "win32" ? ["/c", cmd] : ["-c", cmd]);
+      let out = "";
+      child.stdout.on("data", (d) => out += d.toString());
+      child.stderr.on("data", (d) => out += d.toString());
+      child.on("close", (code) => {
+        const status = code === 0 ? "running" : "failed";
+        db.prepare("UPDATE installed_apps SET status=?, container_id=? WHERE id=?").run(status, out.trim().slice(0, 64), id);
+      });
+      return json(res, 200, { id, slug: b.slug });
+    }
+    if ((m = url.pathname.match(/^\/api\/apps\/([^/]+)$/)) && req.method === "DELETE") {
+      const app = db.prepare("SELECT * FROM installed_apps WHERE id=?").get(m[1]);
+      if (app?.container_id) {
+        spawn(process.platform === "win32" ? "cmd.exe" : "sh",
+          process.platform === "win32" ? ["/c", `docker rm -f ${app.container_id}`] : ["-c", `docker rm -f ${app.container_id}`]);
+      }
+      db.prepare("DELETE FROM installed_apps WHERE id=?").run(m[1]);
+      return json(res, 200, { ok: true });
+    }
+
     return json(res, 404, { error: "not found" });
   } catch (e) {
     return json(res, 500, { error: String(e) });
