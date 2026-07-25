@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutGrid, Rocket, Database, Activity, Settings, LogOut, Plus, Terminal, KeyRound, ShieldCheck, Cpu } from "lucide-react";
+import { LayoutGrid, Rocket, Database, Activity, Settings, LogOut, Plus, Terminal, KeyRound, ShieldCheck, Cpu, Globe } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
 import { useAuth } from "@/lib/auth-context";
@@ -8,8 +8,9 @@ import { cn } from "@/lib/utils";
 const NAV = [
   { to: "/dashboard", label: "Projects", icon: LayoutGrid },
   { to: "/deployments", label: "Deployments", icon: Rocket },
-  { to: "/local", label: "Local engine", icon: Cpu },
+  { to: "/domains", label: "Domains & SSL", icon: Globe },
   { to: "/databases", label: "Databases", icon: Database },
+  { to: "/servers", label: "Servers", icon: Cpu },
   { to: "/activity", label: "Activity", icon: Activity },
   { to: "/tokens", label: "API tokens", icon: KeyRound },
   { to: "/oauth", label: "OAuth apps", icon: ShieldCheck },

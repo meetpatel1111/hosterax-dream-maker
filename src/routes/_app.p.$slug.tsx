@@ -4,12 +4,15 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { StatusBadge } from "@/components/hx/status-badge";
 import { STACKS, ENVIRONMENTS } from "@/lib/stacks";
-import { triggerDeployment, rollbackTo } from "@/lib/deploy-sim";
 import { toast } from "sonner";
 import { formatDistanceToNow, format } from "date-fns";
+import { HealthMetrics } from "@/components/hx/health-metrics";
+import { DeploymentDiffModal } from "@/components/hx/deployment-diff";
+import { BackupWizardModal } from "@/components/hx/backup-wizard";
+import { useEngine } from "@/lib/engine";
 import {
   ArrowLeft, Rocket, GitBranch, Globe, Trash2, Eye, EyeOff,
-  Plus, ExternalLink, Cpu, MemoryStick, Network, HardDrive, Copy, RotateCcw, Tag,
+  Plus, ExternalLink, Cpu, MemoryStick, Network, HardDrive, Copy, RotateCcw, Tag, FileCode, Database,
 } from "lucide-react";
 
 export const Route = createFileRoute("/_app/p/$slug")({
@@ -17,7 +20,7 @@ export const Route = createFileRoute("/_app/p/$slug")({
   component: ProjectPage,
 });
 
-type Tab = "overview" | "deployments" | "logs" | "env" | "databases" | "settings";
+type Tab = "overview" | "deployments" | "logs" | "env" | "domains" | "databases" | "settings";
 
 function ProjectPage() {
   const { slug } = Route.useParams();
@@ -25,6 +28,7 @@ function ProjectPage() {
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>("overview");
   const [environment, setEnvironment] = useState<"production" | "preview" | "development">("production");
+  const engine = useEngine();
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", slug],
@@ -61,13 +65,17 @@ function ProjectPage() {
 
   async function deploy(trigger: "manual" | "git" | "upload" | "url" | "cli" | "api" = "manual") {
     try {
-      await triggerDeployment({
-        id: project!.id, name: project!.name, branch: project!.branch,
-        stack: stack?.name ?? project!.stack, port: project!.port, subdomain: project!.subdomain,
-        target_type: project!.target_type, workspace_type: project!.workspace_type,
-        current_version: project!.current_version, build_command: project!.build_command,
-      }, { trigger, environment });
-      toast.success(`Deploy queued (${trigger} → ${environment})`);
+      // Upsert project to local engine
+      await eng.call("POST", "/api/projects", {
+        name: project!.name,
+        source: "./", // Default to current dir or fetch from git if implemented
+        build_cmd: project!.build_command ?? "npm install && npm run build",
+        start_cmd: "npm start",
+        target: project!.target_type || "process"
+      });
+      // Trigger deploy
+      await engine.call("POST", `/api/projects/${project!.name}/deploy`, { trigger });
+      toast.success(`Deploy queued on Server`);
       setTab("logs");
       qc.invalidateQueries({ queryKey: ["deployments", project!.id] });
     } catch (e: any) {
@@ -88,6 +96,7 @@ function ProjectPage() {
     { id: "deployments", label: "Deployments" },
     { id: "logs", label: "Logs" },
     { id: "env", label: "Env vars" },
+    { id: "domains", label: "Domains" },
     { id: "databases", label: "Databases" },
     { id: "settings", label: "Settings" },
   ];
@@ -153,9 +162,10 @@ function ProjectPage() {
       </div>
 
       {tab === "overview" && <Overview project={project} />}
-      {tab === "deployments" && <Deployments projectId={project.id} />}
-      {tab === "logs" && <LiveLogs projectId={project.id} />}
+      {tab === "deployments" && <Deployments projectId={project.id} projectName={project.name} />}
+      {tab === "logs" && <LiveLogs projectName={project.name} />}
       {tab === "env" && <EnvVars projectId={project.id} />}
+      {tab === "domains" && <ProjectDomains projectId={project.id} projectName={project.name} />}
       {tab === "databases" && <Databases projectId={project.id} />}
       {tab === "settings" && <Settings project={project} onDelete={del} />}
     </div>
@@ -180,30 +190,29 @@ function Overview({ project }: { project: any }) {
   }), [project.id]);
 
   return (
-    <div className="grid gap-4 md:grid-cols-4">
-      <MetricCard icon={Cpu}          label="CPU"     value={`${metrics.cpu.toFixed(1)}%`}  />
-      <MetricCard icon={MemoryStick}  label="Memory"  value={`${metrics.mem.toFixed(0)}%`}  />
-      <MetricCard icon={Network}      label="Network" value={`${metrics.net.toFixed(1)} MB/s`} />
-      <MetricCard icon={HardDrive}    label="Disk"    value={`${metrics.disk.toFixed(0)}%`} />
+    <div className="space-y-6">
+      <HealthMetrics projectId={project.id} projectName={project.name} status={project.status} />
 
-      <div className="md:col-span-4 rounded-lg border border-border bg-card">
+      <div className="rounded-xl border border-border bg-card shadow-sm">
         <div className="flex items-center justify-between border-b border-border p-4">
-          <div className="font-medium">Recent deployments</div>
-          <div className="text-xs text-muted-foreground">Last 5</div>
+          <div className="font-semibold text-sm">Recent Deployments Feed</div>
+          <div className="text-xs text-muted-foreground">Showing last 5 releases</div>
         </div>
         <div className="divide-y divide-border">
           {recent.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">No deployments yet. Click Deploy to build.</div>
           ) : recent.map((d: any) => (
-            <div key={d.id} className="flex items-center justify-between p-3 text-sm">
+            <div key={d.id} className="flex items-center justify-between p-4 text-sm hover:bg-accent/30 transition-colors">
               <div className="flex items-center gap-3">
                 <StatusBadge status={d.status} />
-                <span className="font-mono text-xs text-muted-foreground">{d.commit_sha}</span>
-                <span>{d.commit_message}</span>
+                <div>
+                  <div className="font-medium text-foreground">{d.commit_message || "Deployment"}</div>
+                  <div className="text-xs text-muted-foreground font-mono mt-0.5">{d.commit_sha} · {d.branch}</div>
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground">
-                {formatDistanceToNow(new Date(d.created_at))} ago
-                {d.duration_ms ? ` · ${(d.duration_ms / 1000).toFixed(1)}s` : ""}
+              <div className="text-xs text-muted-foreground text-right">
+                <div>{formatDistanceToNow(new Date(d.created_at))} ago</div>
+                <div className="font-mono">{d.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "—"}</div>
               </div>
             </div>
           ))}
@@ -213,19 +222,11 @@ function Overview({ project }: { project: any }) {
   );
 }
 
-function MetricCard({ icon: Icon, label, value }: any) {
-  return (
-    <div className="rounded-lg border border-border bg-card p-4">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="h-3.5 w-3.5" /> {label}
-      </div>
-      <div className="mt-2 text-2xl font-semibold tracking-tight">{value}</div>
-    </div>
-  );
-}
-
 function Deployments({ projectId }: { projectId: string }) {
   const qc = useQueryClient();
+  const [showDiff, setShowDiff] = useState(false);
+  const [diffBaseId, setDiffBaseId] = useState<string | undefined>();
+
   const { data: project } = useQuery({
     queryKey: ["project-raw", projectId],
     queryFn: async () => {
@@ -255,79 +256,101 @@ function Deployments({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="rounded-lg border border-border bg-card">
-      {deployments.length === 0 ? (
-        <div className="p-8 text-center text-sm text-muted-foreground">No deployments yet.</div>
-      ) : (
-        <div className="divide-y divide-border">
-          {deployments.map((d: any, idx: number) => (
-            <div key={d.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
-              <div className="flex items-center gap-3">
-                <StatusBadge status={d.status} />
-                <div>
-                  <div className="flex items-center gap-2 text-sm font-medium">
-                    {d.commit_message ?? "Deployment"}
-                    {d.version && <span className="rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] text-primary">{d.version}</span>}
-                    {d.rollback_of && <span className="rounded bg-warning/20 px-1.5 py-0.5 text-[10px] text-warning">rollback</span>}
-                  </div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="font-mono">{d.commit_sha}</span>
-                    <span>·</span><span>{d.branch}</span>
-                    <span>·</span><span className="rounded bg-surface-2 px-1.5 py-0.5">{d.environment}</span>
-                    <span>·</span><span className="uppercase">{d.trigger_type}</span>
-                    <span>·</span><span>phase: {d.phase ?? "—"}</span>
-                    <span>·</span><span>{format(new Date(d.created_at), "MMM d, HH:mm:ss")}</span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="text-xs text-muted-foreground">
-                  {d.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "—"}
-                </div>
-                {d.status === "success" && idx !== 0 && (
-                  <button onClick={() => doRollback(d)} className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:border-primary/60 hover:text-primary">
-                    <RotateCcw className="h-3 w-3" /> Rollback here
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
+    <div className="space-y-4">
+      {deployments.length >= 2 && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => { setDiffBaseId(undefined); setShowDiff(true); }}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
+          >
+            <FileCode className="h-3.5 w-3.5 text-primary" /> Compare Releases (Diff)
+          </button>
         </div>
       )}
+
+      <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+        {deployments.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground">No deployments yet.</div>
+        ) : (
+          <div className="divide-y divide-border">
+            {deployments.map((d: any, idx: number) => (
+              <div key={d.id} className="flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-accent/30 transition-colors">
+                <div className="flex items-center gap-3">
+                  <StatusBadge status={d.status} />
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      {d.commit_message ?? "Deployment"}
+                      {d.version && <span className="rounded bg-primary/15 px-1.5 py-0.5 font-mono text-[10px] text-primary">{d.version}</span>}
+                      {d.rollback_of && <span className="rounded bg-warning/20 px-1.5 py-0.5 text-[10px] text-warning">rollback</span>}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className="font-mono">{d.commit_sha}</span>
+                      <span>·</span><span>{d.branch}</span>
+                      <span>·</span><span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] uppercase">{d.environment}</span>
+                      <span>·</span><span className="uppercase text-[10px]">{d.trigger_type}</span>
+                      <span>·</span><span>phase: {d.phase ?? "—"}</span>
+                      <span>·</span><span>{format(new Date(d.created_at), "MMM d, HH:mm:ss")}</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => { setDiffBaseId(d.id); setShowDiff(true); }}
+                    className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground hover:border-primary/60 hover:text-primary transition-colors"
+                  >
+                    <FileCode className="h-3 w-3" /> Diff
+                  </button>
+
+                  {d.status === "success" && idx !== 0 && (
+                    <button onClick={() => doRollback(d)} className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-xs hover:border-primary/60 hover:text-primary transition-colors">
+                      <RotateCcw className="h-3 w-3" /> Rollback here
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {showDiff && <DeploymentDiffModal deployments={deployments} initialBaseId={diffBaseId} onClose={() => setShowDiff(false)} />}
     </div>
   );
 }
 
-function LiveLogs({ projectId }: { projectId: string }) {
+function LiveLogs({ projectName }: { projectName: string }) {
+  const engine = useEngine();
   const [selected, setSelected] = useState<string | null>(null);
+  
   const { data: deployments = [] } = useQuery({
-    queryKey: ["deployments", projectId],
+    queryKey: ["local-deployments", projectName, engine.url],
     queryFn: async () => {
-      const { data } = await supabase.from("deployments").select("*").eq("project_id", projectId).order("created_at", { ascending: false }).limit(20);
+      const data = await engine.call<any[]>("GET", `/api/projects/${projectName}/deployments`);
       return data ?? [];
     },
     refetchInterval: 3000,
   });
+  
   const active = selected ?? deployments[0]?.id ?? null;
 
   const [logs, setLogs] = useState<any[]>([]);
   useEffect(() => {
     if (!active) return;
     setLogs([]);
-    supabase.from("deployment_logs").select("*").eq("deployment_id", active).order("created_at").then(({ data }) => setLogs(data ?? []));
-    const ch = supabase
-      .channel(`logs-${active}`)
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "deployment_logs", filter: `deployment_id=eq.${active}` }, (p) => {
-        setLogs((prev) => [...prev, p.new]);
-      })
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
-  }, [active]);
+    const ch = new EventSource(`${engine.url}/api/projects/${projectName}/logs/stream?token=${engine.token}`);
+    ch.onmessage = (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        setLogs((prev) => [...prev, payload]);
+      } catch (err) {}
+    };
+    return () => ch.close();
+  }, [active, eng.url]);
 
   return (
     <div className="grid gap-4 md:grid-cols-[220px_1fr]">
       <div className="rounded-lg border border-border bg-card">
-        <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">Recent builds</div>
+        <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">Recent Builds</div>
         <div className="max-h-[500px] overflow-y-auto">
           {deployments.length === 0 && <div className="p-4 text-xs text-muted-foreground">No builds yet</div>}
           {deployments.map((d: any) => (
@@ -335,8 +358,11 @@ function LiveLogs({ projectId }: { projectId: string }) {
               key={d.id} onClick={() => setSelected(d.id)}
               className={`flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left text-xs hover:bg-accent ${active === d.id ? "bg-accent" : ""}`}
             >
-              <StatusBadge status={d.status} />
-              <span className="ml-auto font-mono text-muted-foreground">{d.commit_sha}</span>
+              <StatusBadge status={d.phase === "ready" ? "success" : d.phase === "failed" ? "error" : "building"} />
+              <div className="ml-auto flex flex-col items-end">
+                <span className="font-mono text-muted-foreground">{d.version}</span>
+                <span className="text-[10px] text-muted-foreground/50">{formatDistanceToNow(new Date(d.started_at))} ago</span>
+              </div>
             </button>
           ))}
         </div>
@@ -346,17 +372,16 @@ function LiveLogs({ projectId }: { projectId: string }) {
           <span>build.log · {logs.length} lines</span>
           {active && <span className="text-primary">● live</span>}
         </div>
-        <div className="h-[500px] overflow-y-auto p-4">
+        <div className="h-[500px] overflow-y-auto p-4 flex flex-col gap-1">
           {!active && <div className="text-muted-foreground">Trigger a deployment to see logs stream in real time.</div>}
-          {logs.map((l) => (
-            <div key={l.id} className="flex gap-3">
-              <span className="text-muted-foreground/60">{format(new Date(l.created_at), "HH:mm:ss")}</span>
+          {logs.map((l, i) => (
+            <div key={i} className="flex gap-3">
+              <span className="text-muted-foreground/60">{format(new Date(l.ts), "HH:mm:ss")}</span>
               <span className={
-                l.level === "error" ? "text-destructive" :
-                l.level === "warn" ? "text-warning" :
-                l.level === "success" ? "text-success" :
+                l.stream === "stderr" ? "text-destructive" :
+                l.stream === "system" ? "text-primary/70" :
                 "text-foreground/85"
-              }>{l.message}</span>
+              }>{l.text}</span>
             </div>
           ))}
         </div>
@@ -553,3 +578,21 @@ const inputCls = "w-full rounded-md border border-input bg-input/40 px-3 py-2 te
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return <div><label className="mb-1 block text-xs font-medium text-muted-foreground">{label}</label>{children}</div>;
 }
+
+function ProjectDomains({ projectId, projectName }: { projectId: string; projectName: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-12 text-center shadow-sm">
+      <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary mb-4">
+        <Globe className="h-6 w-6" />
+      </div>
+      <h3 className="text-lg font-medium">Custom Domains & SSL</h3>
+      <p className="mt-2 text-sm text-muted-foreground mb-6 max-w-md mx-auto">
+        Manage custom domains, verify DNS ownership, and automatically provision Let's Encrypt SSL certificates for <span className="font-medium text-foreground">{projectName}</span>.
+      </p>
+      <Link to="/domains" className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90">
+        <Globe className="h-4 w-4" /> Manage Domains
+      </Link>
+    </div>
+  );
+}
+

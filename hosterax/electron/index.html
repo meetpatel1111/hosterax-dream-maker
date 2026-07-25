@@ -1,21 +1,859 @@
 <!doctype html>
-<html><head><meta charset="utf-8"><title>HosteraX</title>
-<style>
-  body{margin:0;background:#0a0a0a;color:#e5e5e5;font:14px/1.5 -apple-system,Segoe UI,sans-serif;padding:40px;max-width:720px;margin:0 auto}
-  h1{color:#c6f832;margin:0 0 8px} code{background:#171717;padding:2px 6px;border-radius:4px}
-  a{color:#c6f832} .card{background:#141414;border:1px solid #262626;border-radius:12px;padding:24px;margin:16px 0}
-</style></head>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>HosteraX Desktop Control Plane</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      --bg: #0d0f12;
+      --card: #14171d;
+      --border: #222731;
+      --primary: #c6f832;
+      --primary-text: #0d0f12;
+      --text: #f0f2f5;
+      --text-muted: #8a94a6;
+      --success: #22c55e;
+      --danger: #ef4444;
+      --warning: #f59e0b;
+      --info: #38bdf8;
+      --surface2: #1a1e26;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.5;
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    aside {
+      width: 240px;
+      background: #090a0d;
+      border-right: 1px solid var(--border);
+      padding: 20px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .brand {
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--primary);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .connection-bar {
+      margin-bottom: 12px;
+      padding: 10px;
+      background: var(--surface2);
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .connection-bar label { display: block; font-size: 10px; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .connection-bar input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 8px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-family: monospace;
+      outline: none;
+      margin-bottom: 6px;
+    }
+    .connection-bar input:focus { border-color: var(--primary); }
+    .connect-btn {
+      width: 100%;
+      background: var(--primary);
+      color: var(--primary-text);
+      border: none;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .connect-btn:hover { opacity: 0.9; }
+    .status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .status-dot.up { background: var(--success); }
+    .status-dot.down { background: var(--danger); }
+    .status-dot.unknown { background: var(--text-muted); }
+    nav button {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.15s;
+    }
+    nav button.active, nav button:hover {
+      background: #191e26;
+      color: var(--text);
+    }
+    main {
+      flex: 1;
+      padding: 28px 32px;
+      overflow-y: auto;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    h1 { font-size: 22px; font-weight: 600; }
+    .badge {
+      background: rgba(198,248,50,0.15);
+      color: var(--primary);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-family: monospace;
+    }
+    .badge.danger { background: rgba(239,68,68,0.15); color: var(--danger); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .stat-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card .value { font-size: 22px; font-weight: 700; color: var(--primary); margin-top: 4px; }
+    .stat-card .sub { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      transition: border-color 0.15s;
+    }
+    .card:hover { border-color: rgba(198,248,50,0.3); }
+    .card h3 { font-size: 15px; margin-bottom: 8px; }
+    .card p { font-size: 13px; color: var(--text-muted); margin-bottom: 8px; }
+    .card .meta { font-size: 11px; font-family: monospace; }
+    .btn {
+      background: var(--primary);
+      color: var(--primary-text);
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:hover { opacity: 0.85; }
+    .btn-sm { padding: 5px 10px; font-size: 11px; }
+    .btn-outline {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .btn-outline:hover { border-color: var(--primary); color: var(--primary); }
+    .btn-danger { background: var(--danger); }
+    .logs-box {
+      background: #050608;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      font-family: monospace;
+      font-size: 11px;
+      height: 400px;
+      overflow-y: auto;
+      color: var(--info);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .table-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .table-wrap table { width: 100%; border-collapse: collapse; }
+    .table-wrap th {
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+    .table-wrap td {
+      padding: 10px 14px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
+    }
+    .table-wrap tr:last-child td { border-bottom: none; }
+    .table-wrap tr:hover td { background: rgba(255,255,255,0.02); }
+    .ssl-active { color: var(--success); }
+    .ssl-none { color: var(--text-muted); }
+    .ssl-provisioning { color: var(--warning); }
+    .empty-state { text-align: center; padding: 48px; color: var(--text-muted); font-size: 13px; }
+    .toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+    .toolbar input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      outline: none;
+      flex: 1;
+      min-width: 180px;
+    }
+    .toolbar input:focus { border-color: var(--primary); }
+    .tab-section { display: none; }
+    .tab-section.active { display: block; }
+  </style>
+</head>
 <body>
-  <h1>HosteraX Desktop</h1>
-  <p>Engine running at <code>http://localhost:7777</code>.</p>
-  <div class="card">
-    <h3>Point at your dashboard</h3>
-    <p>Set <code>HOSTERAX_DASHBOARD_URL</code> before launch, or open the web dashboard and visit <code>/local</code>.</p>
-    <p><a href="http://localhost:7777/health" target="_blank">Test engine →</a></p>
-  </div>
-  <div class="card">
-    <h3>CLI</h3>
-    <pre><code>hosterax login &lt;token&gt;
-hosterax deploy ./my-app</code></pre>
-  </div>
-</body></html>
+  <aside>
+    <div class="brand">🚀 HosteraX Desktop</div>
+
+    <div class="connection-bar">
+      <label>Engine URL</label>
+      <input id="eng-url" placeholder="http://localhost:7777">
+      <label>Token</label>
+      <input id="eng-token" type="password" placeholder="hxt_...">
+      <button class="connect-btn" onclick="connect()">Connect</button>
+      <div style="margin-top:6px;font-size:11px;">
+        <span class="status-dot unknown" id="status-dot"></span>
+        <span id="status-text">Not connected</span>
+      </div>
+    </div>
+
+    <nav>
+      <button class="active" onclick="showTab('projects', this)">📦 Projects</button>
+      <button onclick="showTab('deployments', this)">⏳ Deployments</button>
+      <button onclick="showTab('env', this)">🔐 Env Vars</button>
+      <button onclick="showTab('quotas', this)">⚖️ Quotas & Limits</button>
+      <button onclick="showTab('metrics', this)">⚡ System Metrics</button>
+      <button onclick="showTab('domains', this)">🌐 Domains & SSL</button>
+      <button onclick="showTab('databases', this)">💾 Databases</button>
+      <button onclick="showTab('backups', this)">🔒 Backups</button>
+      <button onclick="showTab('tokens', this)">🔑 API Tokens</button>
+      <button onclick="showTab('logs', this)">💻 Live Logs</button>
+    </nav>
+  </aside>
+
+  <main>
+    <div class="header">
+      <div>
+        <h1 id="tab-title">Projects Overview</h1>
+        <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;" id="tab-subtitle">Connect to your HosteraX engine to manage projects.</div>
+      </div>
+      <span class="badge" id="header-badge">● Disconnected</span>
+    </div>
+
+    <!-- STATS OVERVIEW -->
+    <div class="stats-grid" id="stats-cards"></div>
+
+    <!-- PROJECTS TAB -->
+    <div id="view-projects" class="tab-section active">
+      <div class="empty-state" id="projects-empty">Connect to the engine to see your projects.</div>
+      <div class="grid" id="projects-grid"></div>
+    </div>
+
+    <!-- DEPLOYMENTS TAB -->
+    <div id="view-deployments" class="tab-section">
+      <div class="toolbar">
+        <input id="deploy-project" placeholder="Project name">
+        <button class="btn btn-sm" onclick="loadDeployments()">Load History</button>
+      </div>
+      <div class="table-wrap" id="deployments-table"></div>
+      
+      <div id="diff-modal" style="display:none; position:fixed; top:10%; left:10%; width:80%; height:80%; background:var(--card); border:1px solid var(--border); z-index:100; border-radius:12px; padding:20px; overflow-y:auto; box-shadow:0 0 40px rgba(0,0,0,0.8);">
+        <div style="display:flex; justify-content:space-between; margin-bottom:16px;">
+          <h2 style="font-size:18px;">Compare Deployments</h2>
+          <button class="btn-outline" onclick="document.getElementById('diff-modal').style.display='none'">Close</button>
+        </div>
+        <div style="display:flex; gap:10px; margin-bottom:16px;">
+          <input id="diff-base" placeholder="Base Deployment ID (d_...)" style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px;">
+          <input id="diff-target" placeholder="Target Deployment ID (d_...)" style="flex:1; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px;">
+          <button class="btn" onclick="compareDeployments()">Compare</button>
+        </div>
+        <div id="diff-output" style="font-family:monospace; font-size:12px; background:var(--bg); padding:12px; border-radius:6px; white-space:pre-wrap; color:var(--info);">Select two deployments to view the delta.</div>
+      </div>
+    </div>
+
+    <!-- ENV VARS TAB -->
+    <div id="view-env" class="tab-section">
+      <div class="toolbar">
+        <input id="env-project" placeholder="Project name">
+        <button class="btn btn-sm" onclick="loadEnv()">Load Env</button>
+      </div>
+      <div style="margin-top:16px;">
+        <textarea id="env-json" rows="10" style="width:100%; background:var(--bg); border:1px solid var(--border); color:var(--info); font-family:monospace; padding:12px; border-radius:8px; resize:vertical; outline:none;" placeholder='{"PORT": "3000"}'></textarea>
+      </div>
+      <button class="btn" style="margin-top:12px;" onclick="saveEnv()">Save Environment Variables</button>
+    </div>
+
+    <!-- QUOTAS TAB -->
+    <div id="view-quotas" class="tab-section">
+      <div class="toolbar">
+        <input id="quota-project" placeholder="Project name">
+        <button class="btn btn-sm" onclick="loadQuotas()">Load Quotas</button>
+      </div>
+      <div style="margin-top:16px;">
+        <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;" id="quota-host-info">Host capacity: Unknown</p>
+        <div style="margin-bottom:12px;">
+          <label style="display:block; font-size:12px; margin-bottom:4px;">CPU Limit (Cores)</label>
+          <input type="number" step="0.1" id="quota-cpu" placeholder="e.g. 1.0 (Leave blank for unlimited)" style="width:300px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px;">
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="display:block; font-size:12px; margin-bottom:4px;">Memory Limit (MB)</label>
+          <input type="number" id="quota-mem" placeholder="e.g. 512 (Leave blank for unlimited)" style="width:300px; background:var(--bg); border:1px solid var(--border); color:var(--text); padding:8px; border-radius:6px;">
+        </div>
+      </div>
+      <button class="btn" style="margin-top:12px;" onclick="saveQuotas()">Save Quotas</button>
+    </div>
+
+    <!-- METRICS TAB -->
+    <div id="view-metrics" class="tab-section">
+      <div class="grid" id="metrics-grid"></div>
+    </div>
+
+    <!-- DOMAINS TAB -->
+    <div id="view-domains" class="tab-section">
+      <div class="toolbar">
+        <input id="domain-project" placeholder="Project name">
+        <input id="domain-hostname" placeholder="example.com">
+        <button class="btn btn-sm" onclick="addDomain()">+ Add Domain</button>
+      </div>
+      <div class="table-wrap" id="domains-table"></div>
+    </div>
+
+    <!-- DATABASES TAB -->
+    <div id="view-databases" class="tab-section">
+      <div class="toolbar">
+        <input id="db-project" placeholder="Project name">
+        <input id="db-name" placeholder="Database name">
+        <select id="db-engine" style="background:var(--bg);border:1px solid var(--border);color:var(--text);padding:7px;border-radius:6px;font-size:12px;">
+          <option value="postgres">PostgreSQL</option>
+          <option value="mysql">MySQL</option>
+          <option value="mongodb">MongoDB</option>
+          <option value="redis">Redis</option>
+        </select>
+        <button class="btn btn-sm" onclick="addDatabase()">+ Provision</button>
+      </div>
+      <div class="table-wrap" id="databases-table"></div>
+    </div>
+
+    <!-- BACKUPS TAB -->
+    <div id="view-backups" class="tab-section">
+      <div class="toolbar">
+        <input id="backup-dbid" placeholder="Database ID (mdb_...)">
+        <button class="btn btn-sm" onclick="createBackup()">🔒 Create Snapshot</button>
+      </div>
+      <div class="table-wrap" id="backups-table"></div>
+    </div>
+
+    <!-- TOKENS TAB -->
+    <div id="view-tokens" class="tab-section">
+      <div class="toolbar">
+        <input id="token-name" placeholder="Token label (e.g. CI/CD Pipeline)">
+        <button class="btn btn-sm" onclick="createToken()">+ Generate Token</button>
+      </div>
+      <div class="table-wrap" id="tokens-table"></div>
+    </div>
+
+    <!-- LOGS TAB -->
+    <div id="view-logs" class="tab-section">
+      <div class="toolbar">
+        <input id="log-deploy-id" placeholder="Deployment ID (d_...)">
+        <button class="btn btn-sm" onclick="streamLogs()">▶ Stream Logs</button>
+        <button class="btn-outline" onclick="clearLogs()">Clear</button>
+      </div>
+      <div class="logs-box" id="terminal-out">Waiting for deployment ID...</div>
+    </div>
+  </main>
+
+  <script>
+    // ─── State ───
+    let engineUrl = localStorage.getItem('hx.desktop.url') || 'http://localhost:7777';
+    let engineToken = localStorage.getItem('hx.desktop.token') || '';
+    let connected = false;
+    let ws = null;
+    let refreshInterval = null;
+
+    document.getElementById('eng-url').value = engineUrl;
+    document.getElementById('eng-token').value = engineToken;
+
+    // ─── API Helper ───
+    async function api(method, path, body) {
+      const r = await fetch(engineUrl + path, {
+        method,
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + engineToken },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    // ─── Connection ───
+    async function connect() {
+      engineUrl = document.getElementById('eng-url').value.replace(/\/$/, '');
+      engineToken = document.getElementById('eng-token').value;
+      localStorage.setItem('hx.desktop.url', engineUrl);
+      localStorage.setItem('hx.desktop.token', engineToken);
+
+      try {
+        const h = await fetch(engineUrl + '/health');
+        const data = await h.json();
+        if (data.ok) {
+          connected = true;
+          document.getElementById('status-dot').className = 'status-dot up';
+          document.getElementById('status-text').textContent = 'Connected v' + data.version;
+          document.getElementById('header-badge').textContent = '● Engine Active';
+          document.getElementById('header-badge').className = 'badge';
+          document.getElementById('tab-subtitle').textContent = 'Connected to ' + engineUrl;
+          refreshAll();
+          if (refreshInterval) clearInterval(refreshInterval);
+          refreshInterval = setInterval(refreshAll, 5000);
+        }
+      } catch (e) {
+        connected = false;
+        document.getElementById('status-dot').className = 'status-dot down';
+        document.getElementById('status-text').textContent = 'Connection failed';
+        document.getElementById('header-badge').textContent = '● Offline';
+        document.getElementById('header-badge').className = 'badge danger';
+      }
+    }
+
+    // ─── Tab Navigation ───
+    function showTab(name, btn) {
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      document.querySelectorAll('.tab-section').forEach(s => s.classList.remove('active'));
+      document.getElementById('view-' + name).classList.add('active');
+      const titles = { projects: 'Projects Overview', deployments: 'Deployments', env: 'Environment Variables', quotas: 'Instance Quotas & Limits', metrics: 'System Metrics', domains: 'Domains & SSL', databases: 'Managed Databases', backups: 'Backup Snapshots', tokens: 'API Tokens', logs: 'Live Deployment Logs' };
+      document.getElementById('tab-title').textContent = titles[name] || name;
+    }
+
+    // ─── Refresh All Data ───
+    async function refreshAll() {
+      if (!connected) return;
+      try {
+        await Promise.all([loadStats(), loadProjects(), loadMetrics(), loadDomains(), loadDatabases(), loadBackups(), loadTokens()]);
+      } catch (e) { console.error('refresh error:', e); }
+    }
+
+    // ─── Stats Cards ───
+    async function loadStats() {
+      const s = await api('GET', '/api/stats');
+      document.getElementById('stats-cards').innerHTML = `
+        <div class="stat-card"><div class="label">Projects</div><div class="value">${s.projects}</div></div>
+        <div class="stat-card"><div class="label">Deployments</div><div class="value">${s.deployments.total}</div><div class="sub">${s.deployments.success_rate}% success</div></div>
+        <div class="stat-card"><div class="label">CPU</div><div class="value">${s.system.cpu.percent}%</div><div class="sub">${s.system.cpu.cores} cores</div></div>
+        <div class="stat-card"><div class="label">Memory</div><div class="value">${s.system.memory.percent}%</div><div class="sub">${s.system.memory.used_mb} / ${s.system.memory.total_mb} MB</div></div>
+        <div class="stat-card"><div class="label">Domains</div><div class="value">${s.domains}</div></div>
+        <div class="stat-card"><div class="label">Databases</div><div class="value">${s.databases}</div></div>
+      `;
+    }
+
+    // ─── Projects ───
+    async function loadProjects() {
+      const projects = await api('GET', '/api/projects');
+      const grid = document.getElementById('projects-grid');
+      const empty = document.getElementById('projects-empty');
+      if (projects.length === 0) {
+        grid.innerHTML = '';
+        empty.style.display = 'block';
+        empty.textContent = 'No projects deployed yet. Use the CLI to create one.';
+        return;
+      }
+      empty.style.display = 'none';
+      grid.innerHTML = projects.map(p => `
+        <div class="card">
+          <h3>${esc(p.name)}</h3>
+          <p>${esc(p.source || 'No source configured')}</p>
+          <div class="meta" style="color:var(--primary);">target: ${esc(p.target)}</div>
+          <div style="margin-top:12px;display:flex;gap:6px;">
+            <button class="btn btn-sm" onclick="deployProject('${esc(p.name)}')">🚀 Deploy</button>
+            <button class="btn-outline" onclick="deleteProject('${esc(p.name)}')">🗑 Delete</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function deployProject(name) {
+      try {
+        const r = await api('POST', '/api/projects/' + name + '/deploy', { trigger: 'manual' });
+        alert('Deployment started: ' + r.id + ' (' + r.version + ')');
+        document.getElementById('log-deploy-id').value = r.id;
+        showTab('logs', document.querySelectorAll('nav button')[5]);
+        streamLogs();
+        loadProjects();
+      } catch (e) { alert('Deploy failed: ' + e.message); }
+    }
+
+    async function deleteProject(name) {
+      if (!confirm('Delete project "' + name + '" and all its data?')) return;
+      await api('DELETE', '/api/projects/' + name);
+      loadProjects();
+      loadStats();
+    }
+
+    // ─── Metrics ───
+    async function loadMetrics() {
+      const m = await api('GET', '/api/metrics');
+      document.getElementById('metrics-grid').innerHTML = `
+        <div class="card">
+          <h3>CPU Utilization</h3>
+          <div style="font-size:28px;font-weight:700;color:var(--primary);">${m.cpu.percent}%</div>
+          <p>${m.cpu.cores} cores · ${m.cpu.model.slice(0, 40)}</p>
+          <div class="meta">Load avg: ${m.load_avg.join(', ')}</div>
+        </div>
+        <div class="card">
+          <h3>Memory Usage</h3>
+          <div style="font-size:28px;font-weight:700;color:var(--primary);">${m.memory.used_mb} MB</div>
+          <p>${m.memory.used_mb} / ${m.memory.total_mb} MB (${m.memory.percent}%)</p>
+        </div>
+        <div class="card">
+          <h3>System Uptime</h3>
+          <div style="font-size:28px;font-weight:700;color:var(--primary);">${Math.floor(m.uptime_seconds / 3600)}h ${Math.floor((m.uptime_seconds % 3600) / 60)}m</div>
+          <p>Platform: ${m.platform}</p>
+          <div class="meta">Hostname: ${m.hostname}</div>
+        </div>
+      `;
+    }
+
+    // ─── Domains ───
+    async function loadDomains() {
+      const doms = await api('GET', '/api/domains');
+      const el = document.getElementById('domains-table');
+      if (doms.length === 0) {
+        el.innerHTML = '<div class="empty-state">No custom domains configured.</div>';
+        return;
+      }
+      el.innerHTML = '<table><thead><tr><th>ID</th><th>Project</th><th>Hostname</th><th>Verified</th><th>SSL</th><th>Primary</th><th>Actions</th></tr></thead><tbody>' +
+        doms.map(d => `<tr>
+          <td style="font-family:monospace;font-size:11px;">${esc(d.id)}</td>
+          <td>${esc(d.project)}</td>
+          <td><strong>${esc(d.hostname)}</strong></td>
+          <td>${d.verified ? '<span style="color:var(--success)">✓ Verified</span>' : '<span style="color:var(--text-muted)">✗ Pending</span>'}</td>
+          <td class="ssl-${d.ssl_status}">${d.ssl_status}${d.ssl_expires ? ' (exp: ' + new Date(d.ssl_expires).toLocaleDateString() + ')' : ''}</td>
+          <td>${d.is_primary ? '★' : ''}</td>
+          <td style="display:flex;gap:4px;">
+            ${!d.verified ? '<button class="btn-outline" onclick="verifyDomain(\'' + d.id + '\')">Verify</button>' : ''}
+            ${d.verified && d.ssl_status === 'none' ? '<button class="btn-outline" onclick="provisionSSL(\'' + d.id + '\')">SSL</button>' : ''}
+            <button class="btn-outline" onclick="setPrimary(\'' + d.id + '\')">★</button>
+            <button class="btn-outline" onclick="deleteDomain(\'' + d.id + '\')" style="color:var(--danger)">✗</button>
+          </td>
+        </tr>`).join('') + '</tbody></table>';
+    }
+
+    async function addDomain() {
+      const proj = document.getElementById('domain-project').value;
+      const host = document.getElementById('domain-hostname').value;
+      if (!proj || !host) return alert('Enter project name and hostname');
+      try {
+        const r = await api('POST', '/api/projects/' + proj + '/domains', { hostname: host });
+        alert('Domain added! DNS TXT challenge: _hosterax-challenge.' + host + ' → ' + r.challenge_token);
+        document.getElementById('domain-hostname').value = '';
+        loadDomains(); loadStats();
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    async function verifyDomain(id) {
+      const r = await api('POST', '/api/domains/' + id + '/verify');
+      alert(r.verified ? 'Domain verified!' : 'Verification failed. Check DNS TXT record.');
+      loadDomains();
+    }
+
+    async function provisionSSL(id) {
+      await api('POST', '/api/domains/' + id + '/ssl');
+      alert('SSL provisioning started via Let\'s Encrypt');
+      setTimeout(loadDomains, 3000);
+    }
+
+    async function setPrimary(id) {
+      await api('POST', '/api/domains/' + id + '/primary');
+      loadDomains();
+    }
+
+    async function deleteDomain(id) {
+      if (!confirm('Delete this domain?')) return;
+      await api('DELETE', '/api/domains/' + id);
+      loadDomains(); loadStats();
+    }
+
+    // ─── Databases ───
+    async function loadDatabases() {
+      const dbs = await api('GET', '/api/databases');
+      const el = document.getElementById('databases-table');
+      if (dbs.length === 0) {
+        el.innerHTML = '<div class="empty-state">No databases provisioned yet.</div>';
+        return;
+      }
+      el.innerHTML = '<table><thead><tr><th>ID</th><th>Project</th><th>Name</th><th>Engine</th><th>Size</th><th>Status</th><th>Actions</th></tr></thead><tbody>' +
+        dbs.map(d => `<tr>
+          <td style="font-family:monospace;font-size:11px;">${esc(d.id)}</td>
+          <td>${esc(d.project)}</td>
+          <td><strong>${esc(d.name)}</strong></td>
+          <td>${esc(d.engine)}</td>
+          <td>${d.size_mb} MB</td>
+          <td style="color:${d.status === 'running' ? 'var(--success)' : d.status === 'provisioning' ? 'var(--warning)' : 'var(--text-muted)'};">${d.status}</td>
+          <td style="display:flex;gap:4px;">
+            <button class="btn-outline" onclick="backupDb('${d.id}')">Backup</button>
+            <button class="btn-outline" onclick="deleteDb('${d.id}')" style="color:var(--danger)">Delete</button>
+          </td>
+        </tr>`).join('') + '</tbody></table>';
+    }
+
+    async function addDatabase() {
+      const proj = document.getElementById('db-project').value;
+      const name = document.getElementById('db-name').value;
+      const engine = document.getElementById('db-engine').value;
+      if (!proj || !name) return alert('Enter project name and database name');
+      try {
+        await api('POST', '/api/projects/' + proj + '/databases', { name, engine });
+        alert('Database provisioning started');
+        document.getElementById('db-name').value = '';
+        setTimeout(() => { loadDatabases(); loadStats(); }, 1000);
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    async function backupDb(id) {
+      try {
+        const r = await api('POST', '/api/databases/' + id + '/backup');
+        alert('Snapshot ' + r.id + ' created (' + r.size_mb + ' MB)');
+        setTimeout(loadBackups, 1000);
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    async function deleteDb(id) {
+      if (!confirm('Delete this database and all its backups?')) return;
+      await api('DELETE', '/api/databases/' + id);
+      loadDatabases(); loadStats();
+    }
+
+    // ─── Backups ───
+    async function loadBackups() {
+      const bkps = await api('GET', '/api/backups');
+      const el = document.getElementById('backups-table');
+      if (bkps.length === 0) {
+        el.innerHTML = '<div class="empty-state">No backup snapshots yet.</div>';
+        return;
+      }
+      el.innerHTML = '<table><thead><tr><th>ID</th><th>Database</th><th>Engine</th><th>Project</th><th>Size</th><th>Status</th><th>Created</th><th>Actions</th></tr></thead><tbody>' +
+        bkps.map(b => `<tr>
+          <td style="font-family:monospace;font-size:11px;">${esc(b.id)}</td>
+          <td>${esc(b.db_name)}</td>
+          <td>${esc(b.db_engine)}</td>
+          <td>${esc(b.project)}</td>
+          <td>${b.size_mb} MB</td>
+          <td style="color:${b.status === 'completed' ? 'var(--success)' : 'var(--warning)'};">${b.status}</td>
+          <td style="font-size:11px;">${new Date(b.created_at).toLocaleString()}</td>
+          <td>
+            ${b.status === 'completed' ? '<button class="btn-outline" onclick="restoreBackup(\'' + b.id + '\')">Restore</button>' : '—'}
+          </td>
+        </tr>`).join('') + '</tbody></table>';
+    }
+
+    async function createBackup() {
+      const dbId = document.getElementById('backup-dbid').value;
+      if (!dbId) return alert('Enter a database ID');
+      try {
+        const r = await api('POST', '/api/databases/' + dbId + '/backup');
+        alert('Snapshot ' + r.id + ' created (' + r.size_mb + ' MB)');
+        document.getElementById('backup-dbid').value = '';
+        setTimeout(loadBackups, 1000);
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    async function restoreBackup(id) {
+      if (!confirm('Restore this backup? The database will restart.')) return;
+      const r = await api('POST', '/api/backups/' + id + '/restore');
+      alert(r.message);
+      setTimeout(loadDatabases, 1000);
+    }
+
+    // ─── Deployments ───
+    async function loadDeployments() {
+      const proj = document.getElementById('deploy-project').value;
+      if (!proj) return alert('Enter project name');
+      try {
+        const deps = await api('GET', '/api/projects/' + proj + '/deployments');
+        const el = document.getElementById('deployments-table');
+        if (deps.length === 0) { el.innerHTML = '<div class="empty-state">No deployments found.</div>'; return; }
+        el.innerHTML = '<table><thead><tr><th>ID</th><th>Version</th><th>Phase</th><th>Trigger</th><th>Started</th><th>Actions</th></tr></thead><tbody>' +
+          deps.map(d => `<tr>
+            <td style="font-family:monospace;font-size:11px;">${esc(d.id)}</td>
+            <td>${esc(d.version)}</td>
+            <td style="color:${d.phase === 'ready' ? 'var(--success)' : d.phase === 'failed' ? 'var(--danger)' : 'var(--warning)'}">${d.phase}</td>
+            <td>${d.trigger}</td>
+            <td>${new Date(d.started_at).toLocaleString()}</td>
+            <td style="display:flex;gap:4px;">
+              <button class="btn-outline" onclick="rollbackDeployment('${d.id}')">Rollback Here</button>
+              <button class="btn-outline" onclick="openDiff('${d.id}')">Diff</button>
+            </td>
+          </tr>`).join('') + '</tbody></table>';
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    async function rollbackDeployment(id) {
+      if (!confirm('Rollback to this deployment? This will trigger a new deployment.')) return;
+      try {
+        const r = await api('POST', '/api/deployments/' + id + '/rollback');
+        alert('Rollback started: ' + r.id + ' (' + r.version + ')');
+        document.getElementById('log-deploy-id').value = r.id;
+        showTab('logs', document.querySelectorAll('nav button')[8]);
+        streamLogs();
+      } catch (e) { alert('Rollback failed: ' + e.message); }
+    }
+
+    function openDiff(baseId) {
+      document.getElementById('diff-modal').style.display = 'block';
+      document.getElementById('diff-base').value = baseId;
+      document.getElementById('diff-output').textContent = 'Select two deployments to view the delta.';
+    }
+
+    async function compareDeployments() {
+      const base = document.getElementById('diff-base').value;
+      const target = document.getElementById('diff-target').value;
+      if (!base || !target) return alert('Enter both Base and Target IDs');
+      try {
+        const r = await api('GET', '/api/deployments/' + base + '/diff/' + target);
+        document.getElementById('diff-output').textContent = JSON.stringify(r, null, 2);
+      } catch (e) { alert('Diff error: ' + e.message); }
+    }
+
+    // ─── Env Vars ───
+    async function loadEnv() {
+      const proj = document.getElementById('env-project').value;
+      if (!proj) return alert('Enter project name');
+      try {
+        const p = await api('GET', '/api/projects');
+        const projData = p.find(x => x.name === proj);
+        if (!projData) return alert('Project not found');
+        document.getElementById('env-json').value = JSON.stringify(JSON.parse(projData.env_json || '{}'), null, 2);
+      } catch (e) { alert('Load env error: ' + e.message); }
+    }
+    
+    async function saveEnv() {
+      const proj = document.getElementById('env-project').value;
+      if (!proj) return alert('Enter project name');
+      try {
+        const env = JSON.parse(document.getElementById('env-json').value);
+        await api('POST', '/api/projects/' + proj + '/env', { env });
+        alert('Environment variables saved successfully.');
+      } catch (e) { alert('Invalid JSON or save error: ' + e.message); }
+    }
+
+    // ─── Quotas ───
+    async function loadQuotas() {
+      const proj = document.getElementById('quota-project').value;
+      if (!proj) return alert('Enter project name');
+      try {
+        const p = await api('GET', '/api/projects');
+        const projData = p.find(x => x.name === proj);
+        if (!projData) return alert('Project not found');
+        const m = await api('GET', '/api/metrics');
+        document.getElementById('quota-host-info').textContent = `Host capacity: ${m.cpu.cores} Cores / ${m.memory.total_mb} MB RAM`;
+        document.getElementById('quota-cpu').value = projData.cpu_limit ?? '';
+        document.getElementById('quota-mem').value = projData.memory_mb_limit ?? '';
+      } catch (e) { alert('Load quotas error: ' + e.message); }
+    }
+    
+    async function saveQuotas() {
+      const proj = document.getElementById('quota-project').value;
+      if (!proj) return alert('Enter project name');
+      const cpu = document.getElementById('quota-cpu').value;
+      const mem = document.getElementById('quota-mem').value;
+      try {
+        await api('POST', '/api/projects/' + proj + '/quotas', {
+          cpu_limit: cpu ? parseFloat(cpu) : null,
+          memory_mb_limit: mem ? parseInt(mem, 10) : null
+        });
+        alert('Quotas saved successfully.');
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    // ─── Tokens ───
+    async function loadTokens() {
+      try {
+        const toks = await api('GET', '/api/tokens');
+        const el = document.getElementById('tokens-table');
+        if (toks.length === 0) { el.innerHTML = '<div class="empty-state">No tokens found.</div>'; return; }
+        el.innerHTML = '<table><thead><tr><th>Name</th><th>Created</th><th>Actions</th></tr></thead><tbody>' +
+          toks.map(t => `<tr>
+            <td><strong>${esc(t.name)}</strong></td>
+            <td>${new Date(t.created_at).toLocaleString()}</td>
+            <td><button class="btn-outline" onclick="deleteToken('${t.token}')" style="color:var(--danger)">Revoke</button></td>
+          </tr>`).join('') + '</tbody></table>';
+      } catch(e) {}
+    }
+
+    async function createToken() {
+      const name = document.getElementById('token-name').value;
+      if (!name) return alert('Enter token label');
+      try {
+        const r = await api('POST', '/api/tokens', { name });
+        alert('Token generated (copy this now): ' + r.token);
+        document.getElementById('token-name').value = '';
+        loadTokens();
+      } catch (e) { alert('Error: ' + e.message); }
+    }
+
+    async function deleteToken(token) {
+      if (!confirm('Revoke this token?')) return;
+      await api('DELETE', '/api/tokens/' + token);
+      loadTokens();
+    }
+
+    // ─── Live Logs ───
+    function streamLogs() {
+      const deployId = document.getElementById('log-deploy-id').value;
+      if (!deployId) return alert('Enter a deployment ID');
+      const term = document.getElementById('terminal-out');
+      term.textContent = 'Connecting to log stream...\n';
+      if (ws) { try { ws.close(); } catch {} }
+      ws = new WebSocket(engineUrl.replace(/^http/, 'ws') + '/ws?deployment=' + deployId);
+      ws.onmessage = (ev) => {
+        try {
+          const m = JSON.parse(ev.data);
+          const line = '[' + m.stream + '] ' + m.text + '\n';
+          term.textContent += line;
+          term.scrollTop = term.scrollHeight;
+        } catch {}
+      };
+      ws.onerror = () => { term.textContent += '\n[error] WebSocket connection failed\n'; };
+      ws.onclose = () => { term.textContent += '\n[system] Stream closed\n'; };
+    }
+
+    function clearLogs() { document.getElementById('terminal-out').textContent = ''; }
+
+    // ─── Utilities ───
+    function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+    // Auto-connect on load
+    if (engineToken) connect();
+  </script>
+</body>
+</html>

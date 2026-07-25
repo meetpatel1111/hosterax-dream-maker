@@ -6,7 +6,7 @@ const path = require("node:path");
 let engine;
 function startEngine() {
   const entry = path.join(__dirname, "..", "engine", "src", "index.mjs");
-  engine = spawn(process.execPath, [entry], {
+  engine = spawn("node", [entry], {
     env: { ...process.env, HOSTERAX_PORT: "7777" },
     stdio: "inherit",
   });
