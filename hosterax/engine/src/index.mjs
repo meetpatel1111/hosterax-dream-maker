@@ -160,12 +160,25 @@ async function fetchSource(deploymentId, source, workdir) {
   return runStep(deploymentId, path.dirname(workdir), cmd, {});
 }
 
-async function startService(deploymentId, project, workdir, cmd, env) {
+async function startService(deploymentId, project, workdir, cmd, env, target) {
   // kill previous
   const prev = running.get(project);
   if (prev && !prev.killed) {
     publish(deploymentId, { ts: Date.now(), stream: "system", text: `stopping previous pid ${prev.pid}` });
     try { process.kill(prev.pid); } catch {}
+  }
+  if (target === "docker") {
+    // Build & run docker image tagged after the project. Requires docker on PATH.
+    const tag = `hosterax/${project}:latest`;
+    publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
+    const bc = await runStep(deploymentId, workdir, `docker build -t ${tag} .`, env);
+    if (bc !== 0) return bc;
+    // stop old container
+    await runStep(deploymentId, workdir, `docker rm -f hx_${project} 2>/dev/null || true`, {});
+    const envFlags = Object.entries(env).map(([k, v]) => `-e ${k}=${JSON.stringify(v)}`).join(" ");
+    const runCmd = `docker run -d --name hx_${project} ${envFlags} ${tag}`;
+    publish(deploymentId, { ts: Date.now(), stream: "system", text: runCmd });
+    return runStep(deploymentId, workdir, runCmd, {});
   }
   if (!cmd) { publish(deploymentId, { ts: Date.now(), stream: "system", text: "no start command; skipping" }); return 0; }
   publish(deploymentId, { ts: Date.now(), stream: "system", text: `starting: ${cmd}` });
@@ -254,7 +267,7 @@ async function runDeployment(project, opts = {}) {
         publish(id, { ts: Date.now(), stream: "system", text: `rollback to ${version}` });
       }
       setPhase(id, "deploying");
-      await startService(id, project, workdir, finalStartCmd, env);
+      await startService(id, project, workdir, finalStartCmd, env, p.target);
       setPhase(id, "ready", { finished_at: Date.now(), exit_code: 0 });
     } catch (e) {
       publish(id, { ts: Date.now(), stream: "stderr", text: String(e) });
