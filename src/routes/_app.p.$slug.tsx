@@ -65,15 +65,13 @@ function ProjectPage() {
 
   async function deploy(trigger: "manual" | "git" | "upload" | "url" | "cli" | "api" = "manual") {
     try {
-      // Upsert project to local engine
-      await eng.call("POST", "/api/projects", {
+      await engine.call("POST", "/api/projects", {
         name: project!.name,
-        source: "./", // Default to current dir or fetch from git if implemented
-        build_cmd: project!.build_command ?? "npm install && npm run build",
-        start_cmd: "npm start",
+        source: "./",
+        buildCmd: project!.build_command ?? "npm install && npm run build",
+        startCmd: "npm start",
         target: project!.target_type || "process"
       });
-      // Trigger deploy
       await engine.call("POST", `/api/projects/${project!.name}/deploy`, { trigger });
       toast.success(`Deploy queued on Server`);
       setTab("logs");
@@ -162,7 +160,7 @@ function ProjectPage() {
       </div>
 
       {tab === "overview" && <Overview project={project} />}
-      {tab === "deployments" && <Deployments projectId={project.id} projectName={project.name} />}
+      {tab === "deployments" && <Deployments projectId={project.id} />}
       {tab === "logs" && <LiveLogs projectName={project.name} />}
       {tab === "env" && <EnvVars projectId={project.id} />}
       {tab === "domains" && <ProjectDomains projectId={project.id} projectName={project.name} />}
@@ -247,7 +245,18 @@ function Deployments({ projectId }: { projectId: string }) {
     if (!project) return;
     if (!confirm(`Rollback to ${dep.version ?? dep.commit_sha}? A new build will be queued from this snapshot.`)) return;
     try {
-      await rollbackTo(project as any, dep.id, dep.version);
+      const { error } = await supabase.from("deployments").insert({
+        project_id: project.id,
+        commit_sha: dep.commit_sha,
+        commit_message: `Rollback to ${dep.version ?? dep.commit_sha}`,
+        branch: dep.branch,
+        environment: dep.environment,
+        trigger_type: "manual",
+        status: "queued",
+        rollback_of: dep.id,
+        version: dep.version,
+      });
+      if (error) throw error;
       toast.success("Rollback queued");
       qc.invalidateQueries({ queryKey: ["deployments", projectId] });
     } catch (e: any) {
@@ -345,7 +354,7 @@ function LiveLogs({ projectName }: { projectName: string }) {
       } catch (err) {}
     };
     return () => ch.close();
-  }, [active, eng.url]);
+  }, [active, engine.url]);
 
   return (
     <div className="grid gap-4 md:grid-cols-[220px_1fr]">

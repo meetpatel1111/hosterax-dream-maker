@@ -17,6 +17,7 @@ import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
 import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
 import { Route as AppDomainsRouteImport } from './routes/_app.domains'
+import { Route as AppLocalRouteImport } from './routes/_app.local'
 import { Route as AppNewRouteImport } from './routes/_app.new'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
 import { Route as AppServersRouteImport } from './routes/_app.servers'
@@ -64,6 +65,11 @@ const AppDomainsRoute = AppDomainsRouteImport.update({
   path: '/domains',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLocalRoute = AppLocalRouteImport.update({
+  id: '/local',
+  path: '/local',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppNewRoute = AppNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -108,6 +114,7 @@ export interface FileRoutesByFullPath {
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
   '/domains': typeof AppDomainsRoute
+  '/local': typeof AppLocalRoute
   '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
   '/servers': typeof AppServersRoute
@@ -124,6 +131,7 @@ export interface FileRoutesByTo {
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
   '/domains': typeof AppDomainsRoute
+  '/local': typeof AppLocalRoute
   '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
   '/servers': typeof AppServersRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/_app/databases': typeof AppDatabasesRoute
   '/_app/deployments': typeof AppDeploymentsRoute
   '/_app/domains': typeof AppDomainsRoute
+  '/_app/local': typeof AppLocalRoute
   '/_app/new': typeof AppNewRoute
   '/_app/oauth': typeof AppOauthRoute
   '/_app/servers': typeof AppServersRoute
@@ -160,6 +169,7 @@ export interface FileRouteTypes {
     | '/databases'
     | '/deployments'
     | '/domains'
+    | '/local'
     | '/new'
     | '/oauth'
     | '/servers'
@@ -176,6 +186,7 @@ export interface FileRouteTypes {
     | '/databases'
     | '/deployments'
     | '/domains'
+    | '/local'
     | '/new'
     | '/oauth'
     | '/servers'
@@ -193,6 +204,7 @@ export interface FileRouteTypes {
     | '/_app/databases'
     | '/_app/deployments'
     | '/_app/domains'
+    | '/_app/local'
     | '/_app/new'
     | '/_app/oauth'
     | '/_app/servers'
@@ -266,6 +278,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDomainsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/local': {
+      id: '/_app/local'
+      path: '/local'
+      fullPath: '/local'
+      preLoaderRoute: typeof AppLocalRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/new': {
       id: '/_app/new'
       path: '/new'
@@ -324,6 +343,7 @@ interface AppRouteChildren {
   AppDatabasesRoute: typeof AppDatabasesRoute
   AppDeploymentsRoute: typeof AppDeploymentsRoute
   AppDomainsRoute: typeof AppDomainsRoute
+  AppLocalRoute: typeof AppLocalRoute
   AppNewRoute: typeof AppNewRoute
   AppOauthRoute: typeof AppOauthRoute
   AppServersRoute: typeof AppServersRoute
@@ -339,6 +359,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDatabasesRoute: AppDatabasesRoute,
   AppDeploymentsRoute: AppDeploymentsRoute,
   AppDomainsRoute: AppDomainsRoute,
+  AppLocalRoute: AppLocalRoute,
   AppNewRoute: AppNewRoute,
   AppOauthRoute: AppOauthRoute,
   AppServersRoute: AppServersRoute,
@@ -358,13 +379,3 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

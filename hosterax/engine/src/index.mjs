@@ -75,6 +75,23 @@ CREATE TABLE IF NOT EXISTS backups (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_backups_dbid ON backups(database_id);
+CREATE TABLE IF NOT EXISTS webhooks (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'github',
+  secret TEXT NOT NULL,
+  branch TEXT NOT NULL DEFAULT 'main',
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS installed_apps (
+  id TEXT PRIMARY KEY,
+  slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  container_id TEXT,
+  port INTEGER,
+  status TEXT NOT NULL DEFAULT 'installing',
+  created_at INTEGER NOT NULL
+);
 `);
 
 // Migrations
@@ -143,12 +160,25 @@ async function fetchSource(deploymentId, source, workdir) {
   return runStep(deploymentId, path.dirname(workdir), cmd, {});
 }
 
-async function startService(deploymentId, project, workdir, cmd, env) {
+async function startService(deploymentId, project, workdir, cmd, env, target) {
   // kill previous
   const prev = running.get(project);
   if (prev && !prev.killed) {
     publish(deploymentId, { ts: Date.now(), stream: "system", text: `stopping previous pid ${prev.pid}` });
     try { process.kill(prev.pid); } catch {}
+  }
+  if (target === "docker") {
+    // Build & run docker image tagged after the project. Requires docker on PATH.
+    const tag = `hosterax/${project}:latest`;
+    publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
+    const bc = await runStep(deploymentId, workdir, `docker build -t ${tag} .`, env);
+    if (bc !== 0) return bc;
+    // stop old container
+    await runStep(deploymentId, workdir, `docker rm -f hx_${project} 2>/dev/null || true`, {});
+    const envFlags = Object.entries(env).map(([k, v]) => `-e ${k}=${JSON.stringify(v)}`).join(" ");
+    const runCmd = `docker run -d --name hx_${project} ${envFlags} ${tag}`;
+    publish(deploymentId, { ts: Date.now(), stream: "system", text: runCmd });
+    return runStep(deploymentId, workdir, runCmd, {});
   }
   if (!cmd) { publish(deploymentId, { ts: Date.now(), stream: "system", text: "no start command; skipping" }); return 0; }
   publish(deploymentId, { ts: Date.now(), stream: "system", text: `starting: ${cmd}` });
@@ -237,7 +267,7 @@ async function runDeployment(project, opts = {}) {
         publish(id, { ts: Date.now(), stream: "system", text: `rollback to ${version}` });
       }
       setPhase(id, "deploying");
-      await startService(id, project, workdir, finalStartCmd, env);
+      await startService(id, project, workdir, finalStartCmd, env, p.target);
       setPhase(id, "ready", { finished_at: Date.now(), exit_code: 0 });
     } catch (e) {
       publish(id, { ts: Date.now(), stream: "stderr", text: String(e) });
@@ -312,6 +342,28 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/health") return json(res, 200, { ok: true, version: "0.2.0" });
+
+  // GitHub webhook — public but HMAC-verified
+  if (url.pathname.startsWith("/webhooks/github/") && req.method === "POST") {
+    const project = url.pathname.split("/").pop();
+    const wh = db.prepare("SELECT * FROM webhooks WHERE project=?").get(project);
+    if (!wh) return json(res, 404, { error: "no webhook configured" });
+    let raw = ""; req.on("data", (c) => raw += c);
+    return req.on("end", async () => {
+      const sig = req.headers["x-hub-signature-256"] || "";
+      const expected = "sha256=" + crypto.createHmac("sha256", wh.secret).update(raw).digest("hex");
+      const a = Buffer.from(sig), b = Buffer.from(expected);
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return json(res, 401, { error: "bad signature" });
+      try {
+        const payload = JSON.parse(raw);
+        const branch = (payload.ref || "").replace("refs/heads/", "");
+        if (branch !== wh.branch) return json(res, 200, { skipped: true, branch });
+        const r = await runDeployment(project, { trigger: "git" });
+        return json(res, 200, { deployed: r.id });
+      } catch (e) { return json(res, 500, { error: String(e) }); }
+    });
+  }
+
   if (!authOk(req)) return json(res, 401, { error: "unauthorized" });
 
   try {
@@ -585,6 +637,59 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/tokens\/([^/]+)$/)) && req.method === "DELETE") {
       db.prepare("DELETE FROM tokens WHERE token=?").run(m[1]); return json(res, 200, { ok: true });
     }
+
+    // ────────── github webhooks (config) ──────────
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook$/)) && req.method === "GET") {
+      const wh = db.prepare("SELECT id, project, provider, branch, created_at FROM webhooks WHERE project=?").get(m[1]);
+      return json(res, 200, wh || null);
+    }
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook$/)) && req.method === "POST") {
+      const b = await readBody(req);
+      const proj = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
+      if (!proj) return json(res, 404, { error: "project not found" });
+      db.prepare("DELETE FROM webhooks WHERE project=?").run(m[1]);
+      const id = "wh_" + crypto.randomBytes(6).toString("hex");
+      const secret = crypto.randomBytes(24).toString("hex");
+      db.prepare("INSERT INTO webhooks VALUES (?,?,?,?,?,?)")
+        .run(id, m[1], "github", secret, b.branch || "main", Date.now());
+      return json(res, 200, { id, secret, branch: b.branch || "main", url: `/webhooks/github/${m[1]}` });
+    }
+
+    // ────────── one-click apps (via docker) ──────────
+    if (url.pathname === "/api/apps" && req.method === "GET")
+      return json(res, 200, db.prepare("SELECT * FROM installed_apps ORDER BY created_at DESC").all());
+    if (url.pathname === "/api/apps" && req.method === "POST") {
+      const b = await readBody(req);
+      if (!b.slug || !b.image) return json(res, 400, { error: "slug and image required" });
+      const id = "app_" + crypto.randomBytes(6).toString("hex");
+      const port = b.port || null;
+      db.prepare("INSERT INTO installed_apps VALUES (?,?,?,?,?,?,?)")
+        .run(id, b.slug, b.name || b.slug, null, port, "installing", Date.now());
+      // spawn docker run detached; if docker missing, mark failed
+      const cname = `hx_app_${b.slug}_${id.slice(-6)}`;
+      const portFlag = port ? `-p ${port}:${port}` : "";
+      const cmd = `docker run -d --name ${cname} ${portFlag} ${b.image}`;
+      const child = spawn(process.platform === "win32" ? "cmd.exe" : "sh",
+        process.platform === "win32" ? ["/c", cmd] : ["-c", cmd]);
+      let out = "";
+      child.stdout.on("data", (d) => out += d.toString());
+      child.stderr.on("data", (d) => out += d.toString());
+      child.on("close", (code) => {
+        const status = code === 0 ? "running" : "failed";
+        db.prepare("UPDATE installed_apps SET status=?, container_id=? WHERE id=?").run(status, out.trim().slice(0, 64), id);
+      });
+      return json(res, 200, { id, slug: b.slug });
+    }
+    if ((m = url.pathname.match(/^\/api\/apps\/([^/]+)$/)) && req.method === "DELETE") {
+      const app = db.prepare("SELECT * FROM installed_apps WHERE id=?").get(m[1]);
+      if (app?.container_id) {
+        spawn(process.platform === "win32" ? "cmd.exe" : "sh",
+          process.platform === "win32" ? ["/c", `docker rm -f ${app.container_id}`] : ["-c", `docker rm -f ${app.container_id}`]);
+      }
+      db.prepare("DELETE FROM installed_apps WHERE id=?").run(m[1]);
+      return json(res, 200, { ok: true });
+    }
+
     return json(res, 404, { error: "not found" });
   } catch (e) {
     return json(res, 500, { error: String(e) });

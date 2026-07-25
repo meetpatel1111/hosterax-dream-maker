@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { StatusBadge } from "@/components/hx/status-badge";
 import { BackupWizardModal } from "@/components/hx/backup-wizard";
 import { useState } from "react";
-import { Plus, Database as DbIcon, Search, MoreHorizontal, Terminal, Activity, ArrowRight, Settings } from "lucide-react";
+import { Plus, Database, Search, MoreHorizontal, Terminal, Activity, ArrowRight, Settings } from "lucide-react";
 import { useEngine } from "@/lib/engine";
 
 export const Route = createFileRoute("/_app/databases")({
