@@ -23,7 +23,7 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
       cpu: Math.max(2, Math.min(95, 12 + Math.sin(seed + ticks) * 18 + timeFactor * 5)),
       mem: Math.max(10, Math.min(92, 45 + Math.cos(seed + ticks * 0.3) * 15)),
       net: Math.max(0.2, (2.4 + Math.sin(ticks * 0.7) * 1.8)).toFixed(2),
-      disk: Math.max(15, (22 + (seed % 10)).toFixed(1)),
+      disk: Math.max(15, 22 + (seed % 10)),
       uptime: status === "failed" ? "98.40%" : "99.98%",
       latency: Math.floor(24 + Math.sin(ticks * 0.8) * 12),
       requestsPerMin: Math.floor(340 + Math.cos(ticks) * 90),
