@@ -25,7 +25,7 @@ function AuthPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const target = safeNext(next);
+  const target = safeNext(next ?? "");
 
   if (!loading && session) return <Navigate to={target as never} />;
 
