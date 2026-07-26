@@ -12,15 +12,19 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AuthRouteImport } from './routes/auth'
-import { Route as McpRouteImport } from './routes/mcp'
-import { Route as Char91DotmcpChar93ListToolsRouteImport } from './routes/[.mcp]/list-tools'
-import { Route as Char91DotwellKnownChar93OauthProtectedResourceRouteImport } from './routes/[.well-known]/oauth-protected-resource'
+import { Route as AppActivityRouteImport } from './routes/_app.activity'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
+import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
+import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
+import { Route as AppDomainsRouteImport } from './routes/_app.domains'
+import { Route as AppLocalRouteImport } from './routes/_app.local'
+import { Route as AppNewRouteImport } from './routes/_app.new'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
+import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppTokensRouteImport } from './routes/_app.tokens'
-import { Route as DotlovableOauthConsentRouteImport } from './routes/[.]lovable.oauth.consent'
-import { Route as Char91DotmcpChar93InvokeToolToolRouteImport } from './routes/[.mcp]/invoke-tool/$tool'
+import { Route as AppPRouteImport } from './routes/_app.p.'
+import { Route as AppPSlugRouteImport } from './routes/_app.p.$slug'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -36,31 +40,49 @@ const AuthRoute = AuthRouteImport.update({
   path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
-const McpRoute = McpRouteImport.update({
-  id: '/mcp',
-  path: '/mcp',
-  getParentRoute: () => rootRouteImport,
+const AppActivityRoute = AppActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => AppRoute,
 } as any)
-const Char91DotmcpChar93ListToolsRoute =
-  Char91DotmcpChar93ListToolsRouteImport.update({
-    id: '/.mcp/list-tools',
-    path: '/.mcp/list-tools',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const Char91DotwellKnownChar93OauthProtectedResourceRoute =
-  Char91DotwellKnownChar93OauthProtectedResourceRouteImport.update({
-    id: '/.well-known/oauth-protected-resource',
-    path: '/.well-known/oauth-protected-resource',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
   getParentRoute: () => AppRoute,
 } as any)
+const AppDatabasesRoute = AppDatabasesRouteImport.update({
+  id: '/databases',
+  path: '/databases',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDeploymentsRoute = AppDeploymentsRouteImport.update({
+  id: '/deployments',
+  path: '/deployments',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDomainsRoute = AppDomainsRouteImport.update({
+  id: '/domains',
+  path: '/domains',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppLocalRoute = AppLocalRouteImport.update({
+  id: '/local',
+  path: '/local',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNewRoute = AppNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppOauthRoute = AppOauthRouteImport.update({
   id: '/oauth',
   path: '/oauth',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppServersRoute = AppServersRouteImport.update({
+  id: '/servers',
+  path: '/servers',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
@@ -73,111 +95,129 @@ const AppTokensRoute = AppTokensRouteImport.update({
   path: '/tokens',
   getParentRoute: () => AppRoute,
 } as any)
-const DotlovableOauthConsentRoute = DotlovableOauthConsentRouteImport.update({
-  id: '/.lovable/oauth/consent',
-  path: '/.lovable/oauth/consent',
-  getParentRoute: () => rootRouteImport,
+const AppPRoute = AppPRouteImport.update({
+  id: '/p/',
+  path: '/p/',
+  getParentRoute: () => AppRoute,
 } as any)
-const Char91DotmcpChar93InvokeToolToolRoute =
-  Char91DotmcpChar93InvokeToolToolRouteImport.update({
-    id: '/.mcp/invoke-tool/$tool',
-    path: '/.mcp/invoke-tool/$tool',
-    getParentRoute: () => rootRouteImport,
-  } as any)
+const AppPSlugRoute = AppPSlugRouteImport.update({
+  id: '/p/$slug',
+  path: '/p/$slug',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
-  '/mcp': typeof McpRoute
-  '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
-  '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
+  '/activity': typeof AppActivityRoute
   '/dashboard': typeof AppDashboardRoute
+  '/databases': typeof AppDatabasesRoute
+  '/deployments': typeof AppDeploymentsRoute
+  '/domains': typeof AppDomainsRoute
+  '/local': typeof AppLocalRoute
+  '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
+  '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/tokens': typeof AppTokensRoute
-  '/.lovable/oauth/consent': typeof DotlovableOauthConsentRoute
-  '/.mcp/invoke-tool/$tool': typeof Char91DotmcpChar93InvokeToolToolRoute
+  '/p/': typeof AppPRoute
+  '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
-  '/mcp': typeof McpRoute
-  '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
-  '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
+  '/activity': typeof AppActivityRoute
   '/dashboard': typeof AppDashboardRoute
+  '/databases': typeof AppDatabasesRoute
+  '/deployments': typeof AppDeploymentsRoute
+  '/domains': typeof AppDomainsRoute
+  '/local': typeof AppLocalRoute
+  '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
+  '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/tokens': typeof AppTokensRoute
-  '/.lovable/oauth/consent': typeof DotlovableOauthConsentRoute
-  '/.mcp/invoke-tool/$tool': typeof Char91DotmcpChar93InvokeToolToolRoute
+  '/p': typeof AppPRoute
+  '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
-  '/mcp': typeof McpRoute
-  '/.mcp/list-tools': typeof Char91DotmcpChar93ListToolsRoute
-  '/.well-known/oauth-protected-resource': typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
+  '/_app/activity': typeof AppActivityRoute
   '/_app/dashboard': typeof AppDashboardRoute
+  '/_app/databases': typeof AppDatabasesRoute
+  '/_app/deployments': typeof AppDeploymentsRoute
+  '/_app/domains': typeof AppDomainsRoute
+  '/_app/local': typeof AppLocalRoute
+  '/_app/new': typeof AppNewRoute
   '/_app/oauth': typeof AppOauthRoute
+  '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/tokens': typeof AppTokensRoute
-  '/.lovable/oauth/consent': typeof DotlovableOauthConsentRoute
-  '/.mcp/invoke-tool/$tool': typeof Char91DotmcpChar93InvokeToolToolRoute
+  '/_app/p/': typeof AppPRoute
+  '/_app/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
     | '/auth'
-    | '/mcp'
-    | '/.mcp/list-tools'
-    | '/.well-known/oauth-protected-resource'
+    | '/activity'
     | '/dashboard'
+    | '/databases'
+    | '/deployments'
+    | '/domains'
+    | '/local'
+    | '/new'
     | '/oauth'
+    | '/servers'
     | '/settings'
     | '/tokens'
-    | '/.lovable/oauth/consent'
-    | '/.mcp/invoke-tool/$tool'
+    | '/p/'
+    | '/p/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth'
-    | '/mcp'
-    | '/.mcp/list-tools'
-    | '/.well-known/oauth-protected-resource'
+    | '/activity'
     | '/dashboard'
+    | '/databases'
+    | '/deployments'
+    | '/domains'
+    | '/local'
+    | '/new'
     | '/oauth'
+    | '/servers'
     | '/settings'
     | '/tokens'
-    | '/.lovable/oauth/consent'
-    | '/.mcp/invoke-tool/$tool'
+    | '/p'
+    | '/p/$slug'
   id:
     | '__root__'
     | '/'
     | '/_app'
     | '/auth'
-    | '/mcp'
-    | '/.mcp/list-tools'
-    | '/.well-known/oauth-protected-resource'
+    | '/_app/activity'
     | '/_app/dashboard'
+    | '/_app/databases'
+    | '/_app/deployments'
+    | '/_app/domains'
+    | '/_app/local'
+    | '/_app/new'
     | '/_app/oauth'
+    | '/_app/servers'
     | '/_app/settings'
     | '/_app/tokens'
-    | '/.lovable/oauth/consent'
-    | '/.mcp/invoke-tool/$tool'
+    | '/_app/p/'
+    | '/_app/p/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
   AuthRoute: typeof AuthRoute
-  McpRoute: typeof McpRoute
-  Char91DotmcpChar93ListToolsRoute: typeof Char91DotmcpChar93ListToolsRoute
-  Char91DotwellKnownChar93OauthProtectedResourceRoute: typeof Char91DotwellKnownChar93OauthProtectedResourceRoute
-  DotlovableOauthConsentRoute: typeof DotlovableOauthConsentRoute
-  Char91DotmcpChar93InvokeToolToolRoute: typeof Char91DotmcpChar93InvokeToolToolRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -203,26 +243,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/mcp': {
-      id: '/mcp'
-      path: '/mcp'
-      fullPath: '/mcp'
-      preLoaderRoute: typeof McpRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/.mcp/list-tools': {
-      id: '/.mcp/list-tools'
-      path: '/.mcp/list-tools'
-      fullPath: '/.mcp/list-tools'
-      preLoaderRoute: typeof Char91DotmcpChar93ListToolsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/.well-known/oauth-protected-resource': {
-      id: '/.well-known/oauth-protected-resource'
-      path: '/.well-known/oauth-protected-resource'
-      fullPath: '/.well-known/oauth-protected-resource'
-      preLoaderRoute: typeof Char91DotwellKnownChar93OauthProtectedResourceRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_app/activity': {
+      id: '/_app/activity'
+      path: '/activity'
+      fullPath: '/activity'
+      preLoaderRoute: typeof AppActivityRouteImport
+      parentRoute: typeof AppRoute
     }
     '/_app/dashboard': {
       id: '/_app/dashboard'
@@ -231,11 +257,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDashboardRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/databases': {
+      id: '/_app/databases'
+      path: '/databases'
+      fullPath: '/databases'
+      preLoaderRoute: typeof AppDatabasesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/deployments': {
+      id: '/_app/deployments'
+      path: '/deployments'
+      fullPath: '/deployments'
+      preLoaderRoute: typeof AppDeploymentsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/domains': {
+      id: '/_app/domains'
+      path: '/domains'
+      fullPath: '/domains'
+      preLoaderRoute: typeof AppDomainsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/local': {
+      id: '/_app/local'
+      path: '/local'
+      fullPath: '/local'
+      preLoaderRoute: typeof AppLocalRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/new': {
+      id: '/_app/new'
+      path: '/new'
+      fullPath: '/new'
+      preLoaderRoute: typeof AppNewRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/oauth': {
       id: '/_app/oauth'
       path: '/oauth'
       fullPath: '/oauth'
       preLoaderRoute: typeof AppOauthRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/servers': {
+      id: '/_app/servers'
+      path: '/servers'
+      fullPath: '/servers'
+      preLoaderRoute: typeof AppServersRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/settings': {
@@ -252,35 +320,53 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTokensRouteImport
       parentRoute: typeof AppRoute
     }
-    '/.lovable/oauth/consent': {
-      id: '/.lovable/oauth/consent'
-      path: '/.lovable/oauth/consent'
-      fullPath: '/.lovable/oauth/consent'
-      preLoaderRoute: typeof DotlovableOauthConsentRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_app/p/': {
+      id: '/_app/p/'
+      path: '/p'
+      fullPath: '/p/'
+      preLoaderRoute: typeof AppPRouteImport
+      parentRoute: typeof AppRoute
     }
-    '/.mcp/invoke-tool/$tool': {
-      id: '/.mcp/invoke-tool/$tool'
-      path: '/.mcp/invoke-tool/$tool'
-      fullPath: '/.mcp/invoke-tool/$tool'
-      preLoaderRoute: typeof Char91DotmcpChar93InvokeToolToolRouteImport
-      parentRoute: typeof rootRouteImport
+    '/_app/p/$slug': {
+      id: '/_app/p/$slug'
+      path: '/p/$slug'
+      fullPath: '/p/$slug'
+      preLoaderRoute: typeof AppPSlugRouteImport
+      parentRoute: typeof AppRoute
     }
   }
 }
 
 interface AppRouteChildren {
+  AppActivityRoute: typeof AppActivityRoute
   AppDashboardRoute: typeof AppDashboardRoute
+  AppDatabasesRoute: typeof AppDatabasesRoute
+  AppDeploymentsRoute: typeof AppDeploymentsRoute
+  AppDomainsRoute: typeof AppDomainsRoute
+  AppLocalRoute: typeof AppLocalRoute
+  AppNewRoute: typeof AppNewRoute
   AppOauthRoute: typeof AppOauthRoute
+  AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTokensRoute: typeof AppTokensRoute
+  AppPRoute: typeof AppPRoute
+  AppPSlugRoute: typeof AppPSlugRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppActivityRoute: AppActivityRoute,
   AppDashboardRoute: AppDashboardRoute,
+  AppDatabasesRoute: AppDatabasesRoute,
+  AppDeploymentsRoute: AppDeploymentsRoute,
+  AppDomainsRoute: AppDomainsRoute,
+  AppLocalRoute: AppLocalRoute,
+  AppNewRoute: AppNewRoute,
   AppOauthRoute: AppOauthRoute,
+  AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTokensRoute: AppTokensRoute,
+  AppPRoute: AppPRoute,
+  AppPSlugRoute: AppPSlugRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
@@ -289,23 +375,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
   AuthRoute: AuthRoute,
-  McpRoute: McpRoute,
-  Char91DotmcpChar93ListToolsRoute: Char91DotmcpChar93ListToolsRoute,
-  Char91DotwellKnownChar93OauthProtectedResourceRoute:
-    Char91DotwellKnownChar93OauthProtectedResourceRoute,
-  DotlovableOauthConsentRoute: DotlovableOauthConsentRoute,
-  Char91DotmcpChar93InvokeToolToolRoute: Char91DotmcpChar93InvokeToolToolRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
