@@ -12,19 +12,10 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AuthRouteImport } from './routes/auth'
-import { Route as AppActivityRouteImport } from './routes/_app.activity'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
-import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
-import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
-import { Route as AppDomainsRouteImport } from './routes/_app.domains'
-import { Route as AppLocalRouteImport } from './routes/_app.local'
-import { Route as AppNewRouteImport } from './routes/_app.new'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
-import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppTokensRouteImport } from './routes/_app.tokens'
-import { Route as AppPRouteImport } from './routes/_app.p.'
-import { Route as AppPSlugRouteImport } from './routes/_app.p.$slug'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,49 +31,14 @@ const AuthRoute = AuthRouteImport.update({
   path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppActivityRoute = AppActivityRouteImport.update({
-  id: '/activity',
-  path: '/activity',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
   getParentRoute: () => AppRoute,
 } as any)
-const AppDatabasesRoute = AppDatabasesRouteImport.update({
-  id: '/databases',
-  path: '/databases',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppDeploymentsRoute = AppDeploymentsRouteImport.update({
-  id: '/deployments',
-  path: '/deployments',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppDomainsRoute = AppDomainsRouteImport.update({
-  id: '/domains',
-  path: '/domains',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppLocalRoute = AppLocalRouteImport.update({
-  id: '/local',
-  path: '/local',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppNewRoute = AppNewRouteImport.update({
-  id: '/new',
-  path: '/new',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppOauthRoute = AppOauthRouteImport.update({
   id: '/oauth',
   path: '/oauth',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppServersRoute = AppServersRouteImport.update({
-  id: '/servers',
-  path: '/servers',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSettingsRoute = AppSettingsRouteImport.update({
@@ -95,123 +51,47 @@ const AppTokensRoute = AppTokensRouteImport.update({
   path: '/tokens',
   getParentRoute: () => AppRoute,
 } as any)
-const AppPRoute = AppPRouteImport.update({
-  id: '/p/',
-  path: '/p/',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppPSlugRoute = AppPSlugRouteImport.update({
-  id: '/p/$slug',
-  path: '/p/$slug',
-  getParentRoute: () => AppRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
-  '/activity': typeof AppActivityRoute
   '/dashboard': typeof AppDashboardRoute
-  '/databases': typeof AppDatabasesRoute
-  '/deployments': typeof AppDeploymentsRoute
-  '/domains': typeof AppDomainsRoute
-  '/local': typeof AppLocalRoute
-  '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
-  '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/tokens': typeof AppTokensRoute
-  '/p/': typeof AppPRoute
-  '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
-  '/activity': typeof AppActivityRoute
   '/dashboard': typeof AppDashboardRoute
-  '/databases': typeof AppDatabasesRoute
-  '/deployments': typeof AppDeploymentsRoute
-  '/domains': typeof AppDomainsRoute
-  '/local': typeof AppLocalRoute
-  '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
-  '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/tokens': typeof AppTokensRoute
-  '/p': typeof AppPRoute
-  '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
-  '/_app/activity': typeof AppActivityRoute
   '/_app/dashboard': typeof AppDashboardRoute
-  '/_app/databases': typeof AppDatabasesRoute
-  '/_app/deployments': typeof AppDeploymentsRoute
-  '/_app/domains': typeof AppDomainsRoute
-  '/_app/local': typeof AppLocalRoute
-  '/_app/new': typeof AppNewRoute
   '/_app/oauth': typeof AppOauthRoute
-  '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/tokens': typeof AppTokensRoute
-  '/_app/p/': typeof AppPRoute
-  '/_app/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/auth'
-    | '/activity'
-    | '/dashboard'
-    | '/databases'
-    | '/deployments'
-    | '/domains'
-    | '/local'
-    | '/new'
-    | '/oauth'
-    | '/servers'
-    | '/settings'
-    | '/tokens'
-    | '/p/'
-    | '/p/$slug'
+  fullPaths: '/' | '/auth' | '/dashboard' | '/oauth' | '/settings' | '/tokens'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/auth'
-    | '/activity'
-    | '/dashboard'
-    | '/databases'
-    | '/deployments'
-    | '/domains'
-    | '/local'
-    | '/new'
-    | '/oauth'
-    | '/servers'
-    | '/settings'
-    | '/tokens'
-    | '/p'
-    | '/p/$slug'
+  to: '/' | '/auth' | '/dashboard' | '/oauth' | '/settings' | '/tokens'
   id:
     | '__root__'
     | '/'
     | '/_app'
     | '/auth'
-    | '/_app/activity'
     | '/_app/dashboard'
-    | '/_app/databases'
-    | '/_app/deployments'
-    | '/_app/domains'
-    | '/_app/local'
-    | '/_app/new'
     | '/_app/oauth'
-    | '/_app/servers'
     | '/_app/settings'
     | '/_app/tokens'
-    | '/_app/p/'
-    | '/_app/p/$slug'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -243,13 +123,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_app/activity': {
-      id: '/_app/activity'
-      path: '/activity'
-      fullPath: '/activity'
-      preLoaderRoute: typeof AppActivityRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/dashboard': {
       id: '/_app/dashboard'
       path: '/dashboard'
@@ -257,53 +130,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDashboardRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/databases': {
-      id: '/_app/databases'
-      path: '/databases'
-      fullPath: '/databases'
-      preLoaderRoute: typeof AppDatabasesRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/deployments': {
-      id: '/_app/deployments'
-      path: '/deployments'
-      fullPath: '/deployments'
-      preLoaderRoute: typeof AppDeploymentsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/domains': {
-      id: '/_app/domains'
-      path: '/domains'
-      fullPath: '/domains'
-      preLoaderRoute: typeof AppDomainsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/local': {
-      id: '/_app/local'
-      path: '/local'
-      fullPath: '/local'
-      preLoaderRoute: typeof AppLocalRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/new': {
-      id: '/_app/new'
-      path: '/new'
-      fullPath: '/new'
-      preLoaderRoute: typeof AppNewRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/oauth': {
       id: '/_app/oauth'
       path: '/oauth'
       fullPath: '/oauth'
       preLoaderRoute: typeof AppOauthRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/servers': {
-      id: '/_app/servers'
-      path: '/servers'
-      fullPath: '/servers'
-      preLoaderRoute: typeof AppServersRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/settings': {
@@ -320,53 +151,21 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTokensRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/p/': {
-      id: '/_app/p/'
-      path: '/p'
-      fullPath: '/p/'
-      preLoaderRoute: typeof AppPRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/_app/p/$slug': {
-      id: '/_app/p/$slug'
-      path: '/p/$slug'
-      fullPath: '/p/$slug'
-      preLoaderRoute: typeof AppPSlugRouteImport
-      parentRoute: typeof AppRoute
-    }
   }
 }
 
 interface AppRouteChildren {
-  AppActivityRoute: typeof AppActivityRoute
   AppDashboardRoute: typeof AppDashboardRoute
-  AppDatabasesRoute: typeof AppDatabasesRoute
-  AppDeploymentsRoute: typeof AppDeploymentsRoute
-  AppDomainsRoute: typeof AppDomainsRoute
-  AppLocalRoute: typeof AppLocalRoute
-  AppNewRoute: typeof AppNewRoute
   AppOauthRoute: typeof AppOauthRoute
-  AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTokensRoute: typeof AppTokensRoute
-  AppPRoute: typeof AppPRoute
-  AppPSlugRoute: typeof AppPSlugRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppActivityRoute: AppActivityRoute,
   AppDashboardRoute: AppDashboardRoute,
-  AppDatabasesRoute: AppDatabasesRoute,
-  AppDeploymentsRoute: AppDeploymentsRoute,
-  AppDomainsRoute: AppDomainsRoute,
-  AppLocalRoute: AppLocalRoute,
-  AppNewRoute: AppNewRoute,
   AppOauthRoute: AppOauthRoute,
-  AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTokensRoute: AppTokensRoute,
-  AppPRoute: AppPRoute,
-  AppPSlugRoute: AppPSlugRoute,
 }
 
 const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)

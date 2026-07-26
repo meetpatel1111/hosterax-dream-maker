@@ -1,18 +1,12 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutGrid, Rocket, Database, Activity, Settings, LogOut, Plus, Terminal, KeyRound, ShieldCheck, Cpu, Globe, Server } from "lucide-react";
+import { Server, Settings, LogOut, Terminal, KeyRound, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { to: "/dashboard", label: "Projects", icon: LayoutGrid },
-  { to: "/local", label: "Local engine", icon: Server },
-  { to: "/deployments", label: "Deployments", icon: Rocket },
-  { to: "/domains", label: "Domains & SSL", icon: Globe },
-  { to: "/databases", label: "Databases", icon: Database },
-  { to: "/servers", label: "Servers", icon: Cpu },
-  { to: "/activity", label: "Activity", icon: Activity },
+  { to: "/dashboard", label: "Dashboard", icon: Server },
   { to: "/tokens", label: "API tokens", icon: KeyRound },
   { to: "/oauth", label: "OAuth apps", icon: ShieldCheck },
   { to: "/settings", label: "Settings", icon: Settings },
@@ -30,12 +24,6 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <Link to="/dashboard"><Logo /></Link>
         </div>
         <nav className="flex-1 space-y-0.5 p-3">
-          <Link
-            to="/new"
-            className="mb-3 flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" /> New project
-          </Link>
           {NAV.map((n) => {
             const active = loc.pathname === n.to || (n.to !== "/dashboard" && loc.pathname.startsWith(n.to));
             const Icon = n.icon;
