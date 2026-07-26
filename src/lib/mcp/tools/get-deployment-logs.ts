@@ -23,12 +23,12 @@ export default defineTool({
     if (!ctx.isAuthenticated()) return { content: [{ type: "text", text: "Not authenticated" }], isError: true };
     const { data, error } = await supabaseAsUser(ctx)
       .from("deployment_logs")
-      .select("stream, message, created_at")
+      .select("level, message, created_at")
       .eq("deployment_id", deployment_id)
       .order("created_at", { ascending: true })
       .limit(limit ?? 200);
     if (error) return { content: [{ type: "text", text: error.message }], isError: true };
-    const text = (data ?? []).map((r) => `[${r.stream}] ${r.message}`).join("\n");
+    const text = (data ?? []).map((r) => `[${r.level}] ${r.message}`).join("\n");
     return {
       content: [{ type: "text", text: text || "(no logs)" }],
       structuredContent: { logs: data ?? [] },
