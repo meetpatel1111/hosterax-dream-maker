@@ -7,36 +7,45 @@ import { useAuth } from "@/lib/auth-context";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({ meta: [{ title: "Sign in — HosteraX" }, { name: "description", content: "Sign in to the HosteraX control plane." }] }),
+  validateSearch: (s: Record<string, unknown>): { next?: string } =>
+    typeof s.next === "string" && s.next ? { next: s.next } : {},
   component: AuthPage,
 });
 
+// Only allow same-origin relative paths as return targets.
+function safeNext(n: string): string {
+  return n.startsWith("/") && !n.startsWith("//") ? n : "/dashboard";
+}
+
 function AuthPage() {
   const { session, loading } = useAuth();
+  const { next } = Route.useSearch();
   const nav = useNavigate();
   const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const target = safeNext(next ?? "");
 
-  if (!loading && session) return <Navigate to="/dashboard" />;
+  if (!loading && session) return <Navigate to={target as never} />;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
       if (mode === "up") {
-        const redirectUrl = `${window.location.origin}/dashboard`;
+        const redirectUrl = `${window.location.origin}${target}`;
         const { error } = await supabase.auth.signUp({
           email, password,
           options: { emailRedirectTo: redirectUrl },
         });
         if (error) throw error;
         toast.success("Account created");
-        nav({ to: "/dashboard" });
+        nav({ to: target as never });
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        nav({ to: "/dashboard" });
+        nav({ to: target as never });
       }
     } catch (e: any) {
       toast.error(e?.message ?? "Auth failed");
