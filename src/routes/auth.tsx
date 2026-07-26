@@ -7,9 +7,8 @@ import { useAuth } from "@/lib/auth-context";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({ meta: [{ title: "Sign in — HosteraX" }, { name: "description", content: "Sign in to the HosteraX control plane." }] }),
-  validateSearch: (s: Record<string, unknown>) => ({
-    next: typeof s.next === "string" ? s.next : "",
-  }),
+  validateSearch: (s: Record<string, unknown>): { next?: string } =>
+    typeof s.next === "string" && s.next ? { next: s.next } : {},
   component: AuthPage,
 });
 
