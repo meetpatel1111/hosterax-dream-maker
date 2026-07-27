@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/dashboard", label: "Projects", icon: LayoutGrid },
-  { to: "/local", label: "Local engine", icon: Server },
+  
   { to: "/deployments", label: "Deployments", icon: Rocket },
   { to: "/domains", label: "Domains & SSL", icon: Globe },
   { to: "/databases", label: "Databases", icon: Database },
