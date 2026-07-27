@@ -16,7 +16,6 @@ let state: EngineState = read();
 const listeners = new Set<() => void>();
 
 function emit() {
-  listeners.add;
   listeners.forEach((l) => l());
 }
 
