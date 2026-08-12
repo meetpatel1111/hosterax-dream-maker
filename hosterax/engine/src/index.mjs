@@ -158,8 +158,206 @@ function publish(deploymentId, line) {
     `[${new Date(line.ts).toISOString()}] ${line.stream}: ${line.text}\n`);
 }
 
+// ---------- runtime (post-deploy) log bus ----------
+const RUNTIME_CAP = 500;
+const runtimeLogs = new Map(); // project -> [{ts,stream,text}]
+const runtimeSubs = new Map(); // project -> Set<ws>
+function publishRuntime(project, line) {
+  const buf = runtimeLogs.get(project) ?? [];
+  buf.push(line);
+  while (buf.length > RUNTIME_CAP) buf.shift();
+  runtimeLogs.set(project, buf);
+  const set = runtimeSubs.get(project);
+  if (set) {
+    const msg = JSON.stringify({ project, ...line });
+    for (const ws of set) { try { ws.send(msg); } catch {} }
+  }
+}
+
 // running process registry (per project)
-const running = new Map(); // project -> child_process
+const running = new Map(); // project -> { child, restarts, stopped, startedAt, cmd, workdir, env }
+
+// ---------- project config override (hosterax.json) ----------
+function readProjectConfig(workdir) {
+  for (const f of ["hosterax.json", ".hosterax.json"]) {
+    const p = path.join(workdir, f);
+    if (!fs.existsSync(p)) continue;
+    try {
+      const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+      return {
+        build_cmd: raw.build ?? raw.buildCommand ?? null,
+        start_cmd: raw.start ?? raw.startCommand ?? null,
+        port: raw.port ?? null,
+        env: raw.env ?? {},
+        hostname: raw.hostname ?? raw.domain ?? null,
+        target: raw.target ?? null,
+        file: f,
+      };
+    } catch {
+      return { parseError: f };
+    }
+  }
+  return null;
+}
+
+// ---------- zero-config stack detection ----------
+const DETECTORS = [
+  { file: "docker-compose.yml", stack: "Docker Compose", build: "docker compose build", start: "docker compose up", port: 8080 },
+  { file: "docker-compose.yaml", stack: "Docker Compose", build: "docker compose build", start: "docker compose up", port: 8080 },
+  { file: "Dockerfile", stack: "Docker", build: null, start: null, port: 8080 },
+  { file: "bun.lockb", stack: "Bun", build: "bun install", start: "bun run start", port: 3000 },
+  { file: "deno.json", stack: "Deno", build: "deno cache main.ts", start: "deno run -A main.ts", port: 8000 },
+  { file: "package.json", stack: "Node.js", build: "npm install && npm run build --if-present", start: "npm start", port: 3000 },
+  { file: "requirements.txt", stack: "Python", build: "pip install -r requirements.txt", start: "python app.py", port: 8000 },
+  { file: "pyproject.toml", stack: "Python (uv/poetry)", build: "pip install .", start: "python -m app", port: 8000 },
+  { file: "go.mod", stack: "Go", build: "go build -o main .", start: "./main", port: 8080 },
+  { file: "Cargo.toml", stack: "Rust", build: "cargo build --release", start: "cargo run --release", port: 8080 },
+  { file: "Gemfile", stack: "Ruby", build: "bundle install", start: "bundle exec rackup -p $PORT", port: 3000 },
+  { file: "composer.json", stack: "PHP", build: "composer install", start: "php -S 0.0.0.0:8000", port: 8000 },
+  { file: "pom.xml", stack: "Java (Maven)", build: "mvn -B package -DskipTests", start: "java -jar target/*.jar", port: 8080 },
+  { file: "build.gradle", stack: "Java (Gradle)", build: "./gradlew build", start: "java -jar build/libs/*.jar", port: 8080 },
+  { file: "index.html", stack: "Static", build: null, start: "npx --yes serve -l $PORT .", port: 8080 },
+];
+
+const WORKSPACE_MARKERS = [
+  ["pnpm-workspace.yaml", "pnpm workspaces"],
+  ["rush.json", "Rush"],
+  ["go.work", "Go workspace"],
+  ["Cargo.toml", "Cargo workspace"],
+  ["uv.lock", "uv"],
+];
+
+function detectStack(workdir, p, id) {
+  const cfg = readProjectConfig(workdir);
+  if (cfg?.parseError) publish(id, { ts: Date.now(), stream: "stderr", text: `[config] ${cfg.parseError} is not valid JSON — ignoring` });
+  else if (cfg) publish(id, { ts: Date.now(), stream: "system", text: `[config] using overrides from ${cfg.file}` });
+
+  const hit = DETECTORS.find((d) => fs.existsSync(path.join(workdir, d.file)));
+  if (hit) publish(id, { ts: Date.now(), stream: "system", text: `[zero-config] Detected ${hit.stack} (${hit.file})` });
+  else publish(id, { ts: Date.now(), stream: "system", text: "[zero-config] No known stack marker; using project commands" });
+
+  for (const [marker, label] of WORKSPACE_MARKERS) {
+    if (fs.existsSync(path.join(workdir, marker))) {
+      publish(id, { ts: Date.now(), stream: "system", text: `[monorepo] ${label} detected` });
+      break;
+    }
+  }
+
+  const build_cmd = cfg?.build_cmd ?? p.build_cmd ?? hit?.build ?? null;
+  const start_cmd = cfg?.start_cmd ?? p.start_cmd ?? hit?.start ?? null;
+  const port = cfg?.port ?? p.port ?? hit?.port ?? null;
+  return { stack: hit?.stack ?? "custom", build_cmd, start_cmd, port, extraEnv: cfg?.env ?? {}, hostname: cfg?.hostname ?? null };
+}
+
+// ---------- docker compose import ----------
+function parseCompose(workdir) {
+  const file = ["docker-compose.yml", "docker-compose.yaml", "compose.yml"].map((f) => path.join(workdir, f)).find(fs.existsSync);
+  if (!file) return null;
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+  const services = [];
+  let inServices = false, cur = null, key = null;
+  const indentOf = (l) => l.match(/^\s*/)[0].length;
+  for (const raw of lines) {
+    if (!raw.trim() || raw.trim().startsWith("#")) continue;
+    const ind = indentOf(raw);
+    const line = raw.trim();
+    if (ind === 0) { inServices = /^services:/.test(line); cur = null; continue; }
+    if (!inServices) continue;
+    if (ind <= 2 && line.endsWith(":")) {
+      cur = { name: line.slice(0, -1), image: null, build_context: null, ports: [], volumes: [], env: {}, depends: [] };
+      services.push(cur); key = null; continue;
+    }
+    if (!cur) continue;
+    const kv = line.match(/^([a-zA-Z_]+):\s*(.*)$/);
+    if (kv) {
+      key = kv[1];
+      const val = kv[2].replace(/^["']|["']$/g, "");
+      if (key === "image" && val) cur.image = val;
+      else if (key === "build" && val) cur.build_context = val;
+      else if (key === "context" && val) cur.build_context = val;
+      continue;
+    }
+    const item = line.match(/^-\s*(.+)$/);
+    if (item) {
+      const val = item[1].replace(/^["']|["']$/g, "");
+      if (key === "ports") cur.ports.push(val);
+      else if (key === "volumes") cur.volumes.push(val);
+      else if (key === "depends_on") cur.depends.push(val);
+      else if (key === "environment") {
+        const [k, ...rest] = val.split("=");
+        if (k) cur.env[k] = rest.join("=");
+      }
+    }
+  }
+  return { file, services };
+}
+
+function syncComposeServices(project, workdir, id) {
+  const parsed = parseCompose(workdir);
+  if (!parsed) return null;
+  publish(id, { ts: Date.now(), stream: "system", text: `[compose] ${path.basename(parsed.file)} → ${parsed.services.length} service(s)` });
+  const ins = db.prepare(`INSERT INTO services (id, project, name, image, build_context, ports_json, volumes_json, env_json, depends_json, status, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(project, name) DO UPDATE SET image=excluded.image, build_context=excluded.build_context,
+      ports_json=excluded.ports_json, volumes_json=excluded.volumes_json, env_json=excluded.env_json, depends_json=excluded.depends_json`);
+  for (const s of parsed.services) {
+    ins.run("svc_" + crypto.randomBytes(6).toString("hex"), project, s.name, s.image, s.build_context,
+      JSON.stringify(s.ports), JSON.stringify(s.volumes), JSON.stringify(s.env), JSON.stringify(s.depends), "idle", Date.now());
+  }
+  const names = parsed.services.map((s) => s.name);
+  if (names.length) {
+    db.prepare(`DELETE FROM services WHERE project=? AND name NOT IN (${names.map(() => "?").join(",")})`).run(project, ...names);
+  }
+  return parsed;
+}
+
+// ---------- edge routing (applied AFTER the app is live) ----------
+const EDGEDIR = path.join(HOME, "edge");
+fs.mkdirSync(EDGEDIR, { recursive: true });
+
+function applyRoute(project, port, hostname, id) {
+  const now = Date.now();
+  const upsert = (status, detail, configPath) =>
+    db.prepare(`INSERT INTO routes (project, hostname, upstream_port, status, detail, config_path, updated_at)
+      VALUES (?,?,?,?,?,?,?)
+      ON CONFLICT(project) DO UPDATE SET hostname=excluded.hostname, upstream_port=excluded.upstream_port,
+        status=excluded.status, detail=excluded.detail, config_path=excluded.config_path, updated_at=excluded.updated_at`)
+      .run(project, hostname ?? null, port ?? null, status, detail ?? null, configPath ?? null, now);
+
+  const primary = hostname ?? db.prepare("SELECT hostname FROM domains WHERE project=? AND is_primary=1").get(project)?.hostname ?? null;
+  if (!port) {
+    upsert("action_required", "No port detected — set port in hosterax.json or project settings", null);
+    if (id) publish(id, { ts: now, stream: "system", text: "[edge] action required: unknown upstream port (app is still running)" });
+    return { status: "action_required" };
+  }
+  const host = primary ?? `${project}.localhost`;
+  const conf = `# generated by HosteraX — do not edit
+server {
+  listen 80;
+  server_name ${host};
+  location / {
+    proxy_pass http://127.0.0.1:${port};
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+`;
+  const confPath = path.join(EDGEDIR, `${project}.conf`);
+  try {
+    fs.writeFileSync(confPath, conf);
+    upsert(primary ? "active" : "pending_dns", primary ? null : "Add a primary domain to serve this app publicly", confPath);
+    if (id) publish(id, { ts: now, stream: "system", text: `[edge] vhost written → ${confPath} (${host} → :${port})` });
+    return { status: primary ? "active" : "pending_dns", config_path: confPath };
+  } catch (e) {
+    upsert("action_required", String(e), null);
+    if (id) publish(id, { ts: now, stream: "system", text: `[edge] action required: ${e}` });
+    return { status: "action_required" };
+  }
+}
 
 // ---------- deploy engine ----------
 function nextVersion(project) {
@@ -167,11 +365,16 @@ function nextVersion(project) {
   return `v0.${n + 1}.0`;
 }
 
+function shellFor(cmd) {
+  return process.platform === "win32"
+    ? { shell: "cmd.exe", args: ["/c", cmd] }
+    : { shell: "sh", args: ["-c", cmd] };
+}
+
 function runStep(deploymentId, cwd, cmd, env) {
   return new Promise((resolve) => {
     publish(deploymentId, { ts: Date.now(), stream: "system", text: `$ ${cmd}` });
-    const shell = process.platform === "win32" ? "cmd.exe" : "sh";
-    const args = process.platform === "win32" ? ["/c", cmd] : ["-c", cmd];
+    const { shell, args } = shellFor(cmd);
     const child = spawn(shell, args, { cwd, env: { ...process.env, ...env } });
     child.stdout.on("data", (b) => publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() }));
     child.stderr.on("data", (b) => publish(deploymentId, { ts: Date.now(), stream: "stderr", text: b.toString().trimEnd() }));
@@ -199,35 +402,68 @@ async function fetchSource(deploymentId, source, workdir) {
   return runStep(deploymentId, path.dirname(workdir), cmd, {});
 }
 
-async function startService(deploymentId, project, workdir, cmd, env, target) {
-  // kill previous
+function stopProject(project, reason = "manual stop") {
+  const rec = running.get(project);
+  if (!rec) return false;
+  rec.stopped = true;
+  try { process.kill(rec.child.pid); } catch {}
+  publishRuntime(project, { ts: Date.now(), stream: "system", text: `stopped (${reason})` });
+  running.delete(project);
+  return true;
+}
+
+function superviseProcess(project, workdir, cmd, env, policy, deploymentId) {
+  const { shell, args } = shellFor(cmd);
+  const child = spawn(shell, args, { cwd: workdir, env: { ...process.env, ...env }, detached: true });
   const prev = running.get(project);
-  if (prev && !prev.killed) {
-    publish(deploymentId, { ts: Date.now(), stream: "system", text: `stopping previous pid ${prev.pid}` });
-    try { process.kill(prev.pid); } catch {}
+  const rec = { child, restarts: prev?.restarts ?? 0, stopped: false, startedAt: Date.now(), cmd, workdir, env, policy };
+  running.set(project, rec);
+  child.stdout.on("data", (b) => publishRuntime(project, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() }));
+  child.stderr.on("data", (b) => publishRuntime(project, { ts: Date.now(), stream: "stderr", text: b.toString().trimEnd() }));
+  child.on("close", (code) => {
+    publishRuntime(project, { ts: Date.now(), stream: "system", text: `process exited ${code}` });
+    if (deploymentId) publish(deploymentId, { ts: Date.now(), stream: "system", text: `service exited ${code}` });
+    const cur = running.get(project);
+    if (!cur || cur.child !== child || cur.stopped) return;
+    const shouldRestart = policy === "always" || (policy === "on-failure" && code !== 0);
+    if (!shouldRestart) { running.delete(project); return; }
+    if (cur.restarts >= 5) {
+      publishRuntime(project, { ts: Date.now(), stream: "system", text: "restart limit reached (5) — giving up" });
+      running.delete(project);
+      return;
+    }
+    const delay = Math.min(30000, 1000 * 2 ** cur.restarts);
+    cur.restarts += 1;
+    publishRuntime(project, { ts: Date.now(), stream: "system", text: `restarting in ${delay}ms (attempt ${cur.restarts}/5)` });
+    setTimeout(() => {
+      if (running.get(project) === cur && !cur.stopped) superviseProcess(project, workdir, cmd, env, policy, null);
+    }, delay);
+  });
+  return rec;
+}
+
+async function startService(deploymentId, project, workdir, cmd, env, target, port) {
+  stopProject(project, "superseded by new deploy");
+  if (target === "compose") {
+    publish(deploymentId, { ts: Date.now(), stream: "system", text: "docker compose up -d" });
+    return runStep(deploymentId, workdir, "docker compose up -d --build", env);
   }
   if (target === "docker") {
-    // Build & run docker image tagged after the project. Requires docker on PATH.
     const tag = `hosterax/${project}:latest`;
     publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
     const bc = await runStep(deploymentId, workdir, `docker build -t ${tag} .`, env);
     if (bc !== 0) return bc;
-    // stop old container
     await runStep(deploymentId, workdir, `docker rm -f hx_${project} 2>/dev/null || true`, {});
     const envFlags = Object.entries(env).map(([k, v]) => `-e ${k}=${JSON.stringify(v)}`).join(" ");
-    const runCmd = `docker run -d --name hx_${project} ${envFlags} ${tag}`;
+    // loopback-only publish: never expose a raw public port
+    const portFlag = port ? `-p 127.0.0.1:${port}:${port}` : "";
+    const runCmd = `docker run -d --name hx_${project} ${portFlag} ${envFlags} ${tag}`;
     publish(deploymentId, { ts: Date.now(), stream: "system", text: runCmd });
     return runStep(deploymentId, workdir, runCmd, {});
   }
   if (!cmd) { publish(deploymentId, { ts: Date.now(), stream: "system", text: "no start command; skipping" }); return 0; }
-  publish(deploymentId, { ts: Date.now(), stream: "system", text: `starting: ${cmd}` });
-  const shell = process.platform === "win32" ? "cmd.exe" : "sh";
-  const args = process.platform === "win32" ? ["/c", cmd] : ["-c", cmd];
-  const child = spawn(shell, args, { cwd: workdir, env: { ...process.env, ...env }, detached: true });
-  child.stdout.on("data", (b) => publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() }));
-  child.stderr.on("data", (b) => publish(deploymentId, { ts: Date.now(), stream: "stderr", text: b.toString().trimEnd() }));
-  running.set(project, child);
-  child.on("close", (code) => publish(deploymentId, { ts: Date.now(), stream: "system", text: `service exited ${code}` }));
+  publish(deploymentId, { ts: Date.now(), stream: "system", text: `starting (restart=${env.HOSTERAX_RESTART_POLICY || "on-failure"}): ${cmd}` });
+  superviseProcess(project, workdir, cmd, env, env.HOSTERAX_RESTART_POLICY || "on-failure", deploymentId);
   return 0;
 }
 
@@ -239,83 +475,83 @@ function setPhase(id, phase, extra = {}) {
   db.prepare(`UPDATE deployments SET ${fields.join(",")} WHERE id=?`).run(...values);
 }
 
-function detectStack(workdir, p, id) {
-  let build_cmd = p.build_cmd;
-  let start_cmd = p.start_cmd;
-  let detected = null;
-
-  if (fs.existsSync(path.join(workdir, "package.json"))) {
-    detected = "Node.js";
-    if (!build_cmd) build_cmd = "npm install && npm run build --if-present";
-    if (!start_cmd) start_cmd = "npm start";
-  } else if (fs.existsSync(path.join(workdir, "requirements.txt"))) {
-    detected = "Python";
-    if (!build_cmd) build_cmd = "pip install -r requirements.txt";
-    if (!start_cmd) start_cmd = "python app.py";
-  } else if (fs.existsSync(path.join(workdir, "go.mod"))) {
-    detected = "Go";
-    if (!build_cmd) build_cmd = "go build -o main .";
-    if (!start_cmd) start_cmd = "./main";
-  } else if (fs.existsSync(path.join(workdir, "Cargo.toml"))) {
-    detected = "Rust";
-    if (!build_cmd) build_cmd = "cargo build --release";
-    if (!start_cmd) start_cmd = "cargo run --release";
-  } else if (fs.existsSync(path.join(workdir, "composer.json"))) {
-    detected = "PHP";
-    if (!build_cmd) build_cmd = "composer install";
-    if (!start_cmd) start_cmd = "php -S 0.0.0.0:8000";
-  }
-
-  if (detected) {
-    publish(id, { ts: Date.now(), stream: "system", text: `[zero-config] Auto-detected ${detected} stack` });
-  }
-
-  return { build_cmd, start_cmd };
-}
-
 async function runDeployment(project, opts = {}) {
   const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
   if (!p) throw new Error("no such project");
   const id = "d_" + crypto.randomBytes(8).toString("hex");
   const version = opts.rollbackFrom?.version ?? nextVersion(project);
   const workdir = opts.rollbackFrom?.workdir ?? path.join(WORK, project, version);
-  db.prepare("INSERT INTO deployments VALUES (?,?,?,?,?,?,?,?,?)")
-    .run(id, project, version, "queued", opts.trigger || "manual", Date.now(), null, null, workdir);
-  const env = JSON.parse(p.env_json || "{}");
+  const environment = opts.environment || opts.rollbackFrom?.environment || "production";
+  db.prepare(`INSERT INTO deployments (id, project, version, phase, trigger, started_at, finished_at, exit_code, workdir, environment)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, project, version, "queued", opts.trigger || "manual", Date.now(), null, null, workdir, environment);
+  const env = { ...JSON.parse(p.env_json || "{}") };
   if (p.cpu_limit) env.HOSTERAX_CPU_LIMIT = String(p.cpu_limit);
   if (p.memory_mb_limit) env.HOSTERAX_MEMORY_LIMIT_MB = String(p.memory_mb_limit);
+  env.HOSTERAX_ENVIRONMENT = environment;
+  env.HOSTERAX_RESTART_POLICY = p.restart_policy || "on-failure";
 
   (async () => {
     try {
-      let finalStartCmd = p.start_cmd;
+      // rollbacks replay the frozen snapshot so they are byte-for-byte reproducible
+      const snap = opts.rollbackFrom?.snapshot ?? null;
+      let finalStartCmd = snap?.start_cmd ?? p.start_cmd;
+      let finalPort = snap?.port ?? p.port ?? null;
+      let stack = snap?.stack ?? null;
+      let hostname = snap?.hostname ?? null;
+      let target = snap?.target ?? p.target;
 
       if (!opts.rollbackFrom) {
         setPhase(id, "fetching");
         const code = await fetchSource(id, p.source, workdir);
         if (code !== 0) { setPhase(id, "failed", { finished_at: Date.now(), exit_code: code }); return; }
-        
-        const stack = detectStack(workdir, p, id);
-        finalStartCmd = stack.start_cmd;
 
-        if (stack.build_cmd) {
+        const det = detectStack(workdir, p, id);
+        finalStartCmd = det.start_cmd;
+        finalPort = det.port;
+        stack = det.stack;
+        hostname = det.hostname;
+        Object.assign(env, det.extraEnv);
+        if (finalPort) env.PORT = String(finalPort);
+
+        const compose = syncComposeServices(project, workdir, id);
+        if (compose && p.target !== "docker") target = "compose";
+
+        if (det.build_cmd) {
           setPhase(id, "building");
-          const bc = await runStep(id, workdir, stack.build_cmd, env);
+          const bc = await runStep(id, workdir, det.build_cmd, env);
           if (bc !== 0) { setPhase(id, "failed", { finished_at: Date.now(), exit_code: bc }); return; }
         }
+        setPhase(id, "building", {
+          stack,
+          snapshot_json: JSON.stringify({
+            stack, target, build_cmd: det.build_cmd, start_cmd: finalStartCmd, port: finalPort,
+            hostname, source: p.source, environment, env_keys: Object.keys(env).sort(), created_at: Date.now(),
+          }),
+        });
       } else {
-        publish(id, { ts: Date.now(), stream: "system", text: `rollback to ${version}` });
+        publish(id, { ts: Date.now(), stream: "system", text: `rollback to ${version}${snap ? " (from frozen snapshot)" : ""}` });
+        if (snap) {
+          setPhase(id, "building", { stack: snap.stack, snapshot_json: JSON.stringify(snap) });
+          if (snap.port) env.PORT = String(snap.port);
+        }
       }
+
       setPhase(id, "deploying");
-      await startService(id, project, workdir, finalStartCmd, env, p.target);
-      setPhase(id, "ready", { finished_at: Date.now(), exit_code: 0 });
+      await startService(id, project, workdir, finalStartCmd, env, target, finalPort);
+
+      // routing/TLS runs AFTER the app is live, so DNS/cert problems never kill a working deploy
+      const route = applyRoute(project, finalPort, hostname, id);
+      setPhase(id, "ready", { finished_at: Date.now(), exit_code: 0, route_status: route.status });
     } catch (e) {
       publish(id, { ts: Date.now(), stream: "stderr", text: String(e) });
       setPhase(id, "failed", { finished_at: Date.now(), exit_code: 1 });
     }
   })();
 
-  return { id, version };
+  return { id, version, environment };
 }
+
 
 // ---------- live OS metrics ----------
 function getSystemMetrics() {
