@@ -92,11 +92,50 @@ CREATE TABLE IF NOT EXISTS installed_apps (
   status TEXT NOT NULL DEFAULT 'installing',
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS services (
+  id TEXT PRIMARY KEY,
+  project TEXT NOT NULL,
+  name TEXT NOT NULL,
+  image TEXT,
+  build_context TEXT,
+  ports_json TEXT NOT NULL DEFAULT '[]',
+  volumes_json TEXT NOT NULL DEFAULT '[]',
+  env_json TEXT NOT NULL DEFAULT '{}',
+  depends_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'idle',
+  created_at INTEGER NOT NULL,
+  UNIQUE (project, name)
+);
+CREATE TABLE IF NOT EXISTS backup_schedules (
+  id TEXT PRIMARY KEY,
+  database_id TEXT NOT NULL,
+  interval_minutes INTEGER NOT NULL DEFAULT 1440,
+  retention INTEGER NOT NULL DEFAULT 7,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_run_at INTEGER,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS routes (
+  project TEXT PRIMARY KEY,
+  hostname TEXT,
+  upstream_port INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending',
+  detail TEXT,
+  config_path TEXT,
+  updated_at INTEGER NOT NULL
+);
 `);
 
 // Migrations
 try { db.exec("ALTER TABLE projects ADD COLUMN cpu_limit REAL"); } catch (e) {}
 try { db.exec("ALTER TABLE projects ADD COLUMN memory_mb_limit INTEGER"); } catch (e) {}
+try { db.exec("ALTER TABLE projects ADD COLUMN port INTEGER"); } catch (e) {}
+try { db.exec("ALTER TABLE projects ADD COLUMN restart_policy TEXT DEFAULT 'on-failure'"); } catch (e) {}
+try { db.exec("ALTER TABLE deployments ADD COLUMN snapshot_json TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE deployments ADD COLUMN environment TEXT DEFAULT 'production'"); } catch (e) {}
+try { db.exec("ALTER TABLE deployments ADD COLUMN route_status TEXT"); } catch (e) {}
+try { db.exec("ALTER TABLE deployments ADD COLUMN stack TEXT"); } catch (e) {}
+
 
 // bootstrap token
 const tokenCount = db.prepare("SELECT COUNT(*) c FROM tokens").get().c;
