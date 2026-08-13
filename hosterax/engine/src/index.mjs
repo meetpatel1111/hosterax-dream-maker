@@ -656,7 +656,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, getSystemMetrics());
     }
 
-    // ────────── projects ──────────
+    // ────────── Projects API (Openship-compatible) ──────────
+    if (await projectsApi.handle(req, res, url)) return;
+
+    // ────────── projects (legacy engine surface) ──────────
     if (url.pathname === "/api/projects" && req.method === "GET")
       return json(res, 200, db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all());
     if (url.pathname === "/api/projects" && req.method === "POST") {
@@ -972,9 +975,6 @@ const server = http.createServer(async (req, res) => {
       db.prepare("DELETE FROM installed_apps WHERE id=?").run(m[1]);
       return json(res, 200, { ok: true });
     }
-
-    // ────────── Projects API (Openship-compatible) ──────────
-    if (await projectsApi.handle(req, res, url)) return;
 
     return json(res, 404, { error: "not found" });
   } catch (e) {

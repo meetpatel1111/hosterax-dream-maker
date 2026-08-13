@@ -134,6 +134,7 @@ export function createProjectsApi(ctx) {
   function shape(p) {
     const parse = (v, d) => { try { return v ? JSON.parse(v) : d; } catch { return d; } };
     return {
+      ...p,
       id: p.id, name: p.name, slug: p.slug, enabled: p.enabled !== 0,
       location: p.location || "local", projectType: p.project_type || "app",
       source: p.source, localPath: p.local_path,
@@ -202,6 +203,11 @@ export function createProjectsApi(ctx) {
     for (const [k, [col, fn]] of Object.entries(map)) {
       if (b[k] !== undefined && b[k] !== null) set[col] = fn(b[k]);
     }
+    // legacy aliases used by the CLI / dashboard
+    if (b.buildCmd !== undefined) set.build_cmd = b.buildCmd;
+    if (b.startCmd !== undefined) set.start_cmd = b.startCmd;
+    if (b.source !== undefined) set.source = b.source;
+    if (b.env && typeof b.env === "object") set.env_json = JSON.stringify(b.env);
     if (b.port !== undefined && b.port !== null && (b.port < 1 || b.port > 65535)) bad("port out of range", "port");
     // source resolution
     const source = b.localPath || (b.gitOwner && b.gitRepo ? `https://github.com/${b.gitOwner}/${b.gitRepo}` : b.source);
@@ -212,7 +218,7 @@ export function createProjectsApi(ctx) {
       const id = "proj_" + crypto.randomBytes(8).toString("hex");
       db.prepare(`INSERT INTO projects (name, source, build_cmd, start_cmd, env_json, target, created_at, id, slug, enabled, location, git_branch, project_type, sleep_mode, auto_deploy)
         VALUES (?,?,?,?,?,?,?,?,?,1,'local',?,?, 'auto_sleep', 0)`)
-        .run(name, source || "", b.buildCommand || "", b.startCommand || "", "{}", b.target || "process", Date.now(), id,
+        .run(name, source || "", b.buildCommand || b.buildCmd || "", b.startCommand || "", "{}", b.target || "process", Date.now(), id,
           set.slug || slugify(name), b.gitBranch || "main", set.project_type || "app");
     }
     const entries = Object.entries(set).filter(([, v]) => v !== undefined);
@@ -278,9 +284,9 @@ export function createProjectsApi(ctx) {
         requirePerm(req, "project:write");
         const b = await readBody(req);
         if (!b.name || !String(b.name).trim()) bad("name is required", "name");
-        if (db.prepare("SELECT 1 FROM projects WHERE name=?").get(b.name)) bad("a project with that name already exists", "name");
+        const dupe = db.prepare("SELECT 1 FROM projects WHERE name=?").get(b.name);
         if (b.gitRepo && !b.gitOwner) bad("gitOwner is required with gitRepo", "gitOwner");
-        return json(res, 201, shape(applyBody(b.name, b, true))), true;
+        return json(res, dupe ? 200 : 201, shape(applyBody(b.name, b, !dupe))), true;
       }
       if (p === "/api/projects/home" && req.method === "GET") {
         requirePerm(req, "project:list");
