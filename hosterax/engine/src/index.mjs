@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
+import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
 
 const HOME = path.join(os.homedir(), ".hosterax");
 const WORK = path.join(HOME, "work");
@@ -137,11 +138,13 @@ try { db.exec("ALTER TABLE deployments ADD COLUMN route_status TEXT"); } catch (
 try { db.exec("ALTER TABLE deployments ADD COLUMN stack TEXT"); } catch (e) {}
 
 
+initProjectsSchema(db);
+
 // bootstrap token
 const tokenCount = db.prepare("SELECT COUNT(*) c FROM tokens").get().c;
 if (tokenCount === 0) {
   const t = "hxt_" + crypto.randomBytes(24).toString("hex");
-  db.prepare("INSERT INTO tokens VALUES (?,?,?)").run(t, "bootstrap", Date.now());
+  db.prepare("INSERT INTO tokens (token, name, created_at, scopes_json) VALUES (?,?,?,?)").run(t, "bootstrap", Date.now(), JSON.stringify(["*"]));
   console.log("\n╭─ HosteraX Engine ─────────────────────────────╮");
   console.log("│ Bootstrap token (save this):                  │");
   console.log("│ " + t.padEnd(45) + " │");
@@ -597,7 +600,7 @@ function json(res, code, body) {
     "content-type": "application/json",
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "authorization, content-type",
-    "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
   });
   res.end(JSON.stringify(body));
 }
@@ -612,6 +615,11 @@ function authOk(req) {
   if (!t) return false;
   return !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(t);
 }
+
+const projectsApi = createProjectsApi({
+  db, runDeployment, running, runtimeLogs, applyRoute, parseCompose, syncComposeServices,
+  DETECTORS, HOME, json, readBody, stopProject,
+});
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
@@ -648,7 +656,10 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, getSystemMetrics());
     }
 
-    // ────────── projects ──────────
+    // ────────── Projects API (Openship-compatible) ──────────
+    if (await projectsApi.handle(req, res, url)) return;
+
+    // ────────── projects (legacy engine surface) ──────────
     if (url.pathname === "/api/projects" && req.method === "GET")
       return json(res, 200, db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all());
     if (url.pathname === "/api/projects" && req.method === "POST") {
@@ -906,7 +917,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/tokens" && req.method === "POST") {
       const b = await readBody(req);
       const t = "hxt_" + crypto.randomBytes(24).toString("hex");
-      db.prepare("INSERT INTO tokens VALUES (?,?,?)").run(t, b.name || "token", Date.now());
+      db.prepare("INSERT INTO tokens (token, name, created_at, scopes_json) VALUES (?,?,?,?)").run(t, b.name || "token", Date.now(), JSON.stringify(Array.isArray(b.scopes) && b.scopes.length ? b.scopes : ["*"]));
       return json(res, 200, { token: t });
     }
     if ((m = url.pathname.match(/^\/api\/tokens\/([^/]+)$/)) && req.method === "DELETE") {
