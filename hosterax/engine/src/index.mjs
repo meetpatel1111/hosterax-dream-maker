@@ -144,7 +144,7 @@ initProjectsSchema(db);
 const tokenCount = db.prepare("SELECT COUNT(*) c FROM tokens").get().c;
 if (tokenCount === 0) {
   const t = "hxt_" + crypto.randomBytes(24).toString("hex");
-  db.prepare("INSERT INTO tokens VALUES (?,?,?)").run(t, "bootstrap", Date.now());
+  db.prepare("INSERT INTO tokens (token, name, created_at, scopes_json) VALUES (?,?,?,?)").run(t, "bootstrap", Date.now(), JSON.stringify(["*"]));
   console.log("\n╭─ HosteraX Engine ─────────────────────────────╮");
   console.log("│ Bootstrap token (save this):                  │");
   console.log("│ " + t.padEnd(45) + " │");
