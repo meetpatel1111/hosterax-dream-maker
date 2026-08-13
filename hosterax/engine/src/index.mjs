@@ -914,7 +914,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/tokens" && req.method === "POST") {
       const b = await readBody(req);
       const t = "hxt_" + crypto.randomBytes(24).toString("hex");
-      db.prepare("INSERT INTO tokens VALUES (?,?,?)").run(t, b.name || "token", Date.now());
+      db.prepare("INSERT INTO tokens (token, name, created_at, scopes_json) VALUES (?,?,?,?)").run(t, b.name || "token", Date.now(), JSON.stringify(Array.isArray(b.scopes) && b.scopes.length ? b.scopes : ["*"]));
       return json(res, 200, { token: t });
     }
     if ((m = url.pathname.match(/^\/api\/tokens\/([^/]+)$/)) && req.method === "DELETE") {
