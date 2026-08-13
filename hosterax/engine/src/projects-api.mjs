@@ -109,6 +109,17 @@ export function createProjectsApi(ctx) {
   fs.mkdirSync(UPLOADS, { recursive: true });
   const streamTokens = new Map(); // token -> {project, exp}
 
+  function git(args, cwd, timeoutMs = 10000) {
+    return new Promise((resolve) => {
+      let out = "", done = false;
+      const c = spawn("git", args, { cwd, shell: process.platform === "win32", env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "echo" } });
+      const t = setTimeout(() => { if (!done) { try { c.kill("SIGKILL"); } catch {} } }, timeoutMs);
+      c.stdout.on("data", (d) => (out += d));
+      const fin = () => { if (done) return; done = true; clearTimeout(t); resolve(out); };
+      c.on("close", fin); c.on("error", fin);
+    });
+  }
+
   function tokenScopes(req) {
     const t = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
     const row = db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(t);
