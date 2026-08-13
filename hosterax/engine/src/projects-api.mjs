@@ -582,10 +582,7 @@ export function createProjectsApi(ctx) {
       if (R("branches", "GET")) {
         requirePerm(req, "project:read");
         if (!proj.source) return json(res, 200, { branches: [], default: null }), true;
-        const out = await new Promise((resolve) => {
-          const c = spawn("git", ["ls-remote", "--heads", proj.source], { shell: process.platform === "win32" });
-          let s = ""; c.stdout.on("data", (d) => (s += d)); c.on("close", () => resolve(s)); c.on("error", () => resolve(""));
-        });
+        const out = await git(["ls-remote", "--heads", proj.source]);
         const branches = out.split("\n").map((l) => l.split("refs/heads/")[1]).filter(Boolean);
         return json(res, 200, { branches, default: proj.git_branch || "main" }), true;
       }
@@ -594,16 +591,11 @@ export function createProjectsApi(ctx) {
         const last = db.prepare("SELECT * FROM deployments WHERE project=? AND phase='ready' ORDER BY started_at DESC LIMIT 1").get(proj.name);
         let deployed = null;
         if (last?.workdir && fs.existsSync(path.join(last.workdir, ".git"))) {
-          deployed = await new Promise((resolve) => {
-            const c = spawn("git", ["rev-parse", "HEAD"], { cwd: last.workdir, shell: process.platform === "win32" });
-            let s = ""; c.stdout.on("data", (d) => (s += d)); c.on("close", () => resolve(s.trim() || null)); c.on("error", () => resolve(null));
-          });
+          deployed = (await git(["rev-parse", "HEAD"], last.workdir)).trim() || null;
         }
         const branch = proj.git_branch || "main";
-        const remote = proj.source ? await new Promise((resolve) => {
-          const c = spawn("git", ["ls-remote", proj.source, `refs/heads/${branch}`], { shell: process.platform === "win32" });
-          let s = ""; c.stdout.on("data", (d) => (s += d)); c.on("close", () => resolve(s.split("\t")[0] || null)); c.on("error", () => resolve(null));
-        }) : null;
+        const remote = proj.source ? (await git(["ls-remote", proj.source, `refs/heads/${branch}`])).split("\t")[0] || null : null;
+
         return json(res, 200, { branch, deployed, remote, behind: !!(deployed && remote && deployed !== remote) }), true;
       }
 
