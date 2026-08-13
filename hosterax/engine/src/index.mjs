@@ -597,7 +597,7 @@ function json(res, code, body) {
     "content-type": "application/json",
     "access-control-allow-origin": "*",
     "access-control-allow-headers": "authorization, content-type",
-    "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+    "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
   });
   res.end(JSON.stringify(body));
 }
