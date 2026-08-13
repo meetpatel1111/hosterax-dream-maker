@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import { spawn } from "node:child_process";
 import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
+import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
 
 const HOME = path.join(os.homedir(), ".hosterax");
 const WORK = path.join(HOME, "work");
@@ -136,6 +137,8 @@ try { db.exec("ALTER TABLE deployments ADD COLUMN environment TEXT DEFAULT 'prod
 try { db.exec("ALTER TABLE deployments ADD COLUMN route_status TEXT"); } catch (e) {}
 try { db.exec("ALTER TABLE deployments ADD COLUMN stack TEXT"); } catch (e) {}
 
+
+initProjectsSchema(db);
 
 // bootstrap token
 const tokenCount = db.prepare("SELECT COUNT(*) c FROM tokens").get().c;
@@ -613,6 +616,11 @@ function authOk(req) {
   return !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(t);
 }
 
+const projectsApi = createProjectsApi({
+  db, runDeployment, running, runtimeLogs, applyRoute, parseCompose, syncComposeServices,
+  DETECTORS, HOME, json, readBody, stopProject,
+});
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
@@ -964,6 +972,9 @@ const server = http.createServer(async (req, res) => {
       db.prepare("DELETE FROM installed_apps WHERE id=?").run(m[1]);
       return json(res, 200, { ok: true });
     }
+
+    // ────────── Projects API (Openship-compatible) ──────────
+    if (await projectsApi.handle(req, res, url)) return;
 
     return json(res, 404, { error: "not found" });
   } catch (e) {
