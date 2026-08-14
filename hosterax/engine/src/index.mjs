@@ -9,6 +9,7 @@ import { spawn } from "node:child_process";
 import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
+import { DETECTORS, STACK_REGISTRY, detectStackDir, detectPackageManager, detectWorkspace } from "./stack-registry.mjs";
 
 const HOME = path.join(os.homedir(), ".hosterax");
 const WORK = path.join(HOME, "work");
@@ -203,53 +204,31 @@ function readProjectConfig(workdir) {
   return null;
 }
 
-// ---------- zero-config stack detection ----------
-const DETECTORS = [
-  { file: "docker-compose.yml", stack: "Docker Compose", build: "docker compose build", start: "docker compose up", port: 8080 },
-  { file: "docker-compose.yaml", stack: "Docker Compose", build: "docker compose build", start: "docker compose up", port: 8080 },
-  { file: "Dockerfile", stack: "Docker", build: null, start: null, port: 8080 },
-  { file: "bun.lockb", stack: "Bun", build: "bun install", start: "bun run start", port: 3000 },
-  { file: "deno.json", stack: "Deno", build: "deno cache main.ts", start: "deno run -A main.ts", port: 8000 },
-  { file: "package.json", stack: "Node.js", build: "npm install && npm run build --if-present", start: "npm start", port: 3000 },
-  { file: "requirements.txt", stack: "Python", build: "pip install -r requirements.txt", start: "python app.py", port: 8000 },
-  { file: "pyproject.toml", stack: "Python (uv/poetry)", build: "pip install .", start: "python -m app", port: 8000 },
-  { file: "go.mod", stack: "Go", build: "go build -o main .", start: "./main", port: 8080 },
-  { file: "Cargo.toml", stack: "Rust", build: "cargo build --release", start: "cargo run --release", port: 8080 },
-  { file: "Gemfile", stack: "Ruby", build: "bundle install", start: "bundle exec rackup -p $PORT", port: 3000 },
-  { file: "composer.json", stack: "PHP", build: "composer install", start: "php -S 0.0.0.0:8000", port: 8000 },
-  { file: "pom.xml", stack: "Java (Maven)", build: "mvn -B package -DskipTests", start: "java -jar target/*.jar", port: 8080 },
-  { file: "build.gradle", stack: "Java (Gradle)", build: "./gradlew build", start: "java -jar build/libs/*.jar", port: 8080 },
-  { file: "index.html", stack: "Static", build: null, start: "npx --yes serve -l $PORT .", port: 8080 },
-];
-
-const WORKSPACE_MARKERS = [
-  ["pnpm-workspace.yaml", "pnpm workspaces"],
-  ["rush.json", "Rush"],
-  ["go.work", "Go workspace"],
-  ["Cargo.toml", "Cargo workspace"],
-  ["uv.lock", "uv"],
-];
+// ---------- zero-config stack detection (registry lives in stack-registry.mjs) ----------
 
 function detectStack(workdir, p, id) {
   const cfg = readProjectConfig(workdir);
   if (cfg?.parseError) publish(id, { ts: Date.now(), stream: "stderr", text: `[config] ${cfg.parseError} is not valid JSON — ignoring` });
   else if (cfg) publish(id, { ts: Date.now(), stream: "system", text: `[config] using overrides from ${cfg.file}` });
 
-  const hit = DETECTORS.find((d) => fs.existsSync(path.join(workdir, d.file)));
-  if (hit) publish(id, { ts: Date.now(), stream: "system", text: `[zero-config] Detected ${hit.stack} (${hit.file})` });
-  else publish(id, { ts: Date.now(), stream: "system", text: "[zero-config] No known stack marker; using project commands" });
-
-  for (const [marker, label] of WORKSPACE_MARKERS) {
-    if (fs.existsSync(path.join(workdir, marker))) {
-      publish(id, { ts: Date.now(), stream: "system", text: `[monorepo] ${label} detected` });
-      break;
-    }
+  const det = detectStackDir(workdir);
+  if (det.id !== "unknown") {
+    publish(id, { ts: Date.now(), stream: "system", text: `[zero-config] Detected ${det.name} (${det.language}${det.marker ? ", " + det.marker : ""})` });
+    if (det.packageManager !== "none") publish(id, { ts: Date.now(), stream: "system", text: `[zero-config] Package manager: ${det.packageManager}` });
+  } else {
+    publish(id, { ts: Date.now(), stream: "system", text: "[zero-config] No known stack marker; using project commands" });
   }
+  if (det.workspace) publish(id, { ts: Date.now(), stream: "system", text: `[monorepo] ${det.workspace.label} detected` });
 
-  const build_cmd = cfg?.build_cmd ?? p.build_cmd ?? hit?.build ?? null;
-  const start_cmd = cfg?.start_cmd ?? p.start_cmd ?? hit?.start ?? null;
-  const port = cfg?.port ?? p.port ?? hit?.port ?? null;
-  return { stack: hit?.stack ?? "custom", build_cmd, start_cmd, port, extraEnv: cfg?.env ?? {}, hostname: cfg?.hostname ?? null };
+  const build_cmd = cfg?.build_cmd ?? p.build_cmd ?? det.build ?? null;
+  const start_cmd = cfg?.start_cmd ?? p.start_cmd ?? det.start ?? null;
+  const port = cfg?.port ?? p.port ?? det.port ?? null;
+  return {
+    stack: det.id === "unknown" ? "custom" : det.id,
+    stackName: det.name, language: det.language, category: det.category,
+    packageManager: det.packageManager, workspace: det.workspace?.id ?? null,
+    build_cmd, start_cmd, port, extraEnv: cfg?.env ?? {}, hostname: cfg?.hostname ?? null,
+  };
 }
 
 // ---------- docker compose import ----------
@@ -618,7 +597,7 @@ function authOk(req) {
 
 const projectsApi = createProjectsApi({
   db, runDeployment, running, runtimeLogs, applyRoute, parseCompose, syncComposeServices,
-  DETECTORS, HOME, json, readBody, stopProject,
+  DETECTORS, STACK_REGISTRY, detectStackDir, detectPackageManager, detectWorkspace, HOME, json, readBody, stopProject,
 });
 
 const server = http.createServer(async (req, res) => {
