@@ -554,8 +554,8 @@ export const STACK_REGISTRY = {
     "category": "fullstack",
     "icon": "🐘",
     "port": 8000,
-    "build": null,
-    "start": null,
+    "build": "composer install --no-dev --optimize-autoloader",
+    "start": "php artisan serve --host=0.0.0.0 --port=$PORT",
     "outputDir": "public",
     "rootMarkers": [
       "artisan",
@@ -572,8 +572,8 @@ export const STACK_REGISTRY = {
     "category": "fullstack",
     "icon": "🎼",
     "port": 8000,
-    "build": null,
-    "start": null,
+    "build": "composer install --no-dev --optimize-autoloader",
+    "start": "php -S 0.0.0.0:$PORT -t public",
     "outputDir": "public",
     "rootMarkers": [
       "composer.json",
@@ -852,6 +852,22 @@ function readDeps(dir, files) {
   return deps;
 }
 
+/** Shallow-recursive extension probe (Kotlin sources live under src/main/kotlin). */
+function hasExt(dir, ext, depth = 4) {
+  const walk = (d, lvl) => {
+    if (lvl > depth) return false;
+    let names = [];
+    try { names = fs.readdirSync(d, { withFileTypes: true }); } catch { return false; }
+    for (const e of names) {
+      if (e.name === "node_modules" || e.name.startsWith(".")) continue;
+      if (e.isFile() && e.name.endsWith(ext)) return true;
+      if (e.isDirectory() && walk(path.join(d, e.name), lvl + 1)) return true;
+    }
+    return false;
+  };
+  return walk(dir, 0);
+}
+
 function listFiles(dir) {
   const out = new Set();
   let names = [];
@@ -889,7 +905,7 @@ export function detectStackDir(dir) {
       case "rails": fileMatch = has("gemfile") && (has("config/routes.rb") || has("bin/rails")); break;
       case "symfony": fileMatch = has("composer.json") && has("symfony.lock"); break;
       case "phoenix": fileMatch = has("mix.exs") && (has("lib") || has("config/config.exs")); break;
-      case "kotlin": fileMatch = markerHit(s) && [...files].some((f) => f.endsWith(".kt")) === true; break;
+      case "kotlin": fileMatch = has("build.gradle.kts") || (markerHit(s) && hasExt(dir, ".kt")); break;
       case "blazor": case "dotnet": fileMatch = [...files].some((f) => f.endsWith(".csproj") || f.endsWith(".fsproj") || f.endsWith(".sln")); break;
       case "static": fileMatch = has("index.html") && !has("package.json"); break;
       case "node": fileMatch = has("package.json") || has("server.js") || has("app.js") || has("index.js"); break;
