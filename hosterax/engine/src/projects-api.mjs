@@ -104,7 +104,7 @@ const forbidden = (perm) => { throw new HttpError(403, `insufficient permission:
 const MASK = "••••••••";
 
 export function createProjectsApi(ctx) {
-  const { db, runDeployment, running, runtimeLogs, applyRoute, parseCompose, syncComposeServices, DETECTORS, HOME, json, readBody, stopProject } = ctx;
+  const { db, runDeployment, running, runtimeLogs, applyRoute, parseCompose, syncComposeServices, DETECTORS, STACK_REGISTRY, detectStackDir, detectWorkspace, HOME, json, readBody, stopProject } = ctx;
   const UPLOADS = path.join(HOME, "uploads");
   fs.mkdirSync(UPLOADS, { recursive: true });
   const streamTokens = new Map(); // token -> {project, exp}
@@ -247,29 +247,22 @@ export function createProjectsApi(ctx) {
   }
 
   function scanDir(dir) {
-    const hit = DETECTORS.find((d) => fs.existsSync(path.join(dir, d.file)));
-    let packageManager = "none";
-    if (fs.existsSync(path.join(dir, "pnpm-lock.yaml"))) packageManager = "pnpm";
-    else if (fs.existsSync(path.join(dir, "yarn.lock"))) packageManager = "yarn";
-    else if (fs.existsSync(path.join(dir, "bun.lockb"))) packageManager = "bun";
-    else if (fs.existsSync(path.join(dir, "package-lock.json")) || fs.existsSync(path.join(dir, "package.json"))) packageManager = "npm";
-    else if (fs.existsSync(path.join(dir, "requirements.txt"))) packageManager = "pip";
-    else if (fs.existsSync(path.join(dir, "Cargo.toml"))) packageManager = "cargo";
-    else if (fs.existsSync(path.join(dir, "go.mod"))) packageManager = "go";
+    const det = detectStackDir(dir);
     const compose = parseCompose(dir);
-    let framework = hit?.stack ?? "generic";
-    try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8"));
-      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-      for (const [dep, id] of [["next", "nextjs"], ["nuxt", "nuxt"], ["vite", "vite"], ["astro", "astro"], ["@remix-run/dev", "remix"], ["express", "express"], ["fastify", "fastify"]])
-        if (deps?.[dep]) { framework = id; break; }
-    } catch {}
     return {
-      framework, packageManager,
-      buildCommand: hit?.build ?? null,
-      startCommand: hit?.start ?? null,
-      installCommand: packageManager === "none" ? null : `${packageManager} install`,
-      port: hit?.port ?? null,
+      framework: det.id,
+      frameworkName: det.name,
+      language: det.language,
+      category: det.category,
+      packageManager: det.packageManager,
+      buildCommand: det.build ?? null,
+      startCommand: det.start ?? null,
+      installCommand: det.install ?? null,
+      outputDirectory: det.outputDir ?? null,
+      port: det.port ?? null,
+      workspace: det.workspace?.id ?? null,
+      workspaceLabel: det.workspace?.label ?? null,
+      monorepo: !!det.workspace,
       projectType: compose ? "services" : fs.existsSync(path.join(dir, "Dockerfile")) ? "docker" : "app",
       services: compose?.services ?? [],
       hasBuild: !!hit?.build, hasServer: !!hit?.start,
