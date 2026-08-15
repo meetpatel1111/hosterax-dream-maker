@@ -174,7 +174,7 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   });
 
   // Fetch project health config
-  const { data: config } = useQuery<HealthConfig>({
+  const { data: config } = useQuery<HealthConfig | null>({
     queryKey: ["health-config", projectName, engine.url],
     queryFn: async () => {
       if (!projectName) return null;
@@ -197,7 +197,7 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   });
 
   // Query live Docker Hub repository tags
-  const { data: tagsData, isLoading: tagsLoading } = useQuery<DockerHubTagsResponse>({
+  const { data: tagsData, isLoading: tagsLoading } = useQuery<DockerHubTagsResponse | null>({
     queryKey: ["dockerhub-repo-tags", selectedRepoForTags, engine.url],
     queryFn: async () => {
       if (!selectedRepoForTags) return null;
