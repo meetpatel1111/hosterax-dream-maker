@@ -7,6 +7,7 @@ import {
   TEMPLATE_CATEGORIES,
   TemplateCategory,
   UnifiedAppTemplate,
+} from "@/lib/stacks";
 import { useEngine, useEngineHealth, useMagicDnsSettings, formatMagicDnsUrl } from "@/lib/engine";
 import { AppLogo } from "@/components/hx/app-logo";
 import {
