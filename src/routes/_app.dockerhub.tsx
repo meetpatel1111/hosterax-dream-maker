@@ -352,7 +352,7 @@ function ContainerRegistryExplorerPage() {
   }, [viewMode, hasMore, isFetchingNext, infiniteQuery]);
 
   // Query live tags for expanded repository
-  const { data: tagsData, isLoading: tagsLoading } = useQuery<RegistryTagsResponse>({
+  const { data: tagsData, isLoading: tagsLoading } = useQuery<RegistryTagsResponse | null>({
     queryKey: ["registry-tags-v5", activeRegistry, selectedRepoForTags, engine.url],
     queryFn: async () => {
       if (!selectedRepoForTags) return null;
