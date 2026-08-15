@@ -3,8 +3,9 @@
 // 42 stacks across 10 languages, priority-ordered detection with manifest-dep gates.
 import fs from "node:fs";
 import path from "node:path";
+import { EXTRA_STACKS, EXTRA_ORDER, EXTRA_PACKAGE_MANAGERS } from "./stack-registry-extra.mjs";
 
-export const STACK_REGISTRY = {
+const BASE_STACK_REGISTRY = {
   nextjs: {
     id: "nextjs",
     name: "Next.js",
@@ -589,7 +590,9 @@ export const STACK_REGISTRY = {
   },
 };
 
-export const STACK_ORDER = [
+export const STACK_REGISTRY = { ...BASE_STACK_REGISTRY, ...EXTRA_STACKS };
+
+const BASE_STACK_ORDER = [
   "nextjs",
   "nuxt",
   "sveltekit",
@@ -636,6 +639,25 @@ export const STACK_ORDER = [
   "node",
 ];
 
+/** Merge the extended matrix into the priority order at the right slots. */
+function buildOrder() {
+  const out = [];
+  for (const id of BASE_STACK_ORDER) {
+    if (id === "vite") out.push(...EXTRA_ORDER.beforeFrontend);
+    if (id === "nestjs") out.push(...EXTRA_ORDER.beforeBackendJs);
+    if (id === "django") out.push(...EXTRA_ORDER.beforeLanguages);
+    out.push(id);
+  }
+  out.push(...EXTRA_ORDER.tail);
+  return out.filter((id, i) => STACK_REGISTRY[id] && out.indexOf(id) === i);
+}
+
+export const STACK_ORDER = buildOrder();
+
+export const STACK_LANGUAGES = [
+  ...new Set(Object.values(STACK_REGISTRY).map((s) => s.language)),
+].sort();
+
 const BACKEND_MARKERS = ["composer.json", "artisan", "manage.py", "gemfile", "mix.exs"];
 
 export function detectPackageManager(files) {
@@ -657,6 +679,7 @@ export function detectPackageManager(files) {
   if (has("package-lock.json")) return "npm";
   if (has("yarn.lock")) return "yarn";
   if (has("package.json")) return "npm";
+  for (const [marker, pm] of EXTRA_PACKAGE_MANAGERS) if (has(marker)) return pm;
   return "none";
 }
 
