@@ -143,10 +143,13 @@ export class SelfHealEngine {
   start() {
     if (this.running) return;
     this.running = true;
+    this.reconciling = false;
     console.log("[self-heal] Autonomous Self-Healing Engine started (AutoHeal v6 Mesh)");
 
-    // Run watchdog probe every 5 seconds
-    this.timer = setInterval(() => this.runReconciliationLoop(), 5000);
+    // Run watchdog probe every 5 seconds (with overlap guard)
+    this.timer = setInterval(() => {
+      if (!this.reconciling) this.runReconciliationLoop();
+    }, 5000);
 
     // Run AutoPrune disk cleaner every 30 minutes
     this.pruneTimer = setInterval(() => this.runAutoPrune(), 30 * 60 * 1000);
@@ -178,6 +181,8 @@ export class SelfHealEngine {
   }
 
   async runReconciliationLoop() {
+    if (this.reconciling) return;
+    this.reconciling = true;
     try {
       // 1. Verify Docker Daemon Socket Health First
       const daemonOk = this.probeDockerDaemon();
@@ -199,6 +204,8 @@ export class SelfHealEngine {
       }
     } catch (err) {
       console.error("[self-heal] Error in reconciliation loop:", err.message);
+    } finally {
+      this.reconciling = false;
     }
   }
 
@@ -389,29 +396,37 @@ export class SelfHealEngine {
 
     if (target === "docker") {
       try {
-        const inspectRes = spawnSync(
-          "docker",
-          ["inspect", "--format", "{{.State.Status}}|{{.State.OOMKilled}}|{{.State.ExitCode}}", `hx_${cleanName}`],
-          { encoding: "utf8", timeout: 3000 }
-        );
-        const out = inspectRes.stdout?.trim() || "";
-        const parts = out.split("|");
-        statusText = parts[0] || "unknown";
-        oomKilled = parts[1] === "true";
-        exitCode = parseInt(parts[2] || "0", 10);
+        const inspectRes = await new Promise((resolve) => {
+          const child = spawn("docker", ["inspect", "--format", "{{.State.Status}}|{{.State.OOMKilled}}|{{.State.ExitCode}}", `hx_${cleanName}`], { encoding: "utf8" });
+          let out = "";
+          child.stdout.on("data", (d) => (out += d.toString()));
+          child.on("close", (code) => {
+            resolve({ stdout: out, status: code });
+          });
+          child.on("error", () => resolve({ stdout: "", status: 1 }));
+          setTimeout(() => { try { child.kill(); } catch {}; resolve({ stdout: out, status: 1 }); }, 3000);
+        });
+          out = inspectRes.stdout?.trim() || "";
+          const parts = out.split("|");
+          statusText = parts[0] || "unknown";
+          oomKilled = parts[1] === "true";
+          exitCode = parseInt(parts[2] || "0", 10);
 
-        if (statusText === "running") {
-          isAlive = true;
+          if (statusText === "running") {
+            isAlive = true;
 
-          // Predictive memory sampling
+          // Predictive memory sampling (async, non-blocking)
           try {
-            const statsRes = spawnSync(
-              "docker",
-              ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`],
-              { encoding: "utf8", timeout: 2500 }
-            );
-            const rawMem = statsRes.stdout?.trim().replace("%", "");
-            if (rawMem) memoryPercent = parseFloat(rawMem) || 0;
+            const memP = await new Promise((resolve) => {
+              const child = spawn("docker", ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`], { encoding: "utf8" });
+              let raw = "";
+              child.stdout.on("data", (d) => (raw += d.toString()));
+              child.on("close", (code) => { resolve({ mem: raw.replace("%", ""), code }); });
+              child.on("error", () => resolve({ mem: "", code: 1 }));
+              setTimeout(() => { try { child.kill(); } catch {}; resolve({ mem: raw, code: 1 }); }, 2500);
+            });
+            const rawMem = memP.mem?.replace("%", "") || "0";
+            memoryPercent = parseFloat(rawMem) || 0;
 
             if (memoryPercent >= 90) {
               this.logEvent(
@@ -430,9 +445,19 @@ export class SelfHealEngine {
             "warning"
           );
           try {
-            spawnSync("docker", ["rm", "-f", `hx_${cleanName}`], { timeout: 5000 });
-            spawnSync("docker", ["network", "disconnect", "-f", "bridge", `hx_${cleanName}`], { timeout: 3000 });
-          } catch {}
+              await new Promise((resolve) => {
+                const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`], { encoding: "utf8" });
+                child.on("close", (code) => resolve(code));
+                child.on("error", () => resolve(1));
+                setTimeout(() => { try { child.kill(); } catch {}; resolve(1); }, 5000);
+              });
+              await new Promise((resolve) => {
+                const child = spawn("docker", ["network", "disconnect", "-f", "bridge", `hx_${cleanName}`], { encoding: "utf8" });
+                child.on("close", (code) => resolve(code));
+                child.on("error", () => resolve(1));
+                setTimeout(() => { try { child.kill(); } catch {}; resolve(1); }, 3000);
+              });
+            } catch {}
           isAlive = false;
         } else {
           isAlive = false;

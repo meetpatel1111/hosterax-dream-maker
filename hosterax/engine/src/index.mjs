@@ -289,6 +289,8 @@ setInterval(() => {
 // ---------- log bus ----------
 const subscribers = new Map(); // deploymentId -> Set<ws>
 const deploymentLogs = new Map(); // deploymentId -> [{ts, stream, text}]
+const MAX_DEPLOYMENT_LOG_ENTRIES = 5000;
+const MAX_ACTIVE_LOG_BUFFERS = 200;
 function publish(deploymentId, line) {
   const item = { deploymentId, ts: line.ts || Date.now(), stream: line.stream || "stdout", text: line.text || "" };
   const msg = JSON.stringify(item);
@@ -304,7 +306,7 @@ function publish(deploymentId, line) {
   // Memory buffer for deployment
   const depBuf = deploymentLogs.get(deploymentId) ?? [];
   depBuf.push(item);
-  while (depBuf.length > 1000) depBuf.shift();
+  while (depBuf.length > MAX_DEPLOYMENT_LOG_ENTRIES) depBuf.shift();
   deploymentLogs.set(deploymentId, depBuf);
 
   // Pipe to project runtimeLogs for instant SSE streaming
@@ -319,12 +321,29 @@ function publish(deploymentId, line) {
   } catch {}
 
   try {
-    fs.appendFileSync(
+    fs.promises.appendFile(
       path.join(LOGDIR, deploymentId + ".log"),
       `[${new Date(item.ts).toISOString()}] ${item.stream}: ${item.text}\n`,
     );
   } catch {}
 }
+
+// Cleanup abandoned log buffers every 5 minutes
+setInterval(() => {
+  // Remove deployment log buffers for completed/failed deployments not in running set
+  for (const [id] of deploymentLogs) {
+    if (!subscribers.has(id) && !running.has(id.split("_d_")[0])) {
+      deploymentLogs.delete(id);
+    }
+  }
+  // Cap total active log buffers
+  if (deploymentLogs.size > MAX_ACTIVE_LOG_BUFFERS) {
+    const keys = [...deploymentLogs.keys()];
+    for (let i = 0; i < keys.length - MAX_ACTIVE_LOG_BUFFERS; i++) {
+      if (!subscribers.has(keys[i])) deploymentLogs.delete(keys[i]);
+    }
+  }
+}, 300000);
 
 // ---------- runtime (post-deploy) log bus ----------
 const RUNTIME_CAP = 500;
@@ -558,9 +577,22 @@ function syncComposeServices(project, workdir, id) {
 }
 
 // ---------- dynamic port allocation ----------
+const portLock = new Set();
 export function allocateProjectPort(projectName, preferredPort = null) {
   const norm = (s) => (s || "").toLowerCase();
   const currentProjectName = norm(projectName);
+  // Prevent concurrent allocation for the same project
+  if (portLock.has(currentProjectName)) {
+    // Wait and retry
+    for (let i = 0; i < 50; i++) {
+      if (!portLock.has(currentProjectName)) break;
+      // busy wait 10ms
+      const start = Date.now();
+      while (Date.now() - start < 10) {}
+    }
+  }
+  portLock.add(currentProjectName);
+  try {
 
   // Collect all ports currently assigned or in use by other projects
   const usedPorts = new Set([7777, 8080]);
@@ -614,6 +646,9 @@ export function allocateProjectPort(projectName, preferredPort = null) {
     candidate += 1;
   }
   return candidate;
+  } finally {
+    portLock.delete(currentProjectName);
+  }
 }
 
 // ---------- edge routing (applied AFTER the app is live) ----------
@@ -934,14 +969,20 @@ function startStaticServer(project, rootDir, port, deploymentId) {
     let reqPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
     let filePath = path.join(rootDir, reqPath);
 
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
-      filePath = path.join(filePath, "index.html");
-    }
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        filePath = path.join(filePath, "index.html");
+      }
+    } catch {}
 
     // SPA fallback: return index.html for client-side routing
-    if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-      filePath = path.join(rootDir, "index.html");
-    }
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.isDirectory()) {
+        filePath = path.join(rootDir, "index.html");
+      }
+    } catch {}
 
     if (!fs.existsSync(filePath)) {
       res.writeHead(404, { "content-type": "text/plain" });
@@ -951,13 +992,13 @@ function startStaticServer(project, rootDir, port, deploymentId) {
     try {
       const ext = path.extname(filePath).toLowerCase();
       const mime = MIME_TYPES[ext] || "application/octet-stream";
-      const content = fs.readFileSync(filePath);
+      const stream = fs.createReadStream(filePath);
       res.writeHead(200, {
         "content-type": mime,
         "access-control-allow-origin": "*",
         "cache-control": ext === ".html" ? "no-cache" : "public, max-age=31536000",
       });
-      res.end(content);
+      stream.pipe(res);
     } catch (e) {
       res.writeHead(500);
       res.end(String(e));
