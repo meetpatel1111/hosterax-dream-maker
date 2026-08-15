@@ -528,29 +528,48 @@ function LiveLogs({ projectName }: { projectName: string }) {
         .catch(() => {});
     }
 
-    const ch = new EventSource(
-      `${engine.url}/api/projects/${projectName}/logs/stream?token=${engine.token}`,
-    );
-    ch.onmessage = (e) => {
-      try {
-        const payload = JSON.parse(e.data);
-        if (payload?.text) {
-          setLogs((prev) => {
-            if (
-              prev.some(
-                (p) =>
-                  p.text === payload.text &&
-                  Math.abs((p.ts || 0) - (payload.ts || 0)) < 1500,
-              )
-            ) {
-              return prev;
+    const abortController = new AbortController();
+    fetch(`${engine.url}/api/projects/${projectName}/logs/stream`, {
+      headers: { Authorization: `Bearer ${engine.token}` },
+      signal: abortController.signal,
+    }).then((res) => {
+      if (!res.ok || !res.body) return;
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const readChunk = () => {
+        reader.read().then(({ done, value }) => {
+          if (done) return;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const payload = JSON.parse(line.slice(6));
+                if (payload?.text) {
+                  setLogs((prev) => {
+                    if (
+                      prev.some(
+                        (p) =>
+                          p.text === payload.text &&
+                          Math.abs((p.ts || 0) - (payload.ts || 0)) < 1500,
+                      )
+                    ) {
+                      return prev;
+                    }
+                    return [...prev, payload];
+                  });
+                }
+              } catch {}
             }
-            return [...prev, payload];
-          });
-        }
-      } catch {}
-    };
-    return () => ch.close();
+          }
+          readChunk();
+        });
+      };
+      readChunk();
+    }).catch(() => {});
+    return () => abortController.abort();
   }, [active, engine.url, engine.token, projectName]);
 
   return (

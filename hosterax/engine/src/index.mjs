@@ -264,6 +264,28 @@ if (tokenCount === 0) {
   console.log("╰───────────────────────────────────────────────╯\n");
 }
 
+// ---------- rate limiter ----------
+const rateLimiter = new Map(); // ip -> { count, resetAt }
+function rateLimit(req, maxRequests = 60, windowMs = 60000) {
+  const ip = req.socket?.remoteAddress || "unknown";
+  const now = Date.now();
+  const entry = rateLimiter.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateLimiter.set(ip, { count: 1, resetAt: now + windowMs });
+    return false;
+  }
+  entry.count++;
+  if (entry.count > maxRequests) return true;
+  return false;
+}
+// Cleanup stale entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimiter) {
+    if (now > entry.resetAt) rateLimiter.delete(ip);
+  }
+}, 300000);
+
 // ---------- log bus ----------
 const subscribers = new Map(); // deploymentId -> Set<ws>
 const deploymentLogs = new Map(); // deploymentId -> [{ts, stream, text}]
@@ -682,6 +704,10 @@ function nextVersion(project) {
   return `v0.${n + 1}.0`;
 }
 
+function sanitizeImageTag(tag) {
+  return tag.replace(/[^a-zA-Z0-9._/:@-]/g, "");
+}
+
 function shellFor(cmd) {
   return process.platform === "win32"
     ? { shell: "cmd.exe", args: ["/c", cmd] }
@@ -722,10 +748,12 @@ async function fetchSource(deploymentId, source, workdir, target) {
     return 0;
   }
   if (/^https?:|^git@|\.git$/.test(source)) {
+    const safeSource = source.replace(/['";`$()!]/g, "");
+    const targetDir = path.basename(workdir).replace(/['";`$()!]/g, "");
     return runStep(
       deploymentId,
       path.dirname(workdir),
-      `git clone --depth 1 ${source} ${path.basename(workdir)}`,
+      `git clone --depth 1 '${safeSource}' '${targetDir}'`,
       {},
     );
   }
@@ -734,10 +762,12 @@ async function fetchSource(deploymentId, source, workdir, target) {
     publish(deploymentId, { ts: Date.now(), stream: "stderr", text: "source not found: " + abs });
     return 1;
   }
+  const safeAbs = abs.replace(/['";`$()!]/g, "");
+  const safeWorkdir = workdir.replace(/['";`$()!]/g, "");
   const cmd =
     process.platform === "win32"
-      ? `xcopy ${abs} ${workdir} /E /I /Y /Q`
-      : `cp -R "${abs}/." "${workdir}/"`;
+      ? `xcopy "${safeAbs}" "${safeWorkdir}" /E /I /Y /Q`
+      : `cp -R '${safeAbs}/.' '${safeWorkdir}/'`;
   return runStep(deploymentId, path.dirname(workdir), cmd, {});
 }
 
@@ -1189,7 +1219,7 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       }
 
       publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
-      const bc = await runStep(deploymentId, workdir, `docker build -t ${tag} .`, env);
+      const bc = await runStep(deploymentId, workdir, `docker build -t ${sanitizeImageTag(tag)} .`, env);
       if (bc !== 0) return bc;
       imageInspect = inspectDockerImage(tag);
     }
@@ -1311,7 +1341,7 @@ pages:
       portFlag += ` -p 127.0.0.1:${consoleHostPort}:9001`;
     }
 
-    const runCmd = `docker run -d --init --name hx_${cleanName} --restart unless-stopped ${portFlag}${volFlags} ${envFlags} ${tag}${extraArgs}`;
+    const runCmd = `docker run -d --init --name hx_${cleanName} --restart unless-stopped ${portFlag}${volFlags} ${envFlags} ${sanitizeImageTag(tag)}${extraArgs}`;
     publish(deploymentId, { ts: Date.now(), stream: "system", text: runCmd });
     const rc = await runStep(deploymentId, workdir, runCmd, {});
     if (rc === 0) {
@@ -1373,10 +1403,15 @@ pages:
   return 0;
 }
 
+const ALLOWED_PHASE_COLUMNS = new Set([
+  "phase", "finished_at", "exit_code", "stack", "snapshot_json", "route_status",
+  "workdir", "environment", "trigger", "version",
+]);
 function setPhase(id, phase, extra = {}) {
   const fields = ["phase = ?"];
   const values = [phase];
   for (const [k, v] of Object.entries(extra)) {
+    if (!ALLOWED_PHASE_COLUMNS.has(k)) continue;
     fields.push(`${k} = ?`);
     values.push(v);
   }
@@ -1713,10 +1748,19 @@ function json(res, code, body) {
   });
   res.end(JSON.stringify(body));
 }
-function readBody(req) {
+function readBody(req, maxSizeBytes = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let s = "";
-    req.on("data", (c) => (s += c));
+    let totalBytes = 0;
+    req.on("data", (c) => {
+      totalBytes += c.length;
+      if (totalBytes > maxSizeBytes) {
+        req.destroy();
+        reject(new Error("request body too large"));
+        return;
+      }
+      s += c;
+    });
     req.on("end", () => {
       try {
         resolve(s ? JSON.parse(s) : {});
@@ -1831,8 +1875,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/health") return json(res, 200, { ok: true, version: "0.2.0" });
+  // Rate limit: 60 req/min for auth endpoints, 120/min for others
+  const isAuthEndpoint = url.pathname.startsWith("/api/auth") || url.pathname === "/api/token";
+  if (rateLimit(req, isAuthEndpoint ? 10 : 120)) {
+    return json(res, 429, { error: "too many requests" });
+  }
   if (await catalogApi(req, res, url.pathname)) return;
   if (url.pathname === "/api/token" && req.method === "GET") {
+    if (!authOk(req)) return json(res, 403, { error: "forbidden" });
     const bToken = db.prepare("SELECT token FROM tokens LIMIT 1").get();
     return json(res, 200, { token: bToken?.token || "" });
   }
@@ -1846,11 +1896,7 @@ const server = http.createServer(async (req, res) => {
         token: b.token,
       });
     }
-    return json(res, 200, {
-      ok: true,
-      user: { id: "admin-local", email: b.email || "admin@hosterax.local", role: "admin" },
-      token: bToken,
-    });
+    return json(res, 401, { ok: false, error: "invalid token" });
   }
 
   // Reverse proxy for *.sslip.io, *.nip.io, *.traefik.me, *.ipq.co, *.fdns.uk and *.localhost subdomains
@@ -2587,9 +2633,10 @@ const server = http.createServer(async (req, res) => {
         Date.now(),
       );
       // spawn docker run detached; if docker missing, mark failed
-      const cname = `hx_app_${b.slug}_${id.slice(-6)}`;
+      const cname = `hx_app_${b.slug.replace(/[^a-z0-9]/g, "_")}_${id.slice(-6)}`;
+      const safeImage = sanitizeImageTag(b.image);
       const portFlag = port ? `-p ${port}:${port}` : "";
-      const cmd = `docker run -d --name ${cname} ${portFlag} ${b.image}`;
+      const cmd = `docker run -d --name ${cname} ${portFlag} ${safeImage}`;
       const child = spawn(
         process.platform === "win32" ? "cmd.exe" : "sh",
         process.platform === "win32" ? ["/c", cmd] : ["-c", cmd],
@@ -2631,7 +2678,14 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://x");
   const id = url.searchParams.get("deployment");
+  const token = url.searchParams.get("token");
   if (!id) return ws.close();
+  // Auth check: require valid token or loopback
+  const t = token || "";
+  const isValidToken = !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(t);
+  const ip = req.socket?.remoteAddress || "";
+  const isLoopback = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1" || ip.includes("127.0.0.1");
+  if (!isValidToken && !isLoopback) return ws.close();
   if (!subscribers.has(id)) subscribers.set(id, new Set());
   subscribers.get(id).add(ws);
   // replay

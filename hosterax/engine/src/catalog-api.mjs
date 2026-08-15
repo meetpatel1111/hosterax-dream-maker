@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let catalogData = { tags: [], apps: [], totalApps: 0, totalTags: 0 };
+const DOCKERHUB_CATEGORY_CACHE = new Map();
 
 try {
   const dbPath = path.join(__dirname, "awesome-selfhosted-db.json");
@@ -134,9 +135,6 @@ export function createCatalogApi({ db, HOME, readBody }) {
         apps: paginated,
       });
     }
-
-    // In-memory cache for live Docker Hub category pages (1 hour TTL)
-    const DOCKERHUB_CATEGORY_CACHE = new Map();
 
     async function fetchLiveDockerHubCategory(categorySlug) {
       if (!categorySlug || categorySlug === "all" || categorySlug === "_search") return [];
@@ -415,12 +413,8 @@ export function createCatalogApi({ db, HOME, readBody }) {
         console.warn(`[dockerhub-search] Live API error:`, err.message);
       }
 
-      // Fallback filter over curated verified catalog if live query fails
-      const filtered = OFFICIAL_DOCKER_CATALOG.filter(
-        (c) =>
-          (!category || c.category === category || c.category?.includes(category)) &&
-          (!rawQ || c.name.toLowerCase().includes(rawQ.toLowerCase()) || c.desc.toLowerCase().includes(rawQ.toLowerCase()))
-      );
+      // Fallback: empty results if live API fails
+      const filtered = [];
       const offset = (page - 1) * pageSize;
       const results = filtered.slice(offset, offset + pageSize).map((item) => {
         const cleanRepo = item.name;

@@ -20,6 +20,8 @@ export class SelfHealEngine {
     this.circuitMap = new Map();
     // Track health status: projectName -> { status, lastProbeTs, message, latencyMs, memoryPercent, tiers, circuitState }
     this.healthMap = new Map();
+    // Track consecutive failures per project
+    this.consecutiveFailures = new Map();
     // In-memory event log for UI timeline
     this.events = [];
     // Docker daemon socket health
