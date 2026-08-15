@@ -18,7 +18,9 @@ function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
-        <div className="text-xs font-mono uppercase tracking-widest text-primary">404 · not found</div>
+        <div className="text-xs font-mono uppercase tracking-widest text-primary">
+          404 · not found
+        </div>
         <h1 className="mt-4 text-4xl font-semibold tracking-tight">Route not deployed</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           That page isn't part of this HosteraX instance.
@@ -44,17 +46,24 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
-        <div className="text-xs font-mono uppercase tracking-widest text-destructive">runtime error</div>
+        <div className="text-xs font-mono uppercase tracking-widest text-destructive">
+          runtime error
+        </div>
         <h1 className="mt-4 text-2xl font-semibold tracking-tight">Something crashed</h1>
         <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
         <div className="mt-6 flex justify-center gap-2">
           <button
-            onClick={() => { router.invalidate(); reset(); }}
+            onClick={() => {
+              router.invalidate();
+              reset();
+            }}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
             Retry
           </button>
-          <a href="/" className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">Go home</a>
+          <a href="/" className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">
+            Go home
+          </a>
         </div>
       </div>
     </div>
@@ -67,10 +76,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "HosteraX — Self-hosted deploy platform" },
-      { name: "description", content: "Push-to-deploy from any git repo. Auto-detects stack, provisions SSL, and manages databases on your own infrastructure." },
+      {
+        name: "description",
+        content:
+          "Push-to-deploy from any git repo. Auto-detects stack, provisions SSL, and manages databases on your own infrastructure.",
+      },
       { name: "author", content: "HosteraX" },
       { property: "og:title", content: "HosteraX — Self-hosted deploy platform" },
-      { property: "og:description", content: "Push-to-deploy from any git repo. Auto-detects stack, provisions SSL, and manages databases on your own infrastructure." },
+      {
+        property: "og:description",
+        content:
+          "Push-to-deploy from any git repo. Auto-detects stack, provisions SSL, and manages databases on your own infrastructure.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
@@ -78,7 +95,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { rel: "stylesheet", href: appCss },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-      { rel: "stylesheet", href: "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
+      },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
     ],
   }),
@@ -91,8 +111,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="dark">
-      <head><HeadContent /></head>
-      <body>{children}<Scripts /></body>
+      <head>
+        <HeadContent />
+      </head>
+      <body>
+        {children}
+        <Scripts />
+      </body>
     </html>
   );
 }

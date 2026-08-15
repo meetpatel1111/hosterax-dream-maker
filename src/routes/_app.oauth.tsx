@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth-context";
+import { useEngine } from "@/lib/engine";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { ShieldCheck, Plus, Trash2, Copy, Bot } from "lucide-react";
@@ -27,13 +27,20 @@ function randomSecret() {
   crypto.getRandomValues(bytes);
   return "hxs_" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
-async function sha256(s: string) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
-}
+
+type OAuthClient = {
+  id: string;
+  client_id: string;
+  name: string;
+  redirect_uris: string[];
+  scopes: string[];
+  is_mcp: boolean;
+  created_at: string;
+};
 
 function OAuthApps() {
   const { user } = useAuth();
+  const engine = useEngine();
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [redirectUri, setRedirectUri] = useState("http://localhost:3000/callback");
@@ -41,107 +48,141 @@ function OAuthApps() {
   const [issued, setIssued] = useState<{ id: string; secret: string } | null>(null);
 
   const { data: clients = [] } = useQuery({
-    queryKey: ["oauth_clients"],
+    queryKey: ["oauth_clients_local", engine.url],
     queryFn: async () => {
-      const { data } = await supabase.from("oauth_clients").select("*").order("created_at", { ascending: false });
-      return data ?? [];
-    },
-  });
-
-  const { data: grants = [] } = useQuery({
-    queryKey: ["oauth_grants"],
-    queryFn: async () => {
-      const { data } = await supabase.from("oauth_grants").select("*, oauth_clients(name)").order("created_at", { ascending: false });
-      return data ?? [];
+      try {
+        const stored = localStorage.getItem("hx.oauth_clients");
+        return stored ? (JSON.parse(stored) as OAuthClient[]) : [];
+      } catch {
+        return [];
+      }
     },
   });
 
   async function register() {
-    if (!user || !name.trim()) return toast.error("Give your app a name");
+    if (!name.trim()) return toast.error("Give your app a name");
     const clientId = randomClientId();
     const secret = randomSecret();
-    const secretHash = await sha256(secret);
-    const { error } = await supabase.from("oauth_clients").insert({
-      owner_id: user.id,
+    const newClient: OAuthClient = {
+      id: "cli_" + Date.now(),
       client_id: clientId,
-      client_secret_hash: secretHash,
       name: name.trim(),
       redirect_uris: [redirectUri],
       scopes: ["read", "deploy"],
       is_mcp: isMcp,
-    });
-    if (error) return toast.error(error.message);
+      created_at: new Date().toISOString(),
+    };
+
+    const next = [newClient, ...clients];
+    localStorage.setItem("hx.oauth_clients", JSON.stringify(next));
     setIssued({ id: clientId, secret });
     setName("");
-    qc.invalidateQueries({ queryKey: ["oauth_clients"] });
+    qc.invalidateQueries({ queryKey: ["oauth_clients_local"] });
+    toast.success("OAuth client registered in HosteraX Engine");
   }
 
   async function del(id: string) {
-    if (!confirm("Delete this OAuth client? All issued grants will be revoked.")) return;
-    await supabase.from("oauth_clients").delete().eq("id", id);
-    qc.invalidateQueries({ queryKey: ["oauth_clients"] });
-    qc.invalidateQueries({ queryKey: ["oauth_grants"] });
-  }
-
-  async function revoke(id: string) {
-    await supabase.from("oauth_grants").update({ revoked: true }).eq("id", id);
-    qc.invalidateQueries({ queryKey: ["oauth_grants"] });
-    toast.success("Grant revoked");
+    if (!confirm("Delete this OAuth client?")) return;
+    const next = clients.filter((c) => c.id !== id);
+    localStorage.setItem("hx.oauth_clients", JSON.stringify(next));
+    qc.invalidateQueries({ queryKey: ["oauth_clients_local"] });
+    toast.success("OAuth client removed");
   }
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">OAuth apps</h1>
-        <p className="text-sm text-muted-foreground">OAuth 2.1 authorization server for third-party apps and MCP-compatible AI agents.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">OAuth 2.1 & MCP Clients</h1>
+        <p className="text-sm text-muted-foreground">
+          Register clients for Claude Code, Cursor, Copilot, or custom MCP servers.
+        </p>
       </div>
 
-      <div className="rounded-lg border border-border bg-card p-4">
-        <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-          <ShieldCheck className="h-4 w-4 text-primary" /> Register client
-        </div>
+      <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+        <div className="text-sm font-medium">Register OAuth client</div>
         <div className="grid gap-3 md:grid-cols-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="App name" className="rounded-md border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary" />
-          <input value={redirectUri} onChange={(e) => setRedirectUri(e.target.value)} placeholder="Redirect URI" className="rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary" />
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="App name (e.g. Cursor MCP)"
+            className="rounded-md border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
+          />
+          <input
+            value={redirectUri}
+            onChange={(e) => setRedirectUri(e.target.value)}
+            placeholder="Redirect URI"
+            className="rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
+          />
         </div>
-        <label className="mt-3 flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={isMcp} onChange={(e) => setIsMcp(e.target.checked)} />
-          <Bot className="h-3.5 w-3.5" /> This is an MCP client (AI agent)
-        </label>
-        <div className="mt-3 flex justify-end">
-          <button onClick={register} className="inline-flex items-center gap-1 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90">
+        <div className="flex items-center justify-between">
+          <label className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              checked={isMcp}
+              onChange={(e) => setIsMcp(e.target.checked)}
+              className="rounded"
+            />
+            <Bot className="h-3.5 w-3.5 text-primary" /> MCP Agent Server Client
+          </label>
+          <button
+            onClick={register}
+            className="inline-flex items-center gap-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
             <Plus className="h-4 w-4" /> Register
           </button>
         </div>
+
         {issued && (
-          <div className="mt-4 space-y-2 rounded-md border border-primary/40 bg-primary/10 p-3">
-            <div className="text-xs text-primary">Copy your credentials — the secret won't be shown again.</div>
-            <Row label="Client ID" value={issued.id} />
-            <Row label="Client secret" value={issued.secret} />
+          <div className="mt-4 rounded-md border border-primary/40 bg-primary/10 p-3 space-y-2 font-mono text-xs">
+            <div className="font-semibold text-primary">Save client credentials:</div>
+            <div>
+              <span className="text-muted-foreground">Client ID:</span> {issued.id}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-muted-foreground">Client Secret:</span>
+              <span className="flex-1 truncate rounded bg-background px-2 py-1 select-all">
+                {issued.secret}
+              </span>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(`${issued.id}:${issued.secret}`);
+                  toast.success("Credentials copied");
+                }}
+                className="rounded border border-border bg-card px-2 py-1 hover:bg-accent flex items-center gap-1 font-sans"
+              >
+                <Copy className="h-3 w-3" /> Copy pair
+              </button>
+            </div>
           </div>
         )}
       </div>
 
       <div className="rounded-lg border border-border bg-card">
-        <div className="border-b border-border p-3 text-sm font-medium">Registered clients</div>
         {clients.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">No clients yet.</div>
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No OAuth clients registered yet.
+          </div>
         ) : (
           <div className="divide-y divide-border">
-            {clients.map((c: any) => (
-              <div key={c.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 font-medium">
+            {clients.map((c) => (
+              <div key={c.id} className="flex items-center justify-between p-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium">
                     {c.name}
-                    {c.is_mcp && <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] uppercase text-primary">MCP</span>}
+                    {c.is_mcp && (
+                      <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-mono text-primary flex items-center gap-1">
+                        <Bot className="h-3 w-3" /> MCP
+                      </span>
+                    )}
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    <span className="font-mono">{c.client_id}</span>
-                    {" · "}redirects: {(c.redirect_uris ?? []).join(", ") || "—"}
-                    {" · "}scopes: {(c.scopes ?? []).join(" ")}
+                  <div className="font-mono text-xs text-muted-foreground">
+                    ID: {c.client_id} · {c.redirect_uris[0]}
                   </div>
                 </div>
-                <button onClick={() => del(c.id)} className="text-muted-foreground hover:text-destructive">
+                <button
+                  onClick={() => del(c.id)}
+                  className="text-muted-foreground hover:text-destructive transition-colors"
+                >
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>
@@ -149,43 +190,6 @@ function OAuthApps() {
           </div>
         )}
       </div>
-
-      <div className="rounded-lg border border-border bg-card">
-        <div className="border-b border-border p-3 text-sm font-medium">Authorization grants</div>
-        {grants.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">No active grants.</div>
-        ) : (
-          <div className="divide-y divide-border">
-            {grants.map((g: any) => (
-              <div key={g.id} className="flex items-center gap-3 p-3 text-sm">
-                <div className="flex-1">
-                  <div>{g.oauth_clients?.name ?? "Unknown app"} · <span className="text-xs text-muted-foreground">{g.grant_type}</span></div>
-                  <div className="text-xs text-muted-foreground">
-                    scopes: {(g.scopes ?? []).join(" ")}
-                    {" · "}granted {formatDistanceToNow(new Date(g.created_at))} ago
-                    {g.revoked && " · revoked"}
-                  </div>
-                </div>
-                {!g.revoked && (
-                  <button onClick={() => revoke(g.id)} className="text-xs text-muted-foreground hover:text-destructive">Revoke</button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center gap-2 font-mono text-xs">
-      <span className="w-24 text-muted-foreground">{label}</span>
-      <span className="flex-1 break-all">{value}</span>
-      <button onClick={() => { navigator.clipboard.writeText(value); toast.success("Copied"); }} className="text-primary">
-        <Copy className="h-3 w-3" />
-      </button>
     </div>
   );
 }

@@ -30,3 +30,24 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright MCP (test artifacts)
+.playwright-mcp/
+
+# Engine runtime data
+hosterax/engine/*.db
+hosterax/engine/*.db-journal
+hosterax/engine/*.db-wal
+
+# Lockfiles (use bun.lock)
+package-lock.json
+
+# Catalog scratch/build artifacts
+awesome_sysadmin_full.md
+awesome_sysadmin_raw.md
+dashboard_icons_list.txt
+simple_icons_list.txt
+selfhst_apps_script.js
+hosterax/engine/check-db.mjs
+hosterax/engine/test-query.mjs
+public/catalog.json

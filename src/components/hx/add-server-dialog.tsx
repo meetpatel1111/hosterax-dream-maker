@@ -62,7 +62,9 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
             >
               <Cpu className="h-6 w-6" />
               <div className="font-medium">Local Machine</div>
-              <div className="text-center text-xs">Deploy directly to the host running Control Plane.</div>
+              <div className="text-center text-xs">
+                Deploy directly to the host running Control Plane.
+              </div>
             </button>
           </div>
 
@@ -147,5 +149,3 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
     </Dialog>
   );
 }
-
-

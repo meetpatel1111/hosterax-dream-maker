@@ -3,7 +3,16 @@ import { useQuery } from "@tanstack/react-query";
 import { StatusBadge } from "@/components/hx/status-badge";
 import { BackupWizardModal } from "@/components/hx/backup-wizard";
 import { useState } from "react";
-import { Plus, Database, Search, MoreHorizontal, Terminal, Activity, ArrowRight, Settings } from "lucide-react";
+import {
+  Plus,
+  Database,
+  Search,
+  MoreHorizontal,
+  Terminal,
+  Activity,
+  ArrowRight,
+  Settings,
+} from "lucide-react";
 import { useEngine } from "@/lib/engine";
 
 export const Route = createFileRoute("/_app/databases")({
@@ -28,11 +37,13 @@ function DatabasesPage() {
   });
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto w-full max-w-[1600px] space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Databases</h1>
-          <p className="text-sm text-muted-foreground">Managed database instances & automated backups across projects.</p>
+          <p className="text-sm text-muted-foreground">
+            Managed database instances & automated backups across projects.
+          </p>
         </div>
         <button
           onClick={() => setShowBackupModal(true)}
@@ -49,16 +60,27 @@ function DatabasesPage() {
               <Database className="h-5 w-5" />
             </div>
             No database instances provisioned yet.
-            <div className="mt-1 text-xs">Open any project → Databases tab to provision Postgres, MySQL, Mongo, or Redis.</div>
+            <div className="mt-1 text-xs">
+              Open any project → Databases tab to provision Postgres, MySQL, Mongo, or Redis.
+            </div>
           </div>
         ) : (
           <div className="divide-y divide-border">
             {data.map((d: any) => (
-              <Link key={d.id} to="/p/$slug" params={{ slug: d.projects?.slug ?? "" }} className="flex items-center gap-4 p-4 hover:bg-accent/40 transition-colors">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 font-mono text-xs uppercase font-semibold text-primary">{d.engine.slice(0, 2)}</div>
+              <Link
+                key={d.id}
+                to="/p/$slug"
+                params={{ slug: d.projects?.slug ?? "" }}
+                className="flex items-center gap-4 p-4 hover:bg-accent/40 transition-colors"
+              >
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 font-mono text-xs uppercase font-semibold text-primary">
+                  {d.engine.slice(0, 2)}
+                </div>
                 <div className="flex-1">
                   <div className="text-sm font-medium text-foreground">{d.name}</div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">{d.projects?.name} · {d.engine} · {d.size_mb} MB</div>
+                  <div className="mt-0.5 text-xs text-muted-foreground">
+                    {d.projects?.name} · {d.engine} · {d.size_mb} MB
+                  </div>
                 </div>
                 <StatusBadge status={d.status} />
               </Link>
@@ -71,5 +93,3 @@ function DatabasesPage() {
     </div>
   );
 }
-
-

@@ -1,11 +1,10 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { KeyRound, Plus, Trash2, Copy, Shield } from "lucide-react";
+import { useEngine } from "@/lib/engine";
 
 export const Route = createFileRoute("/_app/tokens")({
   head: () => ({
@@ -19,63 +18,71 @@ export const Route = createFileRoute("/_app/tokens")({
 
 const ALL_SCOPES: Array<"read" | "deploy" | "admin"> = ["read", "deploy", "admin"];
 
-function randomToken() {
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  return "hx_" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function sha256(s: string) {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 function Tokens() {
-  const { user } = useAuth();
+  const engine = useEngine();
   const qc = useQueryClient();
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<Array<"read" | "deploy" | "admin">>(["read"]);
+  const [scopes, setScopes] = useState<Array<"read" | "deploy" | "admin">>(["read", "deploy", "admin"]);
   const [issued, setIssued] = useState<string | null>(null);
 
-  const { data: tokens = [] } = useQuery({
-    queryKey: ["tokens"],
+  const { data: tokens = [], isLoading } = useQuery({
+    queryKey: ["tokens-sqlite", engine.url],
     queryFn: async () => {
-      const { data } = await supabase.from("access_tokens").select("*").order("created_at", { ascending: false });
-      return data ?? [];
+      try {
+        const data = await engine.call<any[]>("GET", "/api/tokens");
+        return (data ?? []).map((t) => ({
+          id: t.token,
+          token: t.token,
+          name: t.name || "token",
+          created_at: t.created_at ? new Date(t.created_at).toISOString() : new Date().toISOString(),
+          token_prefix: (t.token || "").slice(0, 10),
+          scopes: ["read", "deploy", "admin"],
+        }));
+      } catch {
+        return [];
+      }
     },
+    refetchInterval: 5000,
   });
 
   async function create() {
-    if (!user || !name.trim()) return toast.error("Give the token a name");
-    const raw = randomToken();
-    const hash = await sha256(raw);
-    const { error } = await supabase.from("access_tokens").insert({
-      owner_id: user.id,
-      name: name.trim(),
-      token_prefix: raw.slice(0, 10),
-      token_hash: hash,
-      scopes: scopes as any,
-    });
-    if (error) return toast.error(error.message);
-    setIssued(raw);
-    setName("");
-    setScopes(["read"]);
-    qc.invalidateQueries({ queryKey: ["tokens"] });
+    if (!name.trim()) return toast.error("Give the token a name");
+    try {
+      const res = await engine.call<any>("POST", "/api/tokens", {
+        name: name.trim(),
+        scopes,
+      });
+      if (res?.token) {
+        setIssued(res.token);
+        toast.success(`Token "${name.trim()}" created and saved to SQLite DB`);
+      } else {
+        toast.success("Token created");
+      }
+      setName("");
+      qc.invalidateQueries({ queryKey: ["tokens-sqlite"] });
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create token");
+    }
   }
 
-  async function revoke(id: string) {
+  async function revoke(tokenVal: string) {
     if (!confirm("Revoke this token? Requests using it will start failing.")) return;
-    const { error } = await supabase.from("access_tokens").delete().eq("id", id);
-    if (error) return toast.error(error.message);
-    qc.invalidateQueries({ queryKey: ["tokens"] });
-    toast.success("Token revoked");
+    try {
+      await engine.call("DELETE", `/api/tokens/${tokenVal}`);
+      qc.invalidateQueries({ queryKey: ["tokens-sqlite"] });
+      toast.success("Token revoked from SQLite DB");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to revoke token");
+    }
   }
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">API tokens</h1>
-        <p className="text-sm text-muted-foreground">Personal access tokens for the HosteraX CLI, REST API, and MCP.</p>
+        <p className="text-sm text-muted-foreground">
+          Personal access tokens for the HosteraX CLI, REST API, and MCP stored in SQLite.
+        </p>
       </div>
 
       <div className="rounded-lg border border-border bg-card p-4">
@@ -95,25 +102,41 @@ function Tokens() {
                 <input
                   type="checkbox"
                   checked={scopes.includes(s)}
-                  onChange={(e) =>
-                    setScopes(e.target.checked ? [...scopes, s] : scopes.filter((x) => x !== s))
-                  }
+                  onChange={(e) => {
+                    setScopes(
+                      e.target.checked ? [...scopes, s] : scopes.filter((x) => x !== s),
+                    );
+                  }}
                 />
-                {s}
+                <span className="capitalize">{s}</span>
               </label>
             ))}
           </div>
-          <button onClick={create} className="inline-flex items-center gap-1 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90">
+          <button
+            onClick={create}
+            className="inline-flex items-center gap-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
+          >
             <Plus className="h-4 w-4" /> Create
           </button>
         </div>
+
         {issued && (
           <div className="mt-4 rounded-md border border-primary/40 bg-primary/10 p-3">
-            <div className="mb-1 text-xs text-primary">Copy this token now — you won't see it again.</div>
-            <div className="flex items-center gap-2 font-mono text-sm break-all">
-              <span className="flex-1">{issued}</span>
-              <button onClick={() => { navigator.clipboard.writeText(issued); toast.success("Copied"); }} className="text-primary hover:opacity-80">
-                <Copy className="h-4 w-4" />
+            <div className="text-xs font-semibold text-primary">
+              New token created — copy now (won't be shown in full again):
+            </div>
+            <div className="mt-1 flex items-center gap-2 font-mono text-sm">
+              <span className="flex-1 truncate rounded bg-background px-2 py-1 select-all">
+                {issued}
+              </span>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(issued);
+                  toast.success("Token copied");
+                }}
+                className="rounded border border-border bg-card px-2 py-1 text-xs hover:bg-accent flex items-center gap-1"
+              >
+                <Copy className="h-3 w-3" /> Copy
               </button>
             </div>
           </div>
@@ -122,23 +145,37 @@ function Tokens() {
 
       <div className="rounded-lg border border-border bg-card">
         {tokens.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">No tokens yet.</div>
+          <div className="p-8 text-center text-sm text-muted-foreground">
+            No personal access tokens created yet.
+          </div>
         ) : (
           <div className="divide-y divide-border">
             {tokens.map((t: any) => (
-              <div key={t.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
-                <Shield className="h-4 w-4 text-primary" />
-                <div className="flex-1">
-                  <div className="font-medium">{t.name}</div>
-                  <div className="text-xs text-muted-foreground">
-                    <span className="font-mono">{t.token_prefix}…</span>
-                    {" · "}
-                    scopes: {(t.scopes ?? []).join(", ")}
-                    {" · "}
-                    created {formatDistanceToNow(new Date(t.created_at))} ago
+              <div key={t.id} className="flex items-center justify-between p-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    {t.name}
+                    <div className="flex gap-1">
+                      {t.scopes?.map((s: string) => (
+                        <span
+                          key={s}
+                          className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono capitalize"
+                        >
+                          {s}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
+                    <span>{t.token_prefix}••••••••</span>
+                    <span>·</span>
+                    <span>Created {formatDistanceToNow(new Date(t.created_at), { addSuffix: true })}</span>
                   </div>
                 </div>
-                <button onClick={() => revoke(t.id)} className="text-muted-foreground hover:text-destructive">
+                <button
+                  onClick={() => revoke(t.token)}
+                  className="text-muted-foreground hover:text-destructive transition-colors"
+                >
                   <Trash2 className="h-4 w-4" />
                 </button>
               </div>

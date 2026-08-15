@@ -77,9 +77,38 @@
 }
 
 @layer base {
-  * { border-color: var(--color-border); }
-  html, body { background-color: var(--color-background); color: var(--color-foreground); font-family: var(--font-sans); }
+  * { 
+    border-color: var(--color-border);
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-surface-2) var(--color-background);
+  }
+  html {
+    color-scheme: dark;
+  }
+  html, body { 
+    background-color: var(--color-background); 
+    color: var(--color-foreground); 
+    font-family: var(--font-sans);
+    min-height: 100vh;
+  }
   code, pre, .font-mono { font-family: var(--font-mono); }
+
+  /* Sleek Dark Scrollbar for Chromium / Webkit */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-background);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-surface-2);
+    border-radius: 4px;
+    border: 1px solid var(--color-border);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-muted-foreground);
+  }
 }
 
 @utility glow-primary {

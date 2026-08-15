@@ -13,9 +13,11 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AppActivityRouteImport } from './routes/_app.activity'
+import { Route as AppAppsRouteImport } from './routes/_app.apps'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
 import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
+import { Route as AppDockerhubRouteImport } from './routes/_app.dockerhub'
 import { Route as AppDomainsRouteImport } from './routes/_app.domains'
 import { Route as AppLocalRouteImport } from './routes/_app.local'
 import { Route as AppNewRouteImport } from './routes/_app.new'
@@ -45,6 +47,11 @@ const AppActivityRoute = AppActivityRouteImport.update({
   path: '/activity',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAppsRoute = AppAppsRouteImport.update({
+  id: '/apps',
+  path: '/apps',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
@@ -58,6 +65,11 @@ const AppDatabasesRoute = AppDatabasesRouteImport.update({
 const AppDeploymentsRoute = AppDeploymentsRouteImport.update({
   id: '/deployments',
   path: '/deployments',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDockerhubRoute = AppDockerhubRouteImport.update({
+  id: '/dockerhub',
+  path: '/dockerhub',
   getParentRoute: () => AppRoute,
 } as any)
 const AppDomainsRoute = AppDomainsRouteImport.update({
@@ -110,9 +122,11 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/activity': typeof AppActivityRoute
+  '/apps': typeof AppAppsRoute
   '/dashboard': typeof AppDashboardRoute
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
+  '/dockerhub': typeof AppDockerhubRoute
   '/domains': typeof AppDomainsRoute
   '/local': typeof AppLocalRoute
   '/new': typeof AppNewRoute
@@ -127,9 +141,11 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/activity': typeof AppActivityRoute
+  '/apps': typeof AppAppsRoute
   '/dashboard': typeof AppDashboardRoute
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
+  '/dockerhub': typeof AppDockerhubRoute
   '/domains': typeof AppDomainsRoute
   '/local': typeof AppLocalRoute
   '/new': typeof AppNewRoute
@@ -146,9 +162,11 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/_app/activity': typeof AppActivityRoute
+  '/_app/apps': typeof AppAppsRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/databases': typeof AppDatabasesRoute
   '/_app/deployments': typeof AppDeploymentsRoute
+  '/_app/dockerhub': typeof AppDockerhubRoute
   '/_app/domains': typeof AppDomainsRoute
   '/_app/local': typeof AppLocalRoute
   '/_app/new': typeof AppNewRoute
@@ -165,9 +183,11 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/activity'
+    | '/apps'
     | '/dashboard'
     | '/databases'
     | '/deployments'
+    | '/dockerhub'
     | '/domains'
     | '/local'
     | '/new'
@@ -182,9 +202,11 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/activity'
+    | '/apps'
     | '/dashboard'
     | '/databases'
     | '/deployments'
+    | '/dockerhub'
     | '/domains'
     | '/local'
     | '/new'
@@ -200,9 +222,11 @@ export interface FileRouteTypes {
     | '/_app'
     | '/auth'
     | '/_app/activity'
+    | '/_app/apps'
     | '/_app/dashboard'
     | '/_app/databases'
     | '/_app/deployments'
+    | '/_app/dockerhub'
     | '/_app/domains'
     | '/_app/local'
     | '/_app/new'
@@ -250,6 +274,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppActivityRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/apps': {
+      id: '/_app/apps'
+      path: '/apps'
+      fullPath: '/apps'
+      preLoaderRoute: typeof AppAppsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/dashboard': {
       id: '/_app/dashboard'
       path: '/dashboard'
@@ -269,6 +300,13 @@ declare module '@tanstack/react-router' {
       path: '/deployments'
       fullPath: '/deployments'
       preLoaderRoute: typeof AppDeploymentsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/dockerhub': {
+      id: '/_app/dockerhub'
+      path: '/dockerhub'
+      fullPath: '/dockerhub'
+      preLoaderRoute: typeof AppDockerhubRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/domains': {
@@ -339,9 +377,11 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppActivityRoute: typeof AppActivityRoute
+  AppAppsRoute: typeof AppAppsRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppDatabasesRoute: typeof AppDatabasesRoute
   AppDeploymentsRoute: typeof AppDeploymentsRoute
+  AppDockerhubRoute: typeof AppDockerhubRoute
   AppDomainsRoute: typeof AppDomainsRoute
   AppLocalRoute: typeof AppLocalRoute
   AppNewRoute: typeof AppNewRoute
@@ -355,9 +395,11 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppActivityRoute: AppActivityRoute,
+  AppAppsRoute: AppAppsRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppDatabasesRoute: AppDatabasesRoute,
   AppDeploymentsRoute: AppDeploymentsRoute,
+  AppDockerhubRoute: AppDockerhubRoute,
   AppDomainsRoute: AppDomainsRoute,
   AppLocalRoute: AppLocalRoute,
   AppNewRoute: AppNewRoute,

@@ -1,5 +1,20 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutGrid, Rocket, Database, Activity, Settings, LogOut, Plus, Terminal, KeyRound, ShieldCheck, Cpu, Globe } from "lucide-react";
+import {
+  LayoutGrid,
+  Rocket,
+  Database,
+  Activity,
+  Settings,
+  LogOut,
+  Plus,
+  Terminal,
+  KeyRound,
+  ShieldCheck,
+  Cpu,
+  Globe,
+  Boxes,
+  Sparkles,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
 import { useAuth } from "@/lib/auth-context";
@@ -7,7 +22,8 @@ import { cn } from "@/lib/utils";
 
 const NAV = [
   { to: "/dashboard", label: "Projects", icon: LayoutGrid },
-  
+  { to: "/apps", label: "App Store", icon: Sparkles },
+  { to: "/dockerhub", label: "Registries (Docker/GHCR)", icon: Boxes },
   { to: "/deployments", label: "Deployments", icon: Rocket },
   { to: "/domains", label: "Domains & SSL", icon: Globe },
   { to: "/databases", label: "Databases", icon: Database },
@@ -27,7 +43,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="hidden w-60 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex">
         <div className="flex h-14 items-center border-b border-sidebar-border px-4">
-          <Link to="/dashboard"><Logo /></Link>
+          <Link to="/dashboard">
+            <Logo />
+          </Link>
         </div>
         <nav className="flex-1 space-y-0.5 p-3">
           <Link
@@ -37,7 +55,8 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             <Plus className="h-4 w-4" /> New project
           </Link>
           {NAV.map((n) => {
-            const active = loc.pathname === n.to || (n.to !== "/dashboard" && loc.pathname.startsWith(n.to));
+            const active =
+              loc.pathname === n.to || (n.to !== "/dashboard" && loc.pathname.startsWith(n.to));
             const Icon = n.icon;
             return (
               <Link
@@ -45,7 +64,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                 to={n.to}
                 className={cn(
                   "flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors",
-                  active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                  active
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 )}
               >
                 <Icon className="h-4 w-4" /> {n.label}
@@ -64,7 +85,10 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <button
-            onClick={async () => { await signOut(); nav({ to: "/auth" }); }}
+            onClick={async () => {
+              await signOut();
+              nav({ to: "/auth" });
+            }}
             className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-sidebar-accent"
           >
             <LogOut className="h-4 w-4" /> Sign out

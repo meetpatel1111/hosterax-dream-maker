@@ -16,5 +16,9 @@ function AppLayout() {
     );
   }
   if (!session) return <Navigate to="/auth" />;
-  return <DashboardShell><Outlet /></DashboardShell>;
+  return (
+    <DashboardShell>
+      <Outlet />
+    </DashboardShell>
+  );
 }

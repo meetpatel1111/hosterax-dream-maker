@@ -1,58 +1,63 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEngine } from "@/lib/engine";
+import { useEngine, useEngineHealth, useEngineProjects, useEngineSystem } from "@/lib/engine";
 import { toast } from "sonner";
-import { Server, Package, Terminal, Trash2, ChevronDown } from "lucide-react";
+import { Server, Package, Terminal, Trash2, ChevronDown, ShieldCheck } from "lucide-react";
 
 export const ONE_CLICK_APPS = [
-  { slug: "n8n", name: "n8n", image: "docker.n8n.io/n8nio/n8n", port: 5678, desc: "Workflow automation" },
+  {
+    slug: "n8n",
+    name: "n8n",
+    image: "docker.n8n.io/n8nio/n8n",
+    port: 5678,
+    desc: "Workflow automation",
+  },
   { slug: "ghost", name: "Ghost", image: "ghost:5", port: 2368, desc: "Publishing platform" },
-  { slug: "gitea", name: "Gitea", image: "gitea/gitea:latest", port: 3000, desc: "Self-hosted Git" },
-  { slug: "code-server", name: "code-server", image: "codercom/code-server:latest", port: 8080, desc: "VS Code in browser" },
-  { slug: "uptime-kuma", name: "Uptime Kuma", image: "louislam/uptime-kuma:1", port: 3001, desc: "Uptime monitoring" },
-  { slug: "vaultwarden", name: "Vaultwarden", image: "vaultwarden/server:latest", port: 80, desc: "Password manager" },
-  { slug: "excalidraw", name: "Excalidraw", image: "excalidraw/excalidraw:latest", port: 80, desc: "Whiteboard" },
-  { slug: "it-tools", name: "IT-Tools", image: "corentinth/it-tools:latest", port: 80, desc: "Dev utilities" },
+  {
+    slug: "gitea",
+    name: "Gitea",
+    image: "gitea/gitea:latest",
+    port: 3000,
+    desc: "Self-hosted Git",
+  },
+  {
+    slug: "code-server",
+    name: "code-server",
+    image: "codercom/code-server:latest",
+    port: 8080,
+    desc: "VS Code in browser",
+  },
+  {
+    slug: "uptime-kuma",
+    name: "Uptime Kuma",
+    image: "louislam/uptime-kuma:1",
+    port: 3001,
+    desc: "Uptime monitoring",
+  },
+  {
+    slug: "vaultwarden",
+    name: "Vaultwarden",
+    image: "vaultwarden/server:latest",
+    port: 80,
+    desc: "Password manager",
+  },
+  {
+    slug: "excalidraw",
+    name: "Excalidraw",
+    image: "excalidraw/excalidraw:latest",
+    port: 80,
+    desc: "Whiteboard",
+  },
+  {
+    slug: "it-tools",
+    name: "IT-Tools",
+    image: "corentinth/it-tools:latest",
+    port: 80,
+    desc: "Dev utilities",
+  },
 ];
 
-export function useEngineHealth() {
-  const eng = useEngine();
-  return useQuery({
-    queryKey: ["engine-health", eng.url],
-    queryFn: async () => {
-      try {
-        const r = await fetch(eng.url + "/health");
-        return r.ok ? await r.json() : null;
-      } catch {
-        return null;
-      }
-    },
-    refetchInterval: 5000,
-    retry: false,
-  });
-}
-
-export function useEngineProjects() {
-  const eng = useEngine();
-  const health = useEngineHealth();
-  return useQuery({
-    queryKey: ["engine-projects", eng.url, eng.token],
-    queryFn: async () => (await eng.call<any[]>("GET", "/api/projects").catch(() => [])) ?? [],
-    enabled: !!health.data?.ok,
-    refetchInterval: 3000,
-  });
-}
-
-export function useEngineSystem() {
-  const eng = useEngine();
-  const health = useEngineHealth();
-  return useQuery({
-    queryKey: ["engine-system", eng.url, eng.token],
-    queryFn: async () => await eng.call<any>("GET", "/api/system").catch(() => null),
-    enabled: !!health.data?.ok,
-    refetchInterval: 4000,
-  });
-}
+export { useEngineHealth, useEngineProjects, useEngineSystem } from "@/lib/engine";
 
 export function EngineBar() {
   const eng = useEngine();
@@ -80,18 +85,28 @@ export function EngineBar() {
           <span className="truncate font-mono text-xs text-muted-foreground">{eng.url}</span>
         </div>
         <div className="flex items-center gap-3">
+          {online && (
+            <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
+              <ShieldCheck className="h-3 w-3 text-primary animate-pulse" />
+              Self-Healing Watchdog: Active
+            </span>
+          )}
           <span className={`text-xs ${online ? "text-success" : "text-destructive"}`}>
             {online ? `online · v${health.version}` : "offline"}
           </span>
-          <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+          <ChevronDown
+            className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+          />
         </div>
       </button>
       {open && (
         <div className="space-y-3 border-t border-border p-5">
           <p className="text-xs text-muted-foreground">
             Start the runtime with{" "}
-            <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono">cd hosterax/engine && npm start</code> then
-            paste the bootstrap token it prints.
+            <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono">
+              cd hosterax/engine && npm start
+            </code>{" "}
+            then paste the bootstrap token it prints.
           </p>
           <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
             <input
@@ -136,7 +151,12 @@ export function OneClickApps() {
 
   async function install(app: (typeof ONE_CLICK_APPS)[number]) {
     try {
-      await eng.call("POST", "/api/apps", { slug: app.slug, name: app.name, image: app.image, port: app.port });
+      await eng.call("POST", "/api/apps", {
+        slug: app.slug,
+        name: app.name,
+        image: app.image,
+        port: app.port,
+      });
       toast.success(`Installing ${app.name}`);
       qc.invalidateQueries({ queryKey: ["engine-apps"] });
     } catch (e: any) {
@@ -155,9 +175,17 @@ export function OneClickApps() {
 
   return (
     <div className="rounded-xl border border-border bg-card p-5">
-      <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        <Package className="h-4 w-4 text-primary" /> One-click apps
-      </h2>
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="flex items-center gap-2 text-sm font-semibold">
+          <Package className="h-4 w-4 text-primary" /> Quick Install Apps
+        </h2>
+        <a
+          href="/new"
+          className="text-xs font-medium text-primary hover:underline"
+        >
+          Browse All 2,550+ Apps →
+        </a>
+      </div>
       <div className="mb-4 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
         {ONE_CLICK_APPS.map((a) => (
           <button
@@ -178,7 +206,9 @@ export function OneClickApps() {
             <div key={a.id} className="flex items-center justify-between py-2">
               <div className="min-w-0">
                 <span className="text-sm font-medium">{a.name}</span>
-                <span className="ml-2 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] uppercase">{a.status}</span>
+                <span className="ml-2 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] uppercase">
+                  {a.status}
+                </span>
                 {a.port && (
                   <a
                     href={`http://localhost:${a.port}`}
@@ -204,7 +234,13 @@ export function OneClickApps() {
   );
 }
 
-export function EngineLogStream({ deploymentId, onClose }: { deploymentId: string; onClose: () => void }) {
+export function EngineLogStream({
+  deploymentId,
+  onClose,
+}: {
+  deploymentId: string;
+  onClose: () => void;
+}) {
   const eng = useEngine();
   const [logs, setLogs] = useState<Array<{ stream: string; text: string }>>([]);
   const logRef = useRef<HTMLDivElement>(null);
@@ -240,13 +276,20 @@ export function EngineLogStream({ deploymentId, onClose }: { deploymentId: strin
           close
         </button>
       </div>
-      <div ref={logRef} className="max-h-[400px] overflow-y-auto bg-black/40 p-3 font-mono text-[11px]">
+      <div
+        ref={logRef}
+        className="max-h-[400px] overflow-y-auto bg-black/40 p-3 font-mono text-[11px]"
+      >
         {logs.length === 0 && <div className="text-muted-foreground">waiting for output…</div>}
         {logs.map((l, i) => (
           <div
             key={i}
             className={
-              l.stream === "stderr" ? "text-destructive" : l.stream === "system" ? "text-primary" : "text-foreground"
+              l.stream === "stderr"
+                ? "text-destructive"
+                : l.stream === "system"
+                  ? "text-primary"
+                  : "text-foreground"
             }
           >
             <span className="text-muted-foreground/60">[{l.stream}]</span> {l.text}

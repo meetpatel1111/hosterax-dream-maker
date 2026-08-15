@@ -29,13 +29,13 @@ function ServersPage() {
   });
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="mx-auto w-full max-w-[1600px] space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Servers</h1>
           <p className="text-sm text-muted-foreground">Manage your self-hosted compute nodes</p>
         </div>
-        <button 
+        <button
           onClick={() => setShowAddModal(true)}
           className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
         >
@@ -51,7 +51,9 @@ function ServersPage() {
         </div>
         <div className="divide-y divide-border border-t border-border">
           {isLoading ? (
-            <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            <div className="flex justify-center p-8">
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+            </div>
           ) : servers?.length === 0 ? (
             <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
               <Server className="mb-2 h-10 w-10 opacity-20" />
@@ -84,5 +86,3 @@ function ServersPage() {
     </div>
   );
 }
-
-

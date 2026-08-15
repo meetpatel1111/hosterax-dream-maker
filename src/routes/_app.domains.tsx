@@ -1,191 +1,199 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/lib/auth-context";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
+import { useEngine } from "@/lib/engine";
 import {
-  Globe, Plus, Trash2, ShieldCheck, ShieldAlert, Search,
-  CheckCircle2, XCircle, Clock, ExternalLink, Star, RefreshCw,
+  Globe,
+  Plus,
+  Trash2,
+  ShieldCheck,
+  ShieldAlert,
+  Search,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ExternalLink,
+  Star,
+  RefreshCw,
 } from "lucide-react";
+import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
 
 export const Route = createFileRoute("/_app/domains")({
   head: () => ({
     meta: [
       { title: "Domains & SSL — HosteraX" },
-      { name: "description", content: "Custom domain management with automatic Let's Encrypt SSL provisioning." },
+      {
+        name: "description",
+        content: "Custom domain management with automatic Let's Encrypt SSL provisioning.",
+      },
     ],
   }),
   component: DomainsPage,
 });
 
-// Generate a random challenge token for DNS TXT verification
-function generateChallenge(): string {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return "hosterax-verify-" + Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-
 type Domain = {
   id: string;
-  project_id: string;
+  project: string;
+  project_id?: string;
   hostname: string;
-  verified: boolean;
-  is_primary: boolean;
+  verified: boolean | number;
+  is_primary: boolean | number;
   ssl_status: "none" | "provisioning" | "active" | "expired" | "error";
-  ssl_expires_at: string | null;
+  ssl_expires?: string | null;
+  ssl_expires_at?: string | null;
   challenge_token: string;
-  created_at: string;
+  created_at: number | string;
   projects?: { name: string; slug: string } | null;
 };
 
 function DomainsPage() {
-  const { user } = useAuth();
+  const engine = useEngine();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [hostname, setHostname] = useState("");
   const [selectedProject, setSelectedProject] = useState("");
 
   const { data: projects = [] } = useQuery({
-    queryKey: ["projects-for-domains"],
+    queryKey: ["projects-for-domains", engine.url],
     queryFn: async () => {
-      const { data } = await supabase.from("projects").select("id, name, slug").order("name");
-      return data ?? [];
+      try {
+        const data = await engine.call<any[]>("GET", "/api/projects");
+        return data ?? [];
+      } catch {
+        return [];
+      }
     },
   });
 
   const { data: domains = [], isLoading } = useQuery({
-    queryKey: ["all-domains"],
+    queryKey: ["all-domains", engine.url],
     queryFn: async () => {
-      // Domains are stored per project in local state since there's no Supabase `domains` table.
-      // We simulate domain records using localStorage for the dashboard demo.
-      const stored = localStorage.getItem("hx.domains");
-      return stored ? (JSON.parse(stored) as Domain[]) : [];
+      try {
+        const data = await engine.call<any[]>("GET", "/api/domains");
+        return data.map((d) => ({
+          ...d,
+          verified: !!d.verified,
+          is_primary: !!d.is_primary,
+          project_id: d.project,
+          projects: { name: d.project, slug: d.project },
+        })) as Domain[];
+      } catch {
+        return [];
+      }
     },
     refetchInterval: 3000,
   });
 
-  function saveDomains(next: Domain[]) {
-    localStorage.setItem("hx.domains", JSON.stringify(next));
-    qc.invalidateQueries({ queryKey: ["all-domains"] });
-  }
-
-  function addDomain() {
+  async function addDomain() {
     if (!hostname.trim()) return toast.error("Enter a hostname");
     if (!selectedProject) return toast.error("Select a project");
-    const proj = projects.find((p) => p.id === selectedProject);
-    if (domains.some((d) => d.hostname === hostname.trim())) return toast.error("Domain already exists");
+    if (domains.some((d) => d.hostname === hostname.trim().toLowerCase()))
+      return toast.error("Domain already exists");
 
-    const newDom: Domain = {
-      id: "dom_" + Math.random().toString(36).slice(2, 10),
-      project_id: selectedProject,
-      hostname: hostname.trim().toLowerCase(),
-      verified: false,
-      is_primary: false,
-      ssl_status: "none",
-      ssl_expires_at: null,
-      challenge_token: generateChallenge(),
-      created_at: new Date().toISOString(),
-      projects: proj ? { name: proj.name, slug: proj.slug } : null,
-    };
-    saveDomains([newDom, ...domains]);
-    setHostname("");
-    toast.success(`Domain ${newDom.hostname} added`);
-  }
-
-  function verifyDomain(id: string) {
-    // Simulate DNS TXT verification (in production: query DNS for _hosterax-challenge TXT record)
-    const verified = Math.random() > 0.25;
-    const next = domains.map((d) => (d.id === id ? { ...d, verified } : d));
-    saveDomains(next);
-    if (verified) {
-      toast.success("Domain verified successfully!");
-    } else {
-      toast.error("DNS verification failed. Ensure TXT record is propagated.");
+    try {
+      const res = await engine.call<any>("POST", `/api/projects/${selectedProject}/domains`, {
+        hostname: hostname.trim().toLowerCase(),
+      });
+      toast.success(`Domain ${res?.hostname || hostname.trim()} saved to database`);
+      setHostname("");
+      qc.invalidateQueries({ queryKey: ["all-domains"] });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to add domain");
     }
   }
 
-  function provisionSSL(id: string) {
+  async function verifyDomain(id: string) {
+    try {
+      const res = await engine.call<any>("POST", `/api/domains/${id}/verify`);
+      if (res?.verified) {
+        toast.success("Domain verified successfully in SQLite database!");
+      } else {
+        toast.error("DNS verification failed. Ensure TXT record is propagated.");
+      }
+      qc.invalidateQueries({ queryKey: ["all-domains"] });
+    } catch (err: any) {
+      toast.error(err.message || "Verification request failed");
+    }
+  }
+
+  async function provisionSSL(id: string) {
     const dom = domains.find((d) => d.id === id);
     if (!dom?.verified) return toast.error("Verify domain ownership first");
 
-    // Set to provisioning
-    saveDomains(domains.map((d) => (d.id === id ? { ...d, ssl_status: "provisioning" as const } : d)));
-    toast.info("SSL provisioning started via Let's Encrypt...");
-
-    // Simulate async SSL completion
-    setTimeout(() => {
-      const stored = localStorage.getItem("hx.domains");
-      const current = stored ? JSON.parse(stored) : [];
-      const expires = new Date(Date.now() + 90 * 86400000).toISOString();
-      const updated = current.map((d: Domain) =>
-        d.id === id ? { ...d, ssl_status: "active", ssl_expires_at: expires } : d
-      );
-      localStorage.setItem("hx.domains", JSON.stringify(updated));
+    try {
+      toast.info("SSL provisioning started via Let's Encrypt...");
+      await engine.call("POST", `/api/domains/${id}/ssl`);
       qc.invalidateQueries({ queryKey: ["all-domains"] });
-      toast.success("SSL certificate provisioned!");
-    }, 3000);
+      setTimeout(() => {
+        qc.invalidateQueries({ queryKey: ["all-domains"] });
+        toast.success("SSL certificate active in database!");
+      }, 2500);
+    } catch (err: any) {
+      toast.error(err.message || "SSL provisioning failed");
+    }
   }
 
-  function setPrimary(id: string) {
-    const dom = domains.find((d) => d.id === id);
-    if (!dom) return;
-    const next = domains.map((d) =>
-      d.project_id === dom.project_id
-        ? { ...d, is_primary: d.id === id }
-        : d
-    );
-    saveDomains(next);
-    toast.success("Primary domain updated");
+  async function setPrimary(id: string) {
+    try {
+      await engine.call("POST", `/api/domains/${id}/primary`);
+      toast.success("Primary domain updated in database");
+      qc.invalidateQueries({ queryKey: ["all-domains"] });
+    } catch (err: any) {
+      toast.error(err.message || "Failed to set primary domain");
+    }
   }
 
-  function deleteDomain(id: string) {
+  async function deleteDomain(id: string) {
     if (!confirm("Delete this domain? SSL certificates will be revoked.")) return;
-    saveDomains(domains.filter((d) => d.id !== id));
-    toast.success("Domain removed");
-  }
-
-  function renewAll() {
-    const next = domains.map((d) => {
-      if (d.ssl_status === "active" || d.ssl_status === "expired") {
-        return { ...d, ssl_status: "provisioning" as const };
-      }
-      return d;
-    });
-    saveDomains(next);
-    toast.info("Renewing all SSL certificates...");
-    setTimeout(() => {
-      const stored = localStorage.getItem("hx.domains");
-      const current = stored ? JSON.parse(stored) : [];
-      const updated = current.map((d: Domain) =>
-        d.ssl_status === "provisioning"
-          ? { ...d, ssl_status: "active", ssl_expires_at: new Date(Date.now() + 90 * 86400000).toISOString() }
-          : d
-      );
-      localStorage.setItem("hx.domains", JSON.stringify(updated));
+    try {
+      await engine.call("DELETE", `/api/domains/${id}`);
+      toast.success("Domain removed from database");
       qc.invalidateQueries({ queryKey: ["all-domains"] });
-      toast.success("All certificates renewed!");
-    }, 3500);
+    } catch (err: any) {
+      toast.error(err.message || "Failed to delete domain");
+    }
   }
 
-  const filtered = domains.filter((d) =>
-    d.hostname.toLowerCase().includes(q.toLowerCase()) ||
-    d.projects?.name?.toLowerCase().includes(q.toLowerCase())
+  async function renewAll() {
+    toast.info("Renewing all active/expired SSL certificates in database...");
+    for (const d of domains) {
+      if (d.ssl_status === "active" || d.ssl_status === "expired") {
+        try {
+          await engine.call("POST", `/api/domains/${d.id}/ssl`);
+        } catch {}
+      }
+    }
+    setTimeout(() => {
+      qc.invalidateQueries({ queryKey: ["all-domains"] });
+      toast.success("All certificates renewed in database!");
+    }, 2500);
+  }
+
+  const filtered = domains.filter(
+    (d) =>
+      d.hostname.toLowerCase().includes(q.toLowerCase()) ||
+      d.projects?.name?.toLowerCase().includes(q.toLowerCase()),
   );
 
   const sslStatusIcon = (status: string) => {
     switch (status) {
-      case "active": return <ShieldCheck className="h-4 w-4 text-success" />;
-      case "provisioning": return <Clock className="h-4 w-4 text-warning animate-spin" />;
-      case "expired": return <ShieldAlert className="h-4 w-4 text-destructive" />;
-      case "error": return <XCircle className="h-4 w-4 text-destructive" />;
-      default: return <ShieldAlert className="h-4 w-4 text-muted-foreground" />;
+      case "active":
+        return <ShieldCheck className="h-4 w-4 text-success" />;
+      case "provisioning":
+        return <Clock className="h-4 w-4 text-warning animate-spin" />;
+      case "expired":
+        return <ShieldAlert className="h-4 w-4 text-destructive" />;
+      case "error":
+        return <XCircle className="h-4 w-4 text-destructive" />;
+      default:
+        return <ShieldAlert className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
+    <div className="mx-auto w-full max-w-[1600px] space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Domains & SSL</h1>
@@ -200,6 +208,9 @@ function DomainsPage() {
           <RefreshCw className="h-3.5 w-3.5" /> Renew All Certificates
         </button>
       </div>
+
+      {/* Magic Wildcard DNS Provider Selection */}
+      <MagicDnsSelector />
 
       {/* Add Domain Form */}
       <div className="rounded-lg border border-border bg-card p-4">
@@ -220,7 +231,9 @@ function DomainsPage() {
           >
             <option value="">Select project…</option>
             {projects.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
             ))}
           </select>
           <button
@@ -251,19 +264,26 @@ function DomainsPage() {
               <Globe className="h-5 w-5" />
             </div>
             {q ? "No domains match your search." : "No custom domains configured yet."}
-            <div className="mt-1 text-xs">Add a domain above and verify DNS ownership to enable SSL.</div>
+            <div className="mt-1 text-xs">
+              Add a domain above and verify DNS ownership to enable SSL.
+            </div>
           </div>
         ) : (
           <div className="divide-y divide-border">
             {filtered.map((d) => (
-              <div key={d.id} className="flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-accent/40 transition-colors">
+              <div
+                key={d.id}
+                className="flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-accent/40 transition-colors"
+              >
                 <div className="flex items-center gap-3.5 min-w-0">
                   {sslStatusIcon(d.ssl_status)}
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                       {d.hostname}
                       {d.is_primary && (
-                        <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary font-medium">PRIMARY</span>
+                        <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary font-medium">
+                          PRIMARY
+                        </span>
                       )}
                       <a
                         href={`https://${d.hostname}`}

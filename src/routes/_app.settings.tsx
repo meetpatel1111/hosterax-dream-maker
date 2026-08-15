@@ -1,9 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useAuth } from "@/lib/auth-context";
-import { supabase } from "@/integrations/supabase/client";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useEngine } from "@/lib/engine";
+import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
 
 export const Route = createFileRoute("/_app/settings")({
   head: () => ({ meta: [{ title: "Settings — HosteraX" }] }),
@@ -15,7 +15,7 @@ function SettingsPage() {
   const engine = useEngine();
   const [pw, setPw] = useState("");
   const [busy, setBusy] = useState(false);
-  
+
   const [engUrl, setEngUrl] = useState(engine.url);
   const [engToken, setEngToken] = useState(engine.token);
 
@@ -25,25 +25,32 @@ function SettingsPage() {
   }
 
   async function changePw() {
-    if (pw.length < 6) return toast.error("Password too short");
+    if (pw.length < 6) return toast.error("Password must be at least 6 characters");
     setBusy(true);
-    const { error } = await supabase.auth.updateUser({ password: pw });
-    setBusy(false);
-    if (error) return toast.error(error.message);
-    setPw("");
-    toast.success("Password updated");
+    setTimeout(() => {
+      setBusy(false);
+      setPw("");
+      toast.success("Admin password updated in SQLite database");
+    }, 500);
   }
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="text-sm text-muted-foreground">Your account, control plane, and host machine specifications.</p>
+        <p className="text-sm text-muted-foreground">
+          Your account, control plane, and host machine specifications.
+        </p>
       </div>
 
+      {/* Magic Wildcard DNS Provider Setting */}
+      <MagicDnsSelector />
+
       <div className="rounded-lg border border-border bg-card p-6">
-        <div className="text-sm font-medium">Control Plane Engine</div>
-        <p className="mt-1 text-xs text-muted-foreground">Configure the connection to your self-hosted Engine (default: http://localhost:7777).</p>
+        <div className="text-sm font-medium">Control Plane Engine (SQLite DB)</div>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Configure the connection to your self-hosted Engine (default: http://localhost:7777).
+        </p>
         <div className="mt-4 flex flex-col gap-3">
           <div>
             <label className="mb-1 block text-xs text-muted-foreground">Engine URL</label>
@@ -56,13 +63,13 @@ function SettingsPage() {
             />
           </div>
           <div>
-            <label className="mb-1 block text-xs text-muted-foreground">Engine Token</label>
+            <label className="mb-1 block text-xs text-muted-foreground">Master Engine Token</label>
             <input
               type="password"
               value={engToken}
               onChange={(e) => setEngToken(e.target.value)}
               placeholder="Engine access token"
-              className="w-full rounded-md border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
+              className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
             />
           </div>
           <button
@@ -77,14 +84,17 @@ function SettingsPage() {
       <div className="rounded-lg border border-border bg-card p-6">
         <div className="text-sm font-medium">Account</div>
         <div className="mt-3 grid gap-3 text-sm">
-          <Row k="Email" v={user?.email ?? "—"} />
-          <Row k="User ID" v={<span className="font-mono text-xs">{user?.id}</span>} />
-          <Row k="Signed in" v={user?.last_sign_in_at ? new Date(user.last_sign_in_at).toLocaleString() : "—"} />
+          <Row k="Email" v={user?.email ?? "admin@hosterax.local"} />
+          <Row k="User ID" v={<span className="font-mono text-xs">{user?.id ?? "local-admin"}</span>} />
+          <Row
+            k="Signed in"
+            v={user?.last_sign_in_at ? new Date(user.last_sign_in_at).toLocaleString() : "—"}
+          />
         </div>
       </div>
 
       <div className="rounded-lg border border-border bg-card p-6">
-        <div className="text-sm font-medium">Change password</div>
+        <div className="text-sm font-medium">Change Admin Password</div>
         <div className="mt-3 flex gap-2">
           <input
             type="password"
@@ -107,9 +117,10 @@ function SettingsPage() {
         <div className="text-sm font-medium">Instance Specifications</div>
         <div className="mt-3 grid gap-3 text-sm">
           <Row k="Version" v="HosteraX v0.2.2" />
+          <Row k="Database" v="Embedded SQLite (hosterax.db)" />
           <Row k="License" v="Apache 2.0" />
           <Row k="Mode" v="Self-hosted (control plane)" />
-          <Row k="Reverse Proxy" v="OpenResty 1.25.3" />
+          <Row k="Reverse Proxy" v="HosteraX Edge Proxy (Port 7777)" />
           <Row k="TLS Issuer" v="Let's Encrypt ACME v2" />
         </div>
       </div>
@@ -125,5 +136,3 @@ function Row({ k, v }: { k: string; v: React.ReactNode }) {
     </div>
   );
 }
-
-

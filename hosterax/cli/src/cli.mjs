@@ -96,8 +96,12 @@ try {
       try {
         const sys = await api("GET", "/api/metrics");
         console.log(`CPU: ${sys.cpu.percent}% (${sys.cpu.cores} cores)`);
-        console.log(`Memory: ${sys.memory.used_mb} MB / ${sys.memory.total_mb} MB (${sys.memory.percent}%)`);
-        console.log(`Uptime: ${Math.floor(sys.uptime_seconds / 3600)}h ${Math.floor((sys.uptime_seconds % 3600) / 60)}m`);
+        console.log(
+          `Memory: ${sys.memory.used_mb} MB / ${sys.memory.total_mb} MB (${sys.memory.percent}%)`,
+        );
+        console.log(
+          `Uptime: ${Math.floor(sys.uptime_seconds / 3600)}h ${Math.floor((sys.uptime_seconds % 3600) / 60)}m`,
+        );
         console.log(`Host: ${sys.hostname} (${sys.platform})`);
       } catch {}
       break;
@@ -123,7 +127,9 @@ try {
         name = path.basename(source);
         await api("POST", "/api/projects", { name, source });
       }
-      const r = await api("POST", `/api/projects/${name}/deploy`, { trigger: flag("trigger") || "cli" });
+      const r = await api("POST", `/api/projects/${name}/deploy`, {
+        trigger: flag("trigger") || "cli",
+      });
       console.log("deployment", r.id, r.version);
       if (has("follow") || true) await follow(r.id);
       break;
@@ -139,7 +145,10 @@ try {
     case "diff": {
       const d1 = args[0];
       const d2 = args[1];
-      if (!d1 || !d2) { console.error("Usage: hosterax diff <deployId1> <deployId2>"); process.exit(1); }
+      if (!d1 || !d2) {
+        console.error("Usage: hosterax diff <deployId1> <deployId2>");
+        process.exit(1);
+      }
       const diff = await api("GET", `/api/deployments/${d1}/diff/${d2}`);
       console.log(`\n╭─ Deployment Diff ─────────────────────────────╮`);
       console.log(`│ Base:   ${diff.base.id.padEnd(38)} │`);
@@ -149,20 +158,28 @@ try {
         { Metric: "Version", Base: diff.base.version, Target: diff.target.version },
         { Metric: "Phase", Base: diff.base.phase, Target: diff.target.phase },
         { Metric: "Trigger", Base: diff.base.trigger, Target: diff.target.trigger },
-        { Metric: "Exit Code", Base: diff.base.exit_code ?? "—", Target: diff.target.exit_code ?? "—" },
+        {
+          Metric: "Exit Code",
+          Base: diff.base.exit_code ?? "—",
+          Target: diff.target.exit_code ?? "—",
+        },
       ]);
       if (diff.env_diff.length > 0) {
         console.log("Environment changes:");
-        console.table(diff.env_diff.map((d) => ({
-          Key: d.key,
-          Change: d.change.toUpperCase(),
-          Base: d.base ?? "—",
-          Target: d.target ?? "—",
-        })));
+        console.table(
+          diff.env_diff.map((d) => ({
+            Key: d.key,
+            Change: d.change.toUpperCase(),
+            Base: d.base ?? "—",
+            Target: d.target ?? "—",
+          })),
+        );
       } else {
         console.log("No environment variable changes.");
       }
-      console.log(`Duration delta: ${diff.duration_diff_ms > 0 ? "+" : ""}${diff.duration_diff_ms}ms`);
+      console.log(
+        `Duration delta: ${diff.duration_diff_ms > 0 ? "+" : ""}${diff.duration_diff_ms}ms`,
+      );
       break;
     }
     case "metrics": {
@@ -170,25 +187,29 @@ try {
       if (name) {
         const m = await api("GET", `/api/projects/${name}/metrics`);
         console.log(`\n╭─ Resource Metrics: ${name.padEnd(28)} ╮`);
-        console.log(`│ Process:  ${m.process_running ? "✓ running" : "✗ stopped"}${m.pid ? ` (pid ${m.pid})` : ""}`.padEnd(48) + " │");
+        console.log(
+          `│ Process:  ${m.process_running ? "✓ running" : "✗ stopped"}${m.pid ? ` (pid ${m.pid})` : ""}`.padEnd(
+            48,
+          ) + " │",
+        );
         console.log(`│ Deploys:  ${String(m.deploy_count).padEnd(36)} │`);
         console.log(`╰───────────────────────────────────────────────╯`);
         console.log(`\nSystem Resources:`);
         console.table({
           "CPU Load": `${m.system.cpu.percent}% (${m.system.cpu.cores} cores)`,
-          "RAM": `${m.system.memory.used_mb} MB / ${m.system.memory.total_mb} MB (${m.system.memory.percent}%)`,
-          "Uptime": `${Math.floor(m.system.uptime_seconds / 3600)}h ${Math.floor((m.system.uptime_seconds % 3600) / 60)}m`,
+          RAM: `${m.system.memory.used_mb} MB / ${m.system.memory.total_mb} MB (${m.system.memory.percent}%)`,
+          Uptime: `${Math.floor(m.system.uptime_seconds / 3600)}h ${Math.floor((m.system.uptime_seconds % 3600) / 60)}m`,
           "Load Avg": m.system.load_avg.join(", "),
         });
       } else {
         const m = await api("GET", "/api/metrics");
         console.log(`\nSystem Metrics (${m.hostname}):`);
         console.table({
-          "CPU": `${m.cpu.percent}% (${m.cpu.cores} × ${m.cpu.model})`,
-          "RAM": `${m.memory.used_mb} MB / ${m.memory.total_mb} MB (${m.memory.percent}%)`,
-          "Uptime": `${Math.floor(m.uptime_seconds / 3600)}h ${Math.floor((m.uptime_seconds % 3600) / 60)}m`,
+          CPU: `${m.cpu.percent}% (${m.cpu.cores} × ${m.cpu.model})`,
+          RAM: `${m.memory.used_mb} MB / ${m.memory.total_mb} MB (${m.memory.percent}%)`,
+          Uptime: `${Math.floor(m.uptime_seconds / 3600)}h ${Math.floor((m.uptime_seconds % 3600) / 60)}m`,
           "Load Avg": m.load_avg.join(", "),
-          "Platform": m.platform,
+          Platform: m.platform,
         });
       }
       break;
@@ -214,14 +235,17 @@ try {
       const name = args[0];
       const cpu = flag("cpu");
       const memory = flag("memory");
-      if (!name) { console.error("Usage: hosterax quotas <project> [--cpu <cores>] [--memory <mb>]"); process.exit(1); }
+      if (!name) {
+        console.error("Usage: hosterax quotas <project> [--cpu <cores>] [--memory <mb>]");
+        process.exit(1);
+      }
       const r = await api("POST", `/api/projects/${name}/quotas`, {
         cpu_limit: cpu ? parseFloat(cpu) : null,
-        memory_mb_limit: memory ? parseInt(memory, 10) : null
+        memory_mb_limit: memory ? parseInt(memory, 10) : null,
       });
       console.log(`updated quotas for ${name}`);
-      console.log(`  CPU: ${r.cpu_limit ?? 'Unlimited'}`);
-      console.log(`  Memory: ${r.memory_mb_limit ? r.memory_mb_limit + ' MB' : 'Unlimited'}`);
+      console.log(`  CPU: ${r.cpu_limit ?? "Unlimited"}`);
+      console.log(`  Memory: ${r.memory_mb_limit ? r.memory_mb_limit + " MB" : "Unlimited"}`);
       break;
     }
     case "rm": {
@@ -234,32 +258,47 @@ try {
       const name = args[0];
       if (name) {
         const dbs = await api("GET", `/api/projects/${name}/databases`);
-        if (dbs.length === 0) { console.log(`No databases attached to ${name}.`); break; }
-        console.table(dbs.map((d) => ({
-          ID: d.id,
-          Name: d.name,
-          Engine: d.engine,
-          Size: `${d.size_mb} MB`,
-          Status: d.status,
-          Connection: d.connection_string ? d.connection_string.replace(/:[^:@]+@/, ":••••@") : "—",
-        })));
+        if (dbs.length === 0) {
+          console.log(`No databases attached to ${name}.`);
+          break;
+        }
+        console.table(
+          dbs.map((d) => ({
+            ID: d.id,
+            Name: d.name,
+            Engine: d.engine,
+            Size: `${d.size_mb} MB`,
+            Status: d.status,
+            Connection: d.connection_string
+              ? d.connection_string.replace(/:[^:@]+@/, ":••••@")
+              : "—",
+          })),
+        );
       } else {
         const dbs = await api("GET", "/api/databases");
-        if (dbs.length === 0) { console.log("No databases provisioned."); break; }
-        console.table(dbs.map((d) => ({
-          ID: d.id,
-          Project: d.project,
-          Name: d.name,
-          Engine: d.engine,
-          Size: `${d.size_mb} MB`,
-          Status: d.status,
-        })));
+        if (dbs.length === 0) {
+          console.log("No databases provisioned.");
+          break;
+        }
+        console.table(
+          dbs.map((d) => ({
+            ID: d.id,
+            Project: d.project,
+            Name: d.name,
+            Engine: d.engine,
+            Size: `${d.size_mb} MB`,
+            Status: d.status,
+          })),
+        );
       }
       break;
     }
     case "backup:create": {
       const dbId = args[0];
-      if (!dbId) { console.error("Usage: hosterax backup:create <databaseId>"); process.exit(1); }
+      if (!dbId) {
+        console.error("Usage: hosterax backup:create <databaseId>");
+        process.exit(1);
+      }
       const r = await api("POST", `/api/databases/${dbId}/backup`);
       console.log(`✓ Snapshot ${r.id} created for ${r.database} (${r.engine})`);
       console.log(`  Size: ${r.size_mb} MB | SHA256: ${r.sha256.slice(0, 16)}…`);
@@ -267,22 +306,30 @@ try {
     }
     case "backup:list": {
       const backups = await api("GET", "/api/backups");
-      if (backups.length === 0) { console.log("No backups available."); break; }
-      console.table(backups.map((b) => ({
-        ID: b.id,
-        Database: b.db_name,
-        Engine: b.db_engine,
-        Project: b.project,
-        Size: `${b.size_mb} MB`,
-        Status: b.status,
-        Type: b.snapshot_type,
-        Created: new Date(b.created_at).toISOString(),
-      })));
+      if (backups.length === 0) {
+        console.log("No backups available.");
+        break;
+      }
+      console.table(
+        backups.map((b) => ({
+          ID: b.id,
+          Database: b.db_name,
+          Engine: b.db_engine,
+          Project: b.project,
+          Size: `${b.size_mb} MB`,
+          Status: b.status,
+          Type: b.snapshot_type,
+          Created: new Date(b.created_at).toISOString(),
+        })),
+      );
       break;
     }
     case "backup:restore": {
       const snapId = args[0];
-      if (!snapId) { console.error("Usage: hosterax backup:restore <snapshotId>"); process.exit(1); }
+      if (!snapId) {
+        console.error("Usage: hosterax backup:restore <snapshotId>");
+        process.exit(1);
+      }
       const r = await api("POST", `/api/backups/${snapId}/restore`);
       console.log(`✓ ${r.message}`);
       break;
@@ -290,23 +337,34 @@ try {
     // ────────── domains ──────────
     case "domains": {
       const name = args[0];
-      if (!name) { console.error("Usage: hosterax domains <projectName>"); process.exit(1); }
+      if (!name) {
+        console.error("Usage: hosterax domains <projectName>");
+        process.exit(1);
+      }
       const doms = await api("GET", `/api/projects/${name}/domains`);
-      if (doms.length === 0) { console.log(`No custom domains for ${name}.`); break; }
-      console.table(doms.map((d) => ({
-        ID: d.id,
-        Hostname: d.hostname,
-        Verified: d.verified ? "✓" : "✗",
-        Primary: d.is_primary ? "★" : "",
-        SSL: d.ssl_status,
-        Expires: d.ssl_expires ?? "—",
-      })));
+      if (doms.length === 0) {
+        console.log(`No custom domains for ${name}.`);
+        break;
+      }
+      console.table(
+        doms.map((d) => ({
+          ID: d.id,
+          Hostname: d.hostname,
+          Verified: d.verified ? "✓" : "✗",
+          Primary: d.is_primary ? "★" : "",
+          SSL: d.ssl_status,
+          Expires: d.ssl_expires ?? "—",
+        })),
+      );
       break;
     }
     case "domain:add": {
       const name = args[0];
       const hostname = args[1];
-      if (!name || !hostname) { console.error("Usage: hosterax domain:add <project> <hostname>"); process.exit(1); }
+      if (!name || !hostname) {
+        console.error("Usage: hosterax domain:add <project> <hostname>");
+        process.exit(1);
+      }
       const r = await api("POST", `/api/projects/${name}/domains`, { hostname });
       console.log(`✓ Domain ${hostname} added (id: ${r.id})`);
       console.log(`  To verify, add a DNS TXT record:`);
@@ -315,26 +373,37 @@ try {
     }
     case "domain:verify": {
       const domId = args[0];
-      if (!domId) { console.error("Usage: hosterax domain:verify <domainId>"); process.exit(1); }
+      if (!domId) {
+        console.error("Usage: hosterax domain:verify <domainId>");
+        process.exit(1);
+      }
       const r = await api("POST", `/api/domains/${domId}/verify`);
       if (r.verified) {
         console.log(`✓ Domain ${r.hostname} verified successfully.`);
       } else {
         console.log(`✗ Verification failed for ${r.hostname}.`);
-        console.log(`  Ensure TXT record exists: _hosterax-challenge.${r.hostname} → ${r.challenge_token}`);
+        console.log(
+          `  Ensure TXT record exists: _hosterax-challenge.${r.hostname} → ${r.challenge_token}`,
+        );
       }
       break;
     }
     case "domain:ssl": {
       const domId = args[0];
-      if (!domId) { console.error("Usage: hosterax domain:ssl <domainId>"); process.exit(1); }
+      if (!domId) {
+        console.error("Usage: hosterax domain:ssl <domainId>");
+        process.exit(1);
+      }
       const r = await api("POST", `/api/domains/${domId}/ssl`);
       console.log(`✓ ${r.message}`);
       break;
     }
     case "domain:primary": {
       const domId = args[0];
-      if (!domId) { console.error("Usage: hosterax domain:primary <domainId>"); process.exit(1); }
+      if (!domId) {
+        console.error("Usage: hosterax domain:primary <domainId>");
+        process.exit(1);
+      }
       await api("POST", `/api/domains/${domId}/primary`);
       console.log("✓ Primary domain updated.");
       break;
@@ -352,7 +421,9 @@ try {
       console.log(`│ Backups:        ${String(s.backups).padEnd(30)} │`);
       console.log(`│ Running procs:  ${String(s.running_processes).padEnd(30)} │`);
       console.log(`╰────────────────────────────────────────────────╯`);
-      console.log(`\nSystem: ${s.system.hostname} | CPU: ${s.system.cpu.percent}% | RAM: ${s.system.memory.percent}%`);
+      console.log(
+        `\nSystem: ${s.system.hostname} | CPU: ${s.system.cpu.percent}% | RAM: ${s.system.memory.percent}%`,
+      );
       break;
     }
     // ────────── tokens ──────────

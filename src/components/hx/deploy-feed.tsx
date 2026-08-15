@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
 import { StatusBadge } from "@/components/hx/status-badge";
 import { Activity, Terminal, ExternalLink, X, RotateCcw, Clock, Layers } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
+import { useEngine } from "@/lib/engine";
 
 type DeployItem = {
   id: string;
@@ -22,43 +22,48 @@ type DeployItem = {
 };
 
 export function DeployFeed() {
+  const engine = useEngine();
   const [selectedDeploy, setSelectedDeploy] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "active" | "failed">("all");
 
-  const { data: deployments = [], refetch } = useQuery({
-    queryKey: ["deploy-feed"],
+  const { data: deployments = [] } = useQuery({
+    queryKey: ["deploy-feed-sqlite", engine.url],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("deployments")
-        .select("*, projects(name, slug, stack)")
-        .order("created_at", { ascending: false })
-        .limit(20);
-      return (data as DeployItem[]) ?? [];
+      try {
+        const deps = await engine.call<any[]>("GET", "/api/deployments?limit=25");
+        if (deps && Array.isArray(deps)) {
+          return deps.map((d: any) => ({
+            id: d.id,
+            project_id: d.project,
+            commit_sha: d.commit_sha || d.id.slice(0, 8),
+            commit_message: d.commit_message || `Release ${d.version}`,
+            branch: d.branch || "main",
+            status: d.phase === "ready" ? "success" : d.phase === "failed" ? "failed" : "building",
+            phase: d.phase,
+            version: d.version,
+            environment: d.environment || "production",
+            trigger_type: d.trigger || "manual",
+            duration_ms: d.finished_at && d.started_at ? d.finished_at - d.started_at : null,
+            created_at: d.started_at ? new Date(d.started_at).toISOString() : new Date().toISOString(),
+            projects: { name: d.project, slug: d.project, stack: "auto" },
+          })) as DeployItem[];
+        }
+      } catch {}
+      return [];
     },
     refetchInterval: 2500,
   });
 
-  // Realtime subscription for live status changes
-  useEffect(() => {
-    const channel = supabase
-      .channel("deploy-feed-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "deployments" }, () => {
-        refetch();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [refetch]);
-
   const filtered = deployments.filter((d) => {
-    if (filter === "active") return d.status === "building" || d.status === "queued" || d.phase === "deploying";
+    if (filter === "active")
+      return d.status === "building" || d.status === "queued" || d.phase === "deploying";
     if (filter === "failed") return d.status === "failed";
     return true;
   });
 
-  const activeCount = deployments.filter((d) => d.status === "building" || d.status === "queued").length;
+  const activeCount = deployments.filter(
+    (d) => d.status === "building" || d.status === "queued",
+  ).length;
 
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
@@ -70,7 +75,9 @@ export function DeployFeed() {
           </div>
           <div>
             <h3 className="text-sm font-semibold tracking-tight">Live Deployment Feed</h3>
-            <p className="text-xs text-muted-foreground">Real-time build pipeline across all projects</p>
+            <p className="text-xs text-muted-foreground">
+              Real-time build pipeline across all projects in SQLite
+            </p>
           </div>
         </div>
 
@@ -88,7 +95,9 @@ export function DeployFeed() {
                 key={f}
                 onClick={() => setFilter(f)}
                 className={`rounded px-2.5 py-1 font-medium capitalize transition-colors ${
-                  filter === f ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  filter === f
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {f}
@@ -102,7 +111,8 @@ export function DeployFeed() {
       <div className="divide-y divide-border/60 max-h-[380px] overflow-y-auto">
         {filtered.length === 0 ? (
           <div className="p-8 text-center text-xs text-muted-foreground">
-            No deployments matching <span className="font-mono text-foreground">"{filter}"</span> filter.
+            No deployments matching <span className="font-mono text-foreground">"{filter}"</span>{" "}
+            filter.
           </div>
         ) : (
           filtered.map((d) => (
@@ -154,7 +164,7 @@ export function DeployFeed() {
                   <span>{formatDistanceToNow(new Date(d.created_at))} ago</span>
                 </div>
                 <span className="font-mono text-foreground/80">
-                  {d.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "building…"}
+                  {d.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "completed"}
                 </span>
                 <Terminal className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
               </div>
@@ -172,31 +182,17 @@ export function DeployFeed() {
 }
 
 function DeployLogModal({ deploymentId, onClose }: { deploymentId: string; onClose: () => void }) {
-  const [logs, setLogs] = useState<any[]>([]);
+  const engine = useEngine();
+  const [logText, setLogText] = useState<string>("");
 
   useEffect(() => {
-    supabase
-      .from("deployment_logs")
-      .select("*")
-      .eq("deployment_id", deploymentId)
-      .order("created_at", { ascending: true })
-      .then(({ data }) => setLogs(data ?? []));
-
-    const channel = supabase
-      .channel(`modal-logs-${deploymentId}`)
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "deployment_logs", filter: `deployment_id=eq.${deploymentId}` },
-        (payload) => {
-          setLogs((prev) => [...prev, payload.new]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [deploymentId]);
+    fetch(`${engine.url}/api/deployments/${deploymentId}/logs`, {
+      headers: { Authorization: `Bearer ${engine.token}` },
+    })
+      .then((r) => r.text())
+      .then((t) => setLogText(t))
+      .catch(() => setLogText("Logs stream unavailable"));
+  }, [deploymentId, engine.url, engine.token]);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
@@ -217,34 +213,15 @@ function DeployLogModal({ deploymentId, onClose }: { deploymentId: string; onClo
         </div>
 
         <div className="flex-1 overflow-y-auto bg-black/80 p-5 font-mono text-xs leading-relaxed space-y-1">
-          {logs.length === 0 ? (
+          {!logText ? (
             <div className="text-muted-foreground">Waiting for build logs stream…</div>
           ) : (
-            logs.map((l) => (
-              <div key={l.id} className="flex gap-3">
-                <span className="text-muted-foreground/50 shrink-0">
-                  {format(new Date(l.created_at), "HH:mm:ss")}
-                </span>
-                <span
-                  className={
-                    l.level === "error"
-                      ? "text-destructive font-semibold"
-                      : l.level === "warn"
-                      ? "text-warning"
-                      : l.level === "success"
-                      ? "text-success font-medium"
-                      : "text-foreground/90"
-                  }
-                >
-                  {l.message}
-                </span>
-              </div>
-            ))
+            <pre className="whitespace-pre-wrap text-foreground/90 font-mono">{logText}</pre>
           )}
         </div>
 
         <div className="flex items-center justify-between border-t border-border bg-surface px-5 py-2.5 text-xs text-muted-foreground">
-          <span>{logs.length} lines stream output</span>
+          <span>Captured from HosteraX SQLite Engine</span>
           <button
             onClick={onClose}
             className="rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:opacity-90"

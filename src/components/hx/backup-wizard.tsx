@@ -1,5 +1,15 @@
 import { useState } from "react";
-import { Database, HardDrive, Download, RotateCcw, ShieldCheck, CheckCircle2, RefreshCw, X, AlertTriangle } from "lucide-react";
+import {
+  Database,
+  HardDrive,
+  Download,
+  RotateCcw,
+  ShieldCheck,
+  CheckCircle2,
+  RefreshCw,
+  X,
+  AlertTriangle,
+} from "lucide-react";
 import { toast } from "sonner";
 
 type BackupItem = {
@@ -71,8 +81,12 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
               <Database className="h-4 w-4" />
             </div>
             <div>
-              <h3 className="text-sm font-semibold tracking-tight">Database Backup & Instant Restore Wizard</h3>
-              <p className="text-xs text-muted-foreground">Automated database snapshots, SHA256 verification, and point-in-time recovery</p>
+              <h3 className="text-sm font-semibold tracking-tight">
+                Database Backup & Instant Restore Wizard
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Automated database snapshots, SHA256 verification, and point-in-time recovery
+              </p>
             </div>
           </div>
           <button
@@ -105,7 +119,9 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
           {activeTab === "create" && (
             <div className="space-y-5 max-w-lg">
               <div className="space-y-1.5">
-                <label className="text-xs font-medium text-foreground">Target Database Instance</label>
+                <label className="text-xs font-medium text-foreground">
+                  Target Database Instance
+                </label>
                 <select
                   value={selectedDb}
                   onChange={(e) => setSelectedDb(e.target.value)}
@@ -146,7 +162,10 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                 <div className="flex items-center gap-2 text-foreground font-medium">
                   <ShieldCheck className="h-4 w-4 text-success" /> Integrated Integrity Checks
                 </div>
-                <p>Every snapshot is compressed with gzip and signed with SHA256 checksums before storage.</p>
+                <p>
+                  Every snapshot is compressed with gzip and signed with SHA256 checksums before
+                  storage.
+                </p>
               </div>
 
               <button
@@ -171,7 +190,10 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
             <div className="space-y-4">
               <div className="divide-y divide-border rounded-xl border border-border bg-card overflow-hidden">
                 {backups.map((b) => (
-                  <div key={b.id} className="flex flex-wrap items-center justify-between p-4 gap-3 text-xs">
+                  <div
+                    key={b.id}
+                    className="flex flex-wrap items-center justify-between p-4 gap-3 text-xs"
+                  >
                     <div className="space-y-1 min-w-0">
                       <div className="flex items-center gap-2 font-mono font-medium text-foreground">
                         <Database className="h-3.5 w-3.5 text-primary" />
