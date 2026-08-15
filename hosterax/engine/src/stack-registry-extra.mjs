@@ -128,6 +128,7 @@ export const EXTRA_STACKS = Object.fromEntries([
 export const EXTRA_ORDER = {
   // inserted before the base "vite"/generic frontend entries
   beforeFrontend: [
+    "nuxt-content",
     "redwood",
     "solidstart",
     "qwik",
