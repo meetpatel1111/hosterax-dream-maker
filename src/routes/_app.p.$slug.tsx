@@ -124,29 +124,7 @@ function ProjectPage() {
     refetchInterval: 5000,
   });
 
-  if (isLoading) {
-    return (
-      <div className="flex min-h-[300px] items-center justify-center text-sm text-muted-foreground animate-pulse">
-        Loading project workspace...
-      </div>
-    );
-  }
-
-  if (!project) {
-    return (
-      <div className="mx-auto max-w-xl rounded-lg border border-border bg-card p-8 text-center">
-        <h2 className="text-lg font-medium">Project not found</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Could not find project "{slug}" on the HosteraX control plane.
-        </p>
-        <Link to="/dashboard" className="mt-4 inline-block text-sm text-primary hover:underline">
-          ← back to dashboard
-        </Link>
-      </div>
-    );
-  }
-
-  const stack = STACKS.find((s) => s.id === project.stack);
+  const stack = project ? STACKS.find((s) => s.id === project.stack) : undefined;
 
   async function deploy(trigger: "manual" | "git" | "upload" | "url" | "cli" | "api" = "manual") {
     try {
@@ -196,6 +174,28 @@ function ProjectPage() {
     { id: "settings", label: "Settings" },
   ];
 
+  if (isLoading) {
+    return (
+      <div className="flex min-h-[300px] items-center justify-center text-sm text-muted-foreground animate-pulse">
+        Loading project workspace...
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="mx-auto max-w-xl rounded-lg border border-border bg-card p-8 text-center">
+        <h2 className="text-lg font-medium">Project not found</h2>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Could not find project "{slug}" on the HosteraX control plane.
+        </p>
+        <Link to="/dashboard" className="mt-4 inline-block text-sm text-primary hover:underline">
+          ← back to dashboard
+        </Link>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-6">
       <Link
@@ -217,12 +217,12 @@ function ProjectPage() {
                 <GitBranch className="h-3 w-3" /> {project.branch || "main"}
               </span>
               <a
-                href={`http://${formatMagicDnsUrl(project.name, magicDns?.activeProvider || "sslip.io", project.port || 3000)}`}
+                href={`https://${formatMagicDnsUrl(project.name, magicDns?.activeProvider || "sslip.io")}`}
                 target="_blank"
                 rel="noreferrer"
                 className="flex items-center gap-1 hover:text-primary transition-colors text-primary font-medium font-mono"
               >
-                <Globe className="h-3 w-3" /> {formatMagicDnsUrl(project.name, magicDns?.activeProvider || "sslip.io", project.port || 3000)}{" "}
+                <Globe className="h-3 w-3" /> https://{formatMagicDnsUrl(project.name, magicDns?.activeProvider || "sslip.io")}{" "}
                 <ExternalLink className="h-3 w-3" />
               </a>
             </div>

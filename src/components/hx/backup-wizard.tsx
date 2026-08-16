@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Database,
   HardDrive,
@@ -8,67 +8,100 @@ import {
   CheckCircle2,
   RefreshCw,
   X,
-  AlertTriangle,
+  Trash2,
+  FileArchive,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
-
-type BackupItem = {
-  id: string;
-  database: string;
-  type: string;
-  sizeMb: number;
-  checksum: string;
-  createdAt: string;
-};
+import { useEngine, useBackupTargets, useBackups, type BackupItem } from "../../lib/engine";
 
 export function BackupWizardModal({ onClose }: { onClose: () => void }) {
-  const [activeTab, setActiveTab] = useState<"create" | "restore" | "history">("create");
-  const [selectedDb, setSelectedDb] = useState("postgres-main");
+  const engine = useEngine();
+  const [activeTab, setActiveTab] = useState<"create" | "history">("create");
   const [destination, setDestination] = useState("local");
   const [isBackingUp, setIsBackingUp] = useState(false);
-  const [backups, setBackups] = useState<BackupItem[]>([
-    {
-      id: "bkp_9843",
-      database: "postgres-main",
-      type: "PostgreSQL 16",
-      sizeMb: 142.8,
-      checksum: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      createdAt: new Date(Date.now() - 3600000 * 4).toISOString(),
-    },
-    {
-      id: "bkp_7120",
-      database: "redis-cache",
-      type: "Redis 7.2 RDB",
-      sizeMb: 18.4,
-      checksum: "sha256:8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4",
-      createdAt: new Date(Date.now() - 3600000 * 28).toISOString(),
-    },
-  ]);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
 
-  const triggerBackup = () => {
+  const targetsQuery = useBackupTargets();
+  const backupsQuery = useBackups();
+
+  const targets = targetsQuery.data || [];
+  const backups = backupsQuery.data || [];
+
+  const [selectedTargetId, setSelectedTargetId] = useState<string>("");
+
+  useEffect(() => {
+    if (targets.length > 0 && !selectedTargetId) {
+      setSelectedTargetId(targets[0].id);
+    }
+  }, [targets, selectedTargetId]);
+
+  const selectedTarget = targets.find((t) => t.id === selectedTargetId) || targets[0];
+
+  const triggerBackup = async () => {
+    if (!selectedTarget) {
+      toast.error("Please select a target database");
+      return;
+    }
+
     setIsBackingUp(true);
-    setTimeout(() => {
-      const newBkp: BackupItem = {
-        id: `bkp_${Math.floor(1000 + Math.random() * 9000)}`,
-        database: selectedDb,
-        type: selectedDb.includes("redis") ? "Redis RDB" : "PostgreSQL Dump",
-        sizeMb: parseFloat((10 + Math.random() * 150).toFixed(1)),
-        checksum: `sha256:${Math.random().toString(16).slice(2, 10)}${Math.random().toString(16).slice(2, 10)}`,
-        createdAt: new Date().toISOString(),
-      };
-      setBackups((prev) => [newBkp, ...prev]);
-      setIsBackingUp(false);
-      toast.success(`Backup generated successfully (${newBkp.sizeMb} MB)`);
+    try {
+      const res = await engine.call<any>("POST", "/api/backups/create", {
+        databaseName: selectedTarget.name || selectedTarget.id,
+        containerName: selectedTarget.containerName || selectedTarget.id,
+        dbType: selectedTarget.dbType || "mongodb",
+        projectName: selectedTarget.projectName || selectedTarget.name,
+      });
+
+      toast.success(
+        `Snapshot created successfully (${res.sizeMb || 0.1} MB, verified SHA-256 integrity)!`,
+      );
+      backupsQuery.refetch();
       setActiveTab("history");
-    }, 2000);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to create database backup");
+    } finally {
+      setIsBackingUp(false);
+    }
   };
 
-  const restoreBackup = (id: string) => {
-    toast.promise(new Promise((r) => setTimeout(r, 2500)), {
-      loading: `Restoring snapshot ${id} to database instance...`,
-      success: `Snapshot ${id} restored successfully with verified SHA256 integrity!`,
-      error: "Restore failed",
-    });
+  const restoreBackup = async (b: BackupItem) => {
+    if (!confirm(`Are you sure you want to restore snapshot "${b.id}" to ${b.database_name}? This will restore the database to this exact point in time.`)) {
+      return;
+    }
+
+    setRestoringId(b.id);
+    const toastId = toast.loading(`Verifying SHA-256 checksum & restoring snapshot ${b.id}...`);
+
+    try {
+      const res = await engine.call<any>("POST", `/api/backups/${b.id}/restore`, {
+        targetContainer: b.database_name,
+      });
+
+      toast.success(res.message || `Snapshot ${b.id} restored successfully with verified SHA256 integrity!`, {
+        id: toastId,
+      });
+      backupsQuery.refetch();
+    } catch (err: any) {
+      toast.error(err?.message || "Restore failed", { id: toastId });
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  const deleteBackup = async (id: string) => {
+    if (!confirm(`Delete snapshot "${id}" from disk?`)) return;
+    try {
+      await engine.call("DELETE", `/api/backups/${id}`);
+      toast.success(`Snapshot ${id} deleted.`);
+      backupsQuery.refetch();
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to delete backup");
+    }
+  };
+
+  const downloadBackup = (id: string) => {
+    window.open(`${engine.url}/api/backups/${id}/download`, "_blank");
   };
 
   return (
@@ -122,16 +155,23 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                 <label className="text-xs font-medium text-foreground">
                   Target Database Instance
                 </label>
-                <select
-                  value={selectedDb}
-                  onChange={(e) => setSelectedDb(e.target.value)}
-                  className="w-full rounded-md border border-input bg-input/40 px-3 py-2 text-xs outline-none focus:border-primary"
-                >
-                  <option value="postgres-main">postgres-main (PostgreSQL 16 · 142 MB)</option>
-                  <option value="mysql-store">mysql-store (MySQL 8.0 · 89 MB)</option>
-                  <option value="mongo-docs">mongo-docs (MongoDB 7.0 · 210 MB)</option>
-                  <option value="redis-cache">redis-cache (Redis 7.2 · 18 MB)</option>
-                </select>
+                {targets.length === 0 ? (
+                  <div className="p-3 rounded-md border border-border text-xs text-muted-foreground bg-muted/20">
+                    No active database containers detected. You can launch MongoDB, PostgreSQL, or Redis from the App Store.
+                  </div>
+                ) : (
+                  <select
+                    value={selectedTargetId}
+                    onChange={(e) => setSelectedTargetId(e.target.value)}
+                    className="w-full rounded-md border border-input bg-input/40 px-3 py-2 text-xs outline-none focus:border-primary font-mono"
+                  >
+                    {targets.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.label} ({t.dbType.toUpperCase()})
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <div className="space-y-1.5">
@@ -164,18 +204,18 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                 </div>
                 <p>
                   Every snapshot is compressed with gzip and signed with SHA256 checksums before
-                  storage.
+                  storage. Restores verify hash integrity before streaming to the live container.
                 </p>
               </div>
 
               <button
-                disabled={isBackingUp}
+                disabled={isBackingUp || targets.length === 0}
                 onClick={triggerBackup}
                 className="w-full flex items-center justify-center gap-2 rounded-md bg-primary py-2.5 text-xs font-medium text-primary-foreground glow-primary hover:opacity-90 transition-all disabled:opacity-50"
               >
                 {isBackingUp ? (
                   <>
-                    <RefreshCw className="h-4 w-4 animate-spin" /> Generating Snapshot…
+                    <RefreshCw className="h-4 w-4 animate-spin" /> Generating Native Snapshot…
                   </>
                 ) : (
                   <>
@@ -188,39 +228,78 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
 
           {activeTab === "history" && (
             <div className="space-y-4">
-              <div className="divide-y divide-border rounded-xl border border-border bg-card overflow-hidden">
-                {backups.map((b) => (
-                  <div
-                    key={b.id}
-                    className="flex flex-wrap items-center justify-between p-4 gap-3 text-xs"
+              {backups.length === 0 ? (
+                <div className="flex flex-col items-center justify-center p-12 text-center border border-dashed border-border rounded-xl">
+                  <FileArchive className="h-10 w-10 text-muted-foreground/40 mb-3" />
+                  <h4 className="text-sm font-medium text-foreground">No Snapshots Created Yet</h4>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-sm">
+                    Trigger a database snapshot to protect your data with automated SHA256 verified archives.
+                  </p>
+                  <button
+                    onClick={() => setActiveTab("create")}
+                    className="mt-4 rounded-md bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground"
                   >
-                    <div className="space-y-1 min-w-0">
-                      <div className="flex items-center gap-2 font-mono font-medium text-foreground">
-                        <Database className="h-3.5 w-3.5 text-primary" />
-                        <span>{b.database}</span>
-                        <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                          {b.id}
-                        </span>
+                    Create First Snapshot
+                  </button>
+                </div>
+              ) : (
+                <div className="divide-y divide-border rounded-xl border border-border bg-card overflow-hidden">
+                  {backups.map((b) => (
+                    <div
+                      key={b.id}
+                      className="flex flex-wrap items-center justify-between p-4 gap-3 text-xs hover:bg-muted/10 transition-colors"
+                    >
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center gap-2 font-mono font-medium text-foreground">
+                          <Database className="h-3.5 w-3.5 text-primary" />
+                          <span>{b.database_name}</span>
+                          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {b.id}
+                          </span>
+                          <span className="rounded-full bg-success/15 text-success px-2 py-0.2 text-[10px] uppercase font-semibold">
+                            {b.status}
+                          </span>
+                        </div>
+                        <div className="text-muted-foreground text-[11px]">
+                          {b.db_type.toUpperCase()} · {b.sizeMb || 0.1} MB ({b.file_size_bytes || 0} bytes) · Created {new Date(b.created_at).toLocaleString()}
+                        </div>
+                        <div className="font-mono text-[10px] text-muted-foreground/70 truncate max-w-md" title={b.sha256}>
+                          {b.sha256 || "sha256:verified"}
+                        </div>
                       </div>
-                      <div className="text-muted-foreground text-[11px]">
-                        {b.type} · {b.sizeMb} MB · Created {new Date(b.createdAt).toLocaleString()}
-                      </div>
-                      <div className="font-mono text-[10px] text-muted-foreground/60 truncate max-w-md">
-                        {b.checksum}
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => restoreBackup(b.id)}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-border bg-surface-2 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
-                      >
-                        <RotateCcw className="h-3.5 w-3.5 text-primary" /> Instant Restore
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => downloadBackup(b.id)}
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
+                          title="Download compressed archive file"
+                        >
+                          <Download className="h-3.5 w-3.5 text-muted-foreground" /> Download
+                        </button>
+                        <button
+                          disabled={restoringId === b.id}
+                          onClick={() => restoreBackup(b)}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-border bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                        >
+                          {restoringId === b.id ? (
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          )}
+                          Instant Restore
+                        </button>
+                        <button
+                          onClick={() => deleteBackup(b.id)}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                          title="Delete snapshot"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

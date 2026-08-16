@@ -242,7 +242,12 @@ export function useMagicDnsSettings() {
   });
 }
 
-export function formatMagicDnsUrl(projectName: string, providerId: string = "sslip.io", port?: number) {
+export function formatMagicDnsUrl(
+  projectName: string,
+  providerId: string = "sslip.io",
+  port?: number,
+  includePort: boolean = false,
+) {
   const p = projectName.toLowerCase();
   let host = `${p}.127-0-0-1.sslip.io`;
   if (providerId === "nip.io") host = `${p}.127.0.0.1.nip.io`;
@@ -252,5 +257,75 @@ export function formatMagicDnsUrl(projectName: string, providerId: string = "ssl
   else if (providerId === "localhost") host = `${p}.localhost`;
   else if (providerId === "sslip.io") host = `${p}.127-0-0-1.sslip.io`;
 
-  return port ? `${host}:${port}` : host;
+  if (includePort && port && port !== 80 && port !== 443) {
+    return `${host}:${port}`;
+  }
+  return host;
+}
+
+export type BackupTarget = {
+  id: string;
+  name: string;
+  containerName: string;
+  dbType: string;
+  image?: string;
+  label: string;
+  ports?: string;
+  isContainer: boolean;
+  projectName?: string;
+};
+
+export type BackupItem = {
+  id: string;
+  project_name?: string;
+  database_name: string;
+  db_type: string;
+  file_path: string;
+  file_size_bytes: number;
+  sizeMb: number;
+  sha256: string;
+  destination: string;
+  status: string;
+  created_at: number;
+  finished_at?: number;
+  error_message?: string;
+  existsOnDisk?: boolean;
+};
+
+export function useBackupTargets() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<BackupTarget[]>({
+    queryKey: ["backup-targets", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<BackupTarget[]>("GET", "/api/backups/targets");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+  });
+}
+
+export function useBackups(database?: string, project?: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<BackupItem[]>({
+    queryKey: ["backups", eng.url, eng.token, database, project],
+    queryFn: async () => {
+      try {
+        let path = "/api/backups";
+        const params = new URLSearchParams();
+        if (database) params.set("database", database);
+        if (project) params.set("project", project);
+        if (params.toString()) path += `?${params.toString()}`;
+        return await eng.call<BackupItem[]>("GET", path);
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 5000,
+  });
 }

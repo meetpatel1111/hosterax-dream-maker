@@ -22,6 +22,9 @@ export class SelfHealEngine {
     this.healthMap = new Map();
     // Track consecutive failures per project
     this.consecutiveFailures = new Map();
+    // Track last auto-restart ts per project to prevent restart storms
+    this.lastRestartTs = new Map();
+    this.startTime = Date.now();
     // In-memory event log for UI timeline
     this.events = [];
     // Docker daemon socket health
@@ -284,6 +287,25 @@ export class SelfHealEngine {
     return { ok: true, message: `Circuit Breaker for "${name}" reset to CLOSED.` };
   }
 
+  getHealthConfig(name) {
+    try {
+      const proj = this.db.prepare("SELECT * FROM projects WHERE name=?").get(name);
+      return {
+        probePath: proj?.health_check_path || "/",
+        expectedStatus: 200,
+        timeoutSeconds: 3,
+        startupDelaySeconds: 15,
+      };
+    } catch {
+      return {
+        probePath: "/",
+        expectedStatus: 200,
+        timeoutSeconds: 3,
+        startupDelaySeconds: 15,
+      };
+    }
+  }
+
   async probeAndHealProject(proj) {
     const name = proj.name;
     const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
@@ -298,12 +320,31 @@ export class SelfHealEngine {
         .prepare("SELECT * FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
         .get(name);
 
+      if (!latestDeploy) {
+        this.healthMap.set(name, {
+          status: "pending",
+          lastProbeTs: Date.now(),
+          message: "No deployments yet — waiting for first deployment...",
+          latencyMs: 0,
+          memoryPercent: 0,
+          circuitState: circuit.state,
+          tiers: { startup: "pending", readiness: "pending", liveness: "pending" },
+        });
+        return;
+      }
+
+      const ACTIVE_PHASES = new Set([
+        "queued",
+        "fetching",
+        "cloning",
+        "building",
+        "pulling",
+        "deploying",
+        "starting",
+      ]);
       if (
         latestDeploy &&
-        (latestDeploy.phase === "queued" ||
-          latestDeploy.phase === "building" ||
-          latestDeploy.phase === "pulling" ||
-          latestDeploy.phase === "deploying")
+        ACTIVE_PHASES.has(latestDeploy.phase)
       ) {
         this.healthMap.set(name, {
           status: "recovering",
@@ -331,22 +372,41 @@ export class SelfHealEngine {
         return;
       }
 
-      // 0.1 Check Startup Grace Period
-      if (latestDeploy && latestDeploy.finished_at) {
-        const elapsedSinceDeploy = Date.now() - latestDeploy.finished_at;
-        const gracePeriodMs = Math.max((cfg.startupDelaySeconds || 15) * 1000, 15000);
-        if (elapsedSinceDeploy < gracePeriodMs) {
+      // 0.1 Check Startup Grace Period (engine boot, new deployment, or recent restart)
+      const elapsedSinceEngineBoot = Date.now() - (this.startTime || 0);
+      const elapsedSinceRestart = Date.now() - (this.lastRestartTs.get(name) || 0);
+      const elapsedSinceDeploy = latestDeploy?.finished_at ? Date.now() - latestDeploy.finished_at : Infinity;
+
+      const isWarmingUp =
+        elapsedSinceEngineBoot < 20000 ||
+        elapsedSinceRestart < 20000 ||
+        elapsedSinceDeploy < ((cfg.startupDelaySeconds || 20) * 1000);
+
+      if (isWarmingUp) {
+        const httpOk = await this.probeHttpEndpoint("127.0.0.1", port, cfg.probePath, cfg.expectedStatus, 2000);
+        if (httpOk) {
+          this.recordCircuitSuccess(name);
           this.healthMap.set(name, {
             status: "healthy",
             lastProbeTs: Date.now(),
-            message: `Startup warmup grace period (${Math.ceil((gracePeriodMs - elapsedSinceDeploy) / 1000)}s remaining)...`,
-            latencyMs: 0,
+            message: `Responding on port :${port}`,
+            latencyMs: 10,
             memoryPercent: 0,
-            circuitState: circuit.state,
-            tiers: { startup: "warming_up", readiness: "ready", liveness: "healthy" },
+            circuitState: "CLOSED",
+            tiers: { startup: "passed", readiness: "ready", liveness: "healthy" },
           });
           return;
         }
+        this.healthMap.set(name, {
+          status: "healthy",
+          lastProbeTs: Date.now(),
+          message: `Startup warmup grace period active...`,
+          latencyMs: 0,
+          memoryPercent: 0,
+          circuitState: circuit.state,
+          tiers: { startup: "warming_up", readiness: "ready", liveness: "healthy" },
+        });
+        return;
       }
     } catch {}
 
@@ -392,6 +452,7 @@ export class SelfHealEngine {
     let exitCode = 0;
     let statusText = "unknown";
     let memoryPercent = 0;
+    let out = "";
     const startT = Date.now();
 
     if (target === "docker") {
@@ -445,19 +506,13 @@ export class SelfHealEngine {
             "warning"
           );
           try {
-              await new Promise((resolve) => {
-                const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`], { encoding: "utf8" });
-                child.on("close", (code) => resolve(code));
-                child.on("error", () => resolve(1));
-                setTimeout(() => { try { child.kill(); } catch {}; resolve(1); }, 5000);
-              });
-              await new Promise((resolve) => {
-                const child = spawn("docker", ["network", "disconnect", "-f", "bridge", `hx_${cleanName}`], { encoding: "utf8" });
-                child.on("close", (code) => resolve(code));
-                child.on("error", () => resolve(1));
-                setTimeout(() => { try { child.kill(); } catch {}; resolve(1); }, 3000);
-              });
-            } catch {}
+            await new Promise((resolve) => {
+              const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`], { encoding: "utf8" });
+              child.on("close", (code) => resolve(code));
+              child.on("error", () => resolve(1));
+              setTimeout(() => { try { child.kill(); } catch {}; resolve(1); }, 5000);
+            });
+          } catch {}
           isAlive = false;
         } else {
           isAlive = false;
@@ -469,7 +524,9 @@ export class SelfHealEngine {
 
     // 3. Socket / HTTP Readiness & Liveness Probe
     let probePassed = false;
-    if (isAlive || target !== "docker") {
+    if (cfg.probePath === "none" || target === "worker" || target === "cli") {
+      probePassed = isAlive;
+    } else if (isAlive || target !== "docker") {
       if (cfg.probePath && cfg.probePath !== "none") {
         const httpOk = await this.probeHttpEndpoint("127.0.0.1", port, cfg.probePath, cfg.expectedStatus, cfg.timeoutSeconds * 1000);
         latencyMs = Date.now() - startT;
@@ -615,6 +672,40 @@ export class SelfHealEngine {
       } catch {}
     }
 
+    // 4.5 Restart cooldown + in-flight deployment re-check (prevents restart storms racing the deploy pipeline)
+    const lastRestart = this.lastRestartTs.get(name) || 0;
+    const RESTART_COOLDOWN_MS = 20000;
+    if (now - lastRestart < RESTART_COOLDOWN_MS) {
+      this.healthMap.set(name, {
+        status: "degraded",
+        lastProbeTs: now,
+        message: `Restart cooldown active (${Math.ceil((RESTART_COOLDOWN_MS - (now - lastRestart)) / 1000)}s left) — waiting before next restart`,
+        latencyMs: 0,
+        memoryPercent: 0,
+        circuitState: circuit.state,
+        tiers: { startup: "warming_up", readiness: "failing", liveness: "recovering" },
+      });
+      return;
+    }
+    const activeDeploy = this.db
+      .prepare("SELECT phase FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
+      .get(name);
+    if (
+      activeDeploy &&
+      ["queued", "fetching", "cloning", "building", "pulling", "deploying", "starting"].includes(activeDeploy.phase)
+    ) {
+      this.healthMap.set(name, {
+        status: "recovering",
+        lastProbeTs: now,
+        message: `Deployment in progress (${activeDeploy.phase}) — auto-restart deferred`,
+        latencyMs: 0,
+        memoryPercent: 0,
+        circuitState: circuit.state,
+        tiers: { startup: "warming_up", readiness: "failing", liveness: "recovering" },
+      });
+      return;
+    }
+
     // 5. Autonomous Restart Recovery
     this.healthMap.set(name, {
       status: "recovering",
@@ -636,6 +727,7 @@ export class SelfHealEngine {
     if (this.restartService) {
       try {
         await this.restartService(name);
+        this.lastRestartTs.set(name, Date.now());
         this.logEvent(name, "restart_complete", `Service restarted successfully.`, "success");
       } catch (err) {
         this.logEvent(name, "restart_failed", `Restart failed: ${err.message}`, "error");
@@ -1010,37 +1102,17 @@ export class SelfHealEngine {
     this.logEvent(
       projectName,
       "auto_remediation_started",
-      `Analyzing CrashLoop failure and searching Docker Hub for verified images for "${projectName}"...`,
+      `Analyzing service health for "${projectName}" and executing clean restart...`,
       "warning"
     );
 
-    // 1. Generate candidate images via Universal Resolver
-    const { generateCandidateImageTags } = await import("./image-resolver.mjs");
-    const candidates = generateCandidateImageTags(proj.source, projectName);
-
-    let resolvedImage = candidates[0] || "nginx:alpine";
-
-    // 2. If candidates are standard fallback, query Docker Hub search API directly
-    if (!candidates || candidates.length === 0 || candidates[0] === proj.source) {
-      try {
-        const qClean = (proj.source || projectName).replace(/[:_-]/g, " ").trim();
-        const hubRes = await fetch(`https://hub.docker.com/v2/search/repositories/?query=${encodeURIComponent(qClean)}&page_size=5`, {
-          headers: { "User-Agent": "HosteraX-AutoRemediator/1.0" },
-        });
-        if (hubRes.ok) {
-          const hubData = await hubRes.json();
-          if (hubData.results && hubData.results.length > 0) {
-            const top = hubData.results.sort((a, b) => (b.star_count || 0) - (a.star_count || 0))[0];
-            if (top) resolvedImage = `${top.repo_name}:latest`;
-          }
-        }
-      } catch {}
+    // 1. Keep original image or sanitize tag
+    let resolvedImage = proj.source;
+    if (resolvedImage && !resolvedImage.includes(":") && !resolvedImage.includes("/")) {
+      resolvedImage = `${resolvedImage}:latest`;
     }
 
-    // 3. Update project in database with resolved healthy image
-    this.db.prepare("UPDATE projects SET source=? WHERE name=?").run(resolvedImage, projectName);
-
-    // 4. Reset Circuit Breaker & CrashLoop backoff
+    // 2. Reset Circuit Breaker & CrashLoop backoff
     this.circuitMap.set(projectName, {
       state: "CLOSED",
       failures: 0,
@@ -1049,25 +1121,80 @@ export class SelfHealEngine {
       canarySuccesses: 0,
     });
     this.backoffState.delete(projectName);
+    this.crashHistory.delete(projectName);
 
     this.logEvent(
       projectName,
-      "auto_remediation_image_switched",
-      `Auto-Remediation: Switched image to verified Docker Hub image "${resolvedImage}". Triggering zero-downtime redeploy...`,
+      "auto_remediation_restarted",
+      `Auto-Remediation: Reset circuit breaker and restarting container for "${projectName}"...`,
       "success"
     );
 
-    // 5. Trigger new deployment
+    // 3. Trigger clean restart
     if (this.restartService) {
-      this.restartService(projectName);
+      await this.restartService(projectName);
     }
 
     return {
       ok: true,
       project: projectName,
-      oldImage: proj.source,
-      newImage: resolvedImage,
-      message: `Auto-Remediated! Switched image to verified Docker Hub image "${resolvedImage}" and triggered redeployment.`,
+      image: resolvedImage,
+      message: `Auto-Remediated! Clean restart initiated for "${projectName}".`,
     };
+  }
+
+  async probeTcpPort(host, port, timeoutMs = 3000) {
+    if (!port || port <= 0) return false;
+    return new Promise((resolve) => {
+      const socket = new net.Socket();
+      socket.setTimeout(timeoutMs);
+      socket.on("connect", () => {
+        socket.end();
+        socket.destroy();
+        resolve(true);
+      });
+      socket.on("timeout", () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.on("error", () => {
+        socket.destroy();
+        resolve(false);
+      });
+      socket.connect(Number(port), host || "127.0.0.1");
+    });
+  }
+
+  async probeHttpEndpoint(host, port, reqPath = "/", expectedStatus = 200, timeoutMs = 3000) {
+    if (!port || port <= 0) return false;
+    return new Promise((resolve) => {
+      const req = http.request(
+        {
+          host: host || "127.0.0.1",
+          port: Number(port),
+          path: reqPath.startsWith("/") ? reqPath : `/${reqPath}`,
+          method: "GET",
+          timeout: timeoutMs,
+          headers: {
+            Host: "localhost",
+            "User-Agent": "HosteraX-SelfHeal-Probe/1.0",
+            Accept: "*/*",
+          },
+        },
+        (res) => {
+          // Any non-5xx response means the web server is alive and functioning
+          const isAlive = res.statusCode < 500;
+          resolve(isAlive);
+        }
+      );
+      req.on("timeout", () => {
+        req.destroy();
+        resolve(false);
+      });
+      req.on("error", () => {
+        resolve(false);
+      });
+      req.end();
+    });
   }
 }

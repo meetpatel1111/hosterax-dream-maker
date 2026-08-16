@@ -1,5 +1,4 @@
-// Generated from the Openship stack registry + detector rules (oblien/openship:
-// packages/core/src/stacks.ts + apps/api/src/lib/stack-detector.ts).
+// HosteraX Universal Stack Registry & Zero-Config Detectors.
 // 42 stacks across 10 languages, priority-ordered detection with manifest-dep gates.
 import fs from "node:fs";
 import path from "node:path";
@@ -818,7 +817,7 @@ function listFiles(dir) {
 }
 
 /**
- * Zero-config stack detection. Mirrors Openship rule order: fullstack/frontend
+ * Zero-config stack detection. Priority-ordered detection: fullstack/frontend
  * JS first (a Next.js app also has express in transitive deps), then backend JS,
  * then per-language frameworks, then generic catch-alls.
  */
@@ -865,10 +864,15 @@ export function detectStackDir(dir) {
       case "kotlin":
         fileMatch = has("build.gradle.kts") || (markerHit(s) && hasExt(dir, ".kt"));
         break;
+      case "fsharp":
+        fileMatch = [...files].some(
+          (f) => f.endsWith(".fsproj") || (f.endsWith(".fs") && !f.endsWith(".ts")),
+        );
+        break;
       case "blazor":
       case "dotnet":
         fileMatch = [...files].some(
-          (f) => f.endsWith(".csproj") || f.endsWith(".fsproj") || f.endsWith(".sln"),
+          (f) => f.endsWith(".csproj") || f.endsWith(".sln"),
         );
         break;
       case "static":

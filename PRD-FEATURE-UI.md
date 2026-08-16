@@ -844,7 +844,7 @@ Parsing utils (`parse-utils.ts`): shared regex extraction, config normalization,
 
 ### 6.7 Billing System *(Removed — HosteraX does not provide cloud/SaaS services)*
 
-*The billing system is entirely out of scope. HosteraX does not provide compute, cloud, SaaS, or billing services. The billing code exists only because HosteraX is forked from the original openship monorepo. The following table is retained for reference only but is not part of the HosteraX product:*
+*The billing system is entirely out of scope. HosteraX does not provide compute, cloud, SaaS, or billing services. The billing code is retained for reference only and is not part of the active HosteraX product:*
 
 | Feature | Status | Details |
 |---|---|---|
@@ -1406,10 +1406,10 @@ Transfer excludes are 3 categories: VCS (`.git`), deps (`node_modules`/`vendor`)
 | `ANNUAL_DISCOUNT` | 0.2 (20% off annual billing) |
 | `BUILD_ENV_VARS` | **16 env vars** injected into every build: `CI=true`, telemetry disabled for all frameworks (NG_CLI, NEXT, NUXT, ASTRO, GATSBY, DO_NOT_TRACK), color forced, no update notifiers |
 | `PlanTierId` | `"free"` \| `"pro"` \| `"team"` \| `"enterprise"` |
-| `PlanDefinition` / `OblienLimits` / `CreditPackDefinition` | Full plan type definitions with Stripe price IDs, Oblien workspace ceilings, credit packs |
-| `PLANS` | **4-tier Oblien cloud workspace billing registry**: Free (500k credits/mo, 1 workspace, 2 vCPU, 2GB RAM, 10GB disk), Pro (10M credits, 10 workspaces, 16 vCPU, 32GB RAM, 100GB disk), Team (60M credits, 50 workspaces, 64 vCPU, 128GB RAM, 500GB disk), Enterprise (custom contact sales). Prices in cents; stripePriceId with env fallbacks |
-| `CREDIT_CONVERSION` | Oblien credit conversion rates: cpu_time_minutes=500, memory_gb_minutes=100, disk_io_gb=500, network_gb=10000, requests=1 |
-| `CREDIT_PACKS` | 3 Oblien top-up packs: 5k ($5), 25k ($20), 100k ($70) |
+| `PlanDefinition` / `HosteraXLimits` / `CreditPackDefinition` | Full plan type definitions with Stripe price IDs, HosteraX workspace ceilings, credit packs |
+| `PLANS` | **4-tier HosteraX cloud workspace billing registry**: Free (500k credits/mo, 1 workspace, 2 vCPU, 2GB RAM, 10GB disk), Pro (10M credits, 10 workspaces, 16 vCPU, 32GB RAM, 100GB disk), Team (60M credits, 50 workspaces, 64 vCPU, 128GB RAM, 500GB disk), Enterprise (custom contact sales). Prices in cents; stripePriceId with env fallbacks |
+| `CREDIT_CONVERSION` | HosteraX credit conversion rates: cpu_time_minutes=500, memory_gb_minutes=100, disk_io_gb=500, network_gb=10000, requests=1 |
+| `CREDIT_PACKS` | 3 HosteraX top-up packs: 5k ($5), 25k ($20), 100k ($70) |
 | `PLAN_IDS` | Ordered array of 4 tier IDs |
 | `validatePlanPriceIds()` | Boot-time check; returns missing placeholder IDs |
 | `isPlaceholderPriceId()` | Guards against reaching Stripe with bogus IDs |
@@ -1579,11 +1579,11 @@ One shared contract for all reachability checks (SSH servers, backup destination
 |---|---|
 | `DEFAULT_PORT` | web=3000, dashboard=3001, api=4000, saasDashboard=3002, saasApi=4100 |
 | `LOCAL_WEB_URL` / `LOCAL_DASHBOARD_URL` / `LOCAL_API_URL` | Standalone localhost URLs (`http://localhost:<port>`) |
-| `DASHBOARD_RUNTIME_TARGETS` | **3-row table**: `local` (self-hosted, cloudTargetId=`cloud-saas`), `local-saas` (dev SaaS at localhost, self-referential), `cloud-saas` (production SaaS at `app.openship.io`/`api.openship.io`); each row has dashboard/api URLs + ports + cloudTargetId + selfHosted flag |
+| `DASHBOARD_RUNTIME_TARGETS` | **3-row table**: `local` (self-hosted, cloudTargetId=`cloud-saas`), `local-saas` (dev SaaS at localhost, self-referential), `cloud-saas` (production SaaS at `app.hosterax.io`/`api.hosterax.io`); each row has dashboard/api URLs + ports + cloudTargetId + selfHosted flag |
 | `DashboardRuntimeTargetId` / `DashboardRuntimeTarget` | Derived types from the table keys/values |
 | `LOOPBACK_HOSTNAMES` | `Set` of `{"localhost", "127.0.0.1", "[::1]"}` |
-| `runtimeTargetId` / `runtimeTarget` | Resolved from `OPENSHIP_TARGET` env (default `local`), fail-loud on invalid |
-| `cloudRuntimeTargetId` / `cloudRuntimeTarget` | Where "cloud" points — resolved from `OPENSHIP_CLOUD_TARGET` env (falls back to active target's `cloudTargetId`) |
+| `runtimeTargetId` / `runtimeTarget` | Resolved from `HOSTERAX_TARGET` env (default `local`), fail-loud on invalid |
+| `cloudRuntimeTargetId` / `cloudRuntimeTarget` | Where "cloud" points — resolved from `HOSTERAX_CLOUD_TARGET` env (falls back to active target's `cloudTargetId`) |
 | `dashboardRuntimeOrigins` | Flat list of all dashboard+api origins from the table, used for CORS allowlists |
 | `alignLoopbackOrigin()` | Rewrites localhost↔127.0.0.1 in loopback origins to keep SameSite cookies working |
 
@@ -1602,7 +1602,7 @@ Two-level barrel: `mail-server/index.ts` (13 lines) re-exports `routing/*`. Pure
 
 | Export | File | Purpose |
 |---|---|---|
-| `MailServerRouteInput` | `types.ts` (153 lines) | Inputs: userDomain, mailServerIp, zeroServerOrigin, zeroClientOrigin, openshipApiOrigin |
+| `MailServerRouteInput` | `types.ts` (153 lines) | Inputs: userDomain, mailServerIp, zeroServerOrigin, zeroClientOrigin, hosteraxApiOrigin |
 | `MailRouteId` | | `"mail-client"` \| `"mail-api"` \| `"autodiscover"` — 3 public HTTP routes |
 | `MailRoute` | | id, hostname, targetUrl, tls=true, description |
 | `MailDnsRecordId` | | 8 record types: `mailservice-a`, `apex-mx`, `spf`, `dkim`, `dmarc`, `autodiscover-cname`, `mail-client-cname`, `mail-api-cname` |
@@ -1761,8 +1761,8 @@ The `@repo/db` package is the **Drizzle ORM-based PostgreSQL database layer** th
 | **`getPgPool()`** | Exposes raw Pool for session-level advisory locks (throws when driver is pglite) |
 | **`closeDb()`** | Graceful shutdown — closes PGlite WASM + frees lock, drains pg pool. Safe to call multiple times |
 | **URL resolution** | `DATABASE_URL` wins; otherwise composes from `POSTGRES_*` / `PG*` env vars (compatible with docker-compose convention). Empty → PGlite |
-| **PGlite data dir** | `PGLITE_DATA_DIR` env var (with `~` expansion), else `~/.openship/data` |
-| **PGlite assets** | `OPENSHIP_PGLITE_ASSETS_DIR` for `bun build --compile` binaries (provides `pglite.wasm` + `pglite.data` from shipped assets) |
+| **PGlite data dir** | `PGLITE_DATA_DIR` env var (with `~` expansion), else `~/.hosterax/data` |
+| **PGlite assets** | `HOSTERAX_PGLITE_ASSETS_DIR` for `bun build --compile` binaries (provides `pglite.wasm` + `pglite.data` from shipped assets) |
 | **Migrations** | Auto-run at startup from `packages/db/drizzle/`. `drizzle-orm/node-postgres/migrator` for pg, `drizzle-orm/pglite/migrator` for PGlite |
 | **Test isolation** | Under `VITEST`/`NODE_ENV=test`, PGlite uses `memory://` (ephemeral, no lock, no disk writes) |
 | **Stale control file** | `clearStalePgliteControlFile()` removes leftover `postmaster.pid` after `acquirePgliteLock()` grants exclusive access |
@@ -1781,7 +1781,7 @@ File-based exclusive-access lock for PGlite data directories. PGlite has no buil
 | **Cross-machine guard** | Throws actionable error when a different machine's live lock is detected (PGlite dirs cannot be shared across machines) |
 | **Stale PID reclamation** | `process.kill(pid, 0)` liveness probe — dead pid → auto-reclaim |
 | **Legacy hostname migration** | Detects pre-fix locks written with volatile hostname; treats them as same-machine to avoid false "different machine" errors |
-| **Dev hot-reload takeover** | Under `--watch` or `OPENSHIP_DEV_LOCK_TAKEOVER=true`, terminates the stale holder (SIGTERM → 3s grace → SIGKILL) instead of waiting |
+| **Dev hot-reload takeover** | Under `--watch` or `HOSTERAX_DEV_LOCK_TAKEOVER=true`, terminates the stale holder (SIGTERM → 3s grace → SIGKILL) instead of waiting |
 | **Wait + retry** | Configurable `waitMs` (default 5s) and `pollMs` (default 100ms) for restart handoff |
 | **Exit hook** | `process.once("exit")` → `releasePgliteLock()` — best-effort cleanup on normal exit |
 | **Owner-guarded release** | `releasePgliteLock()` verifies own PID + machineId before deleting lock |
@@ -1836,7 +1836,7 @@ All tables use `text` primary keys (prefixed IDs like `proj_`, `dep_`, `svc_`) u
 | `servers.ts` | `servers` | SSH config — host, port, user, auth method, password, key path, jump host; `organizationId` FK nullable |
 | `settings.ts` | `instanceSettings`, `userSettings` | Single-row instance config: tunnel, auth mode, build mode, team mode, SMTP transport; per-user: build mode, deploy target, clone strategy, transfer mode |
 | `backup.ts` | `backupDestination`, `backupPolicy`, `backupRun`, `backupRestore` | Destination (org, name) unique where active; policy (projectId, serviceId) unique where active; run/restore FSM with stale-sweep indexes |
-| `billing.ts` | `billingCustomer`, `billingSubscription`, `creditPack`, `stripeWebhookEvent`, `oblienWebhookEvent`, `stripeTopupGrant`, `billingAnniversaryGrant`, `billingUsageSnapshot` | Customer org+stripe unique; subscription org+stripe unique; webhook idempotency tables; topup grant by checkout session; anniversary grant by (org, period) |
+| `billing.ts` | `billingCustomer`, `billingSubscription`, `creditPack`, `stripeWebhookEvent`, `hosteraxWebhookEvent`, `stripeTopupGrant`, `billingAnniversaryGrant`, `billingUsageSnapshot` | Customer org+stripe unique; subscription org+stripe unique; webhook idempotency tables; topup grant by checkout session; anniversary grant by (org, period) |
 | `notification.ts` | `notificationChannel`, `notificationSubscription`, `notificationDefault`, `notificationDelivery` | Channel per user; subscription (user, org, category, channel) unique; default (org, category); delivery queue indexes |
 | `audit-event.ts` | `auditEvent` | Append-only log — org+created, org+type, org+actor, resource indexes; `before`/`after` JSONB snapshots |
 | `analytics.ts` | `serverAnalytics`, `serverAnalyticsGeo` | Per-domain per-minute counters (serverId, domain, minute) unique; daily geo aggregates (serverId, domain, day) unique |
@@ -2034,23 +2034,23 @@ A standalone 790-line module (`packages/db/src/dump.ts`) providing:
 
 | Script | Lines | Purpose |
 |---|---|---|
-| `install.sh` | 113 | **Unix shell installer** — `curl -fsSL https://get.openship.io \| sh` |
+| `install.sh` | 113 | **Unix shell installer** — `curl -fsSL https://get.hosterax.io \| sh` |
 | `install.ps1` | 40 | **Windows PowerShell installer** — `irm ...install.ps1 \| iex` |
 | `release.ts` | 411 | **Release automation** — `bun scripts/release.ts patch\|minor\|major\|rc\|<version>` |
 | `update-geoip.mjs` | 39 | **GeoIP database refresh** — `bun run update:geoip` |
 
 #### `install.sh` (113 lines)
 
-One-liner installer for macOS/Linux. Autodetects and installs Bun runtime if missing (no Node/npm needed), then globally installs the `openship` CLI via `bun add -g`.
+One-liner installer for macOS/Linux. Autodetects and installs Bun runtime if missing (no Node/npm needed), then globally installs the `hosterax` CLI via `bun add -g`.
 
 | Feature | Description |
 |---|---|
 | **Bun runtime** | Installs via `curl -fsSL https://bun.sh/install \| bash` if `bun` not on PATH |
 | **`unzip` auto-install** | Checks for `unzip` before running Bun's installer; installs via apt-get/dnf/yum/apk/pacman/zypper with sudo detection |
-| **Version pinning** | `OPENSHIP_VERSION=0.1.9` env var pins a specific CLI version |
+| **Version pinning** | `HOSTERAX_VERSION=0.1.9` env var pins a specific CLI version |
 | **Heal broken installs** | Detects pre-fix installer clobber (issue #21) by checking first line of `dist/index.js` for `#!/bin/sh` shebang — force-clean + reinstall |
 | **Bun-only fallback** | When `node` is absent, rewrites the global bin symlink to a shell wrapper that execs under Bun directly; unlinks first to avoid self-referential loop |
-| **Post-install guidance** | Prints next steps: `openship up`, `openship --help`, PATH setup |
+| **Post-install guidance** | Prints next steps: `hosterax up`, `hosterax --help`, PATH setup |
 
 #### `install.ps1` (40 lines)
 
@@ -2060,8 +2060,8 @@ Windows counterpart to `install.sh` — PowerShell one-liner installer.
 |---|---|
 | **Bun runtime** | Installs via `Invoke-RestMethod https://bun.sh/install.ps1 \| Invoke-Expression` |
 | **PATH update** | Adds `$env:USERPROFILE\.bun\bin` to current session's PATH |
-| **Version pinning** | `$env:OPENSHIP_VERSION = "0.1.9"` for a specific version |
-| **Post-install guidance** | Prints next steps: `openship up`, `openship install`, `openship --help` |
+| **Version pinning** | `$env:HOSTERAX_VERSION = "0.1.9"` for a specific version |
+| **Post-install guidance** | Prints next steps: `hosterax up`, `hosterax install`, `hosterax --help` |
 
 #### `release.ts` (411 lines)
 
@@ -2609,7 +2609,7 @@ Vendored GeoLite2-Country database refresh script. Committed file at `apps/api/a
 | File | Lines | Description |
 |---|---|---|
 | `index.ts` | 851 | **Main entry** — Electron app lifecycle, BrowserWindow management, persistent ConfigStore (JSON in userData), internal token (ephemeral per-session), routing (loading splash → onboarding → dashboard), IPC handlers: config get/set/getAll/reset, app version/cloud-urls/local-urls, navigate, onboarding complete/cloud-auth/cloud-auth-poll/browse-file, system get-settings/update-settings/browse-folder, cloud connect/connect-poll, update start/open/dismiss/progress/done/error, reset to re-onboard |
-| `services.ts` | 425 | **Local service supervisor** — starts/stops bundled API binary (`openship-api`) and dashboard Next.js server in packaged mode; dynamic free port selection (never fixed ports, persisted to ports.json for session stability across restarts); API spawn with env (PGlite data dir, migrations, trusted origins, auth secret, internal token); dashboard via `utilityProcess.fork` (preferred, no Dock tile) with `ELECTRON_RUN_AS_NODE` fallback; readiness polling with timeout; graceful shutdown (SIGTERM → SIGKILL) with await for auto-update handoff |
+| `services.ts` | 425 | **Local service supervisor** — starts/stops bundled API binary (`hosterax-api`) and dashboard Next.js server in packaged mode; dynamic free port selection (never fixed ports, persisted to ports.json for session stability across restarts); API spawn with env (PGlite data dir, migrations, trusted origins, auth secret, internal token); dashboard via `utilityProcess.fork` (preferred, no Dock tile) with `ELECTRON_RUN_AS_NODE` fallback; readiness polling with timeout; graceful shutdown (SIGTERM → SIGKILL) with await for auto-update handoff |
 | `updater.ts` | 310 | **In-app updater** — `checkForUpdate` fetches GitHub latest release via API, resolves platform-specific installer via `@repo/core.resolveDesktopUpdate`; `downloadUpdate` streams asset with SHA256 integrity verification (sidecar `.sha256` file, fail-open on missing); `installUpdate` dispatches per-platform: **macOS** (mount dmg → ditto new .app → detached shell script waits for exit → atomic rename with rollback), **Windows** (Expand-Archive zip → detached cmd script → robocopy /MIR → relaunch), **Linux** (cp + chmod AppImage → atomic rename via detached bash → relaunch) |
 | `update-window.ts` | 127 | **Update notification window** — self-contained frameless BrowserWindow with inline HTML (no external assets), dark/light theme via CSS prefers-color-scheme, version + release notes display, "Later" / "Update now" buttons, progress lives in dashboard's header bar after download begins |
 | `types/desktop.d.ts` | 33 | TypeScript declarations for `window.desktop` bridge interface (`DesktopBridge` with isDesktop, config, app, navigate, onboarding, system, reset) |
@@ -2625,13 +2625,13 @@ Vendored GeoLite2-Country database refresh script. Committed file at `apps/api/a
 | File | Description |
 |---|---|
 | `stage.ts` | **Build staging** (178 lines) — invoked by electron-forge `generateAssets` hook or standalone via `bun run build/stage.ts`. Steps: 1) Compile API binary via `bun build --compile` with `--target=bun-{os}-{arch}` (cross-compile support via FORGE_ARCH), `--external cpu-features`; 2) Build dashboard (`bun run build` with `CLOUD_MODE=false`) then copy Next.js standalone output to `resources/dashboard/` with `.next/static` + `public/`; 3) Copy Drizzle SQL migrations to `resources/migrations/`; 4) Copy PGlite WASM + data files to `resources/pglite/` |
-| — | Output: `resources/bin/openship-api[.exe]`, `resources/dashboard/`, `resources/migrations/`, `resources/pglite/` |
+| — | Output: `resources/bin/hosterax-api[.exe]`, `resources/dashboard/`, `resources/migrations/`, `resources/pglite/` |
 
 #### 6.28.4 Configuration & Packaging — 3 Files
 
 | File | Description |
 |---|---|
-| `forge.config.js` | Electron Forge v7 configuration: **packagerConfig** (name: Openship, appBundleId: com.oblien.openship, icon, asar, extraResource for bin/dashboard/migrations/pglite, macOS signing with hardened runtime + entitlements); **hooks** (generateAssets → stage.ts, postPackage for Linux chmod, postMake for macOS hdiutil dmg creation with retry logic and stale mount cleanup); **makers** (Linux: @reforged/maker-appimage, all platforms: @electron-forge/maker-zip for Windows/macOS) |
+| `forge.config.js` | Electron Forge v7 configuration: **packagerConfig** (name: HosteraX, appBundleId: com.hosterax.hosterax, icon, asar, extraResource for bin/dashboard/migrations/pglite, macOS signing with hardened runtime + entitlements); **hooks** (generateAssets → stage.ts, postPackage for Linux chmod, postMake for macOS hdiutil dmg creation with retry logic and stale mount cleanup); **makers** (Linux: @reforged/maker-appimage, all platforms: @electron-forge/maker-zip for Windows/macOS) |
 | `entitlements.plist` | macOS hardened runtime entitlements (allow-jit, disable-library-validation for spawned API binary) |
 | `assets/` | App icons: `icon.icns` (macOS), `icon.ico` (Windows), `icon.png` (Linux) |
 
@@ -2650,7 +2650,7 @@ Vendored GeoLite2-Country database refresh script. Committed file at `apps/api/a
 | **Config Store** | Persistent JSON file in `app.getPath("userData")/config.json`; stores apiUrl, dashboardUrl, onboardingComplete, windowBounds, windowMaximized, system settings (SSH creds), tunnel config, autoUpdate flag, updateNotifications, lastSeenVersion, dismissedAdvisoryIds |
 | **Local Services** | Packaged mode only: spawns compiled API binary (embedded PGlite, in-process job runner, loopback-only listener) + dashboard Next.js server via `utilityProcess.fork`; dynamic free ports persisted to `ports.json` for session cookie stability across restarts; readiness polling + 3-attempt retry with port fallback |
 | **Internal Token** | Ephemeral 32-byte random token per session (never persisted); passed to API via `INTERNAL_TOKEN` env var at spawn; authenticates all Electron → API internal calls (setting push, system queries); API only listens on 127.0.0.1 in desktop mode |
-| **Onboarding Flow** | Optional (opt-in via `OPENSHIP_ENABLE_ONBOARDING=1`); disabled by default so desktop goes straight to dashboard; routes to `{dashboardUrl}/onboarding` when enabled + not complete; on completion: saves SSH settings locally → pushes to API → navigates to `/api/auth/desktop-login` which creates session cookie and redirects to dashboard |
+| **Onboarding Flow** | Optional (opt-in via `HOSTERAX_ENABLE_ONBOARDING=1`); disabled by default so desktop goes straight to dashboard; routes to `{dashboardUrl}/onboarding` when enabled + not complete; on completion: saves SSH settings locally → pushes to API → navigates to `/api/auth/desktop-login` which creates session cookie and redirects to dashboard |
 | **Cloud Auth Flow** | PKCE-based OAuth from desktop: generate nonce + state + code verifier/challenge → register with API → open system browser to cloud authorize URL → poll API for resolution → on resolved: navigate to claim endpoint (cookie set) → mark onboarding complete; re-focuses desktop app after browser sign-in |
 | **Auto-Update** | GitHub releases API → `resolveDesktopUpdate` from `@repo/core` for platform asset selection; SHA256 sidecar integrity check (fail-open on missing); per-platform install: macOS (dmg mount → ditto → detach → atomic rename with rollback), Windows (Expand-Archive → robocopy /MIR), Linux (cp + atomic rename); detached scripts handle swap after app exit; progress streamed to dashboard header bar; configurable auto-install vs notify-only; critical advisory always surfaces |
 

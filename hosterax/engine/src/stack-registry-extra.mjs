@@ -1,5 +1,5 @@
 // Extended stack matrix for HosteraX core detection.
-// Adds frameworks + languages beyond the base Openship-derived registry.
+// Adds frameworks + languages beyond the base registry.
 // Every entry follows the same shape as STACK_REGISTRY in ./stack-registry.mjs.
 
 const s = (id, name, language, category, icon, port, build, start, outputDir, rootMarkers, deps = []) => [
@@ -79,7 +79,7 @@ export const EXTRA_STACKS = Object.fromEntries([
   s("groovy", "Groovy / Grails", "groovy", "backend", "🎸", 8080, "./gradlew assemble", "./gradlew bootRun", "build/libs", ["grails-app", "build.gradle"], ["org.grails:grails-core"]),
 
   // ---------- .NET ----------
-  s("fsharp", "F#", "fsharp", "backend", "🔷", 5000, "dotnet publish -c Release -o out", "dotnet out/app.dll", "out", [], []),
+  s("fsharp", "F#", "fsharp", "backend", "🔷", 5000, "dotnet publish -c Release -o out", "dotnet out/app.dll", "out", ["Program.fs", "App.fs"], []),
 
   // ---------- Elixir / Erlang / BEAM ----------
   s("elixir", "Elixir (Mix)", "elixir", "backend", "💧", 4000, "mix deps.get && mix compile", "mix run --no-halt", "_build", ["mix.exs"], []),

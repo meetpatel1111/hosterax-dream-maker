@@ -29,7 +29,9 @@ const LOCAL_ADMIN_USER: AuthUser = {
 };
 
 const LOCAL_ADMIN_SESSION: AuthSession = {
-  access_token: `hx_local_${crypto.randomUUID()}`,
+  access_token: typeof window !== "undefined" 
+    ? localStorage.getItem("hx.token") || `hx_local_${crypto.randomUUID()}`
+    : "",
   token_type: "bearer",
   user: LOCAL_ADMIN_USER,
 };

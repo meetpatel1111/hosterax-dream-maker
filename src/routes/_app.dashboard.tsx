@@ -403,7 +403,7 @@ function Dashboard() {
                     <div className="flex items-center gap-1.5 truncate text-foreground/80 font-mono">
                       <Globe className="h-3.5 w-3.5 text-primary shrink-0" />
                       <span className="truncate">
-                        {formatMagicDnsUrl(p.name || p.subdomain, magicDns?.activeProvider || "sslip.io", p.port || 3000)}
+                        {formatMagicDnsUrl(p.name || p.subdomain, magicDns?.activeProvider || "sslip.io")}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 font-mono truncate">

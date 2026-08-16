@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { useEngine } from "@/lib/engine";
 import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
+import { EdgeProviderSelector } from "@/components/hx/edge-provider-selector";
 
 export const Route = createFileRoute("/_app/settings")({
   head: () => ({ meta: [{ title: "Settings — HosteraX" }] }),
@@ -42,6 +43,9 @@ function SettingsPage() {
           Your account, control plane, and host machine specifications.
         </p>
       </div>
+
+      {/* Managed Edge Gateway Selector (Caddy 2 vs OpenResty vs External) */}
+      <EdgeProviderSelector />
 
       {/* Magic Wildcard DNS Provider Setting */}
       <MagicDnsSelector />

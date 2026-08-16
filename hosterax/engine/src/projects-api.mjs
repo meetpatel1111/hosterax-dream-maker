@@ -1,4 +1,4 @@
-// HosteraX — Projects API (Openship-compatible surface)
+// HosteraX — Projects API Subsystem
 // Mounted under /api by index.mjs. Every route is permission-tagged.
 import fs from "node:fs";
 import path from "node:path";
@@ -248,6 +248,11 @@ export function createProjectsApi(ctx) {
       "project:deployment:list": 1,
       "project:write": 2,
       "project:admin": 3,
+      "read": 1,
+      "list": 1,
+      "deploy": 2,
+      "write": 2,
+      "admin": 3,
     };
     const need = rank[perm] ?? 3;
     if (scopes.some((s) => (rank[s] ?? 0) >= need)) return;
