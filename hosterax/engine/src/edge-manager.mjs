@@ -1,11 +1,26 @@
 // hosterax/engine/src/edge-manager.mjs
 // Pluggable Managed Edge Gateway Subsystem for HosteraX
-// Supports Caddy 2 (Recommended Native Automatic HTTPS) & OpenResty (Nginx + Lua Engine)
+// Supports Caddy 2 (native Automatic HTTPS) & OpenResty 1.27 (Nginx + Lua engine)
+//
+// OpenResty  = routing + TLS termination (it only *reads* certificate files)
+// Certbot    = certificate issuance/renewal (HTTP-01 standalone on loopback :49180,
+//              proxied through the edge so port 80 never goes down)
+// Lua layer  = analytics, request logging, rule guard, geo — all on ngx.shared.dict
+//              (no Redis, no file I/O on the hot path), exposed on 127.0.0.1:9145.
 
 import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import http from "node:http";
+import { ACME_HTTP01_PORT, LETSENCRYPT_DIR } from "./tls-manager.mjs";
+
+export const EDGE_MGMT_PORT = Number(process.env.EDGE_MGMT_PORT || 9145);
+
+const OPENRESTY_KNOWN_CONFS = [
+  "/usr/local/openresty/nginx/conf/nginx.conf",
+  "/etc/openresty/nginx.conf",
+  "/etc/nginx/nginx.conf",
+];
 
 export class EdgeManager {
   constructor(db, homeDir, tlsManager) {
@@ -17,16 +32,61 @@ export class EdgeManager {
     this.caddyConfigDir = path.join(this.edgeDir, "caddy-config");
     this.openrestySitesDir = path.join(this.edgeDir, "sites-enabled");
     this.acmeWebrootDir = path.join(this.edgeDir, "acme-webroot");
+    this.luaDir = path.join(this.edgeDir, "lualib", "hosterax");
+    this.acmeHttp01Port = ACME_HTTP01_PORT;
+    this.mgmtPort = EDGE_MGMT_PORT;
+    this.letsencryptDir = LETSENCRYPT_DIR;
 
     fs.mkdirSync(this.edgeDir, { recursive: true });
     fs.mkdirSync(this.caddyDataDir, { recursive: true });
     fs.mkdirSync(this.caddyConfigDir, { recursive: true });
     fs.mkdirSync(this.openrestySitesDir, { recursive: true });
     fs.mkdirSync(this.acmeWebrootDir, { recursive: true });
+    fs.mkdirSync(this.luaDir, { recursive: true });
 
     this.ensureSchema();
     this.settings = this.getSettings();
+    this.writeLuaModules();
   }
+
+  /**
+   * Ask the installed OpenResty binary where its own paths are (`openresty -V`),
+   * falling back to the well-known locations. Makes the provider work for both
+   * containerized and bare-metal OpenResty.
+   */
+  async detectOpenRestyPaths() {
+    if (this._orPaths) return this._orPaths;
+    const out = await new Promise((resolve) => {
+      let buf = "";
+      let child;
+      try {
+        child = spawn("openresty", ["-V"], { encoding: "utf8" });
+      } catch {
+        return resolve("");
+      }
+      child.stdout?.on("data", (d) => (buf += d.toString()));
+      child.stderr?.on("data", (d) => (buf += d.toString())); // -V prints to stderr
+      child.on("error", () => resolve(""));
+      child.on("close", () => resolve(buf));
+      setTimeout(() => resolve(buf), 3000);
+    });
+
+    const pick = (flag) => {
+      const m = out.match(new RegExp(`--${flag}=([^\\s]+)`));
+      return m ? m[1] : "";
+    };
+    const confPath = pick("conf-path") || OPENRESTY_KNOWN_CONFS.find((p) => fs.existsSync(p)) || OPENRESTY_KNOWN_CONFS[0];
+    const paths = {
+      installed: Boolean(out),
+      sbinPath: pick("sbin-path") || "openresty",
+      confPath,
+      pidPath: pick("pid-path") || "/usr/local/openresty/nginx/logs/nginx.pid",
+      sitesEnabled: path.join(path.dirname(confPath), "sites-enabled"),
+    };
+    this._orPaths = paths;
+    return paths;
+  }
+
 
   ensureSchema() {
     this.db.exec(`
