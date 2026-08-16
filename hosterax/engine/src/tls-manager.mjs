@@ -1,19 +1,58 @@
 // hosterax/engine/src/tls-manager.mjs
 // Production-grade TLS/SSL Certificate Subsystem & DNS Verification for HosteraX
+//
+// Certificate machinery (mirrors the OpenShip model):
+//   Certbot --standalone --http-01-port 49180  (loopback alternate port)
+//   Edge proxies /.well-known/acme-challenge/ -> 127.0.0.1:49180
+//   => no port-80 fight, no webroot dependency, no DNS-01, zero downtime.
+// Issued material lives in /etc/letsencrypt (LETSENCRYPT_DIR) and is only *read*
+// by the edge (OpenResty/Caddy). A temporary self-signed bootstrap certificate is
+// installed the moment a domain is added so TLS handshakes succeed while the real
+// certificate is still pending (avoids HTTP-only fallback / CF 525).
 
 import dns from "node:dns/promises";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
+
+export const ACME_HTTP01_PORT = Number(process.env.ACME_HTTP01_PORT || 49180);
+export const LETSENCRYPT_DIR = process.env.LETSENCRYPT_DIR || "/etc/letsencrypt";
+
+function run(cmd, args, { timeout = 180000 } = {}) {
+  return new Promise((resolve) => {
+    let out = "";
+    let err = "";
+    let child;
+    try {
+      child = spawn(cmd, args, { encoding: "utf8" });
+    } catch (e) {
+      return resolve({ code: -1, out: "", err: e.message });
+    }
+    const t = setTimeout(() => {
+      try { child.kill("SIGKILL"); } catch {}
+      resolve({ code: -2, out, err: err + `\n[timeout after ${timeout}ms]` });
+    }, timeout);
+    child.stdout?.on("data", (d) => (out += d.toString()));
+    child.stderr?.on("data", (d) => (err += d.toString()));
+    child.on("error", (e) => { clearTimeout(t); resolve({ code: -1, out, err: e.message }); });
+    child.on("close", (code) => { clearTimeout(t); resolve({ code, out, err }); });
+  });
+}
 
 export class TLSManager {
   constructor(db, edgeDir) {
     this.db = db;
     this.edgeDir = edgeDir;
     this.certsDir = path.join(edgeDir, "certs");
+    this.acmeWebrootDir = path.join(edgeDir, "acme-webroot"); // kept for compatibility only
+    this.acmeHttp01Port = ACME_HTTP01_PORT;
+    this.letsencryptDir = LETSENCRYPT_DIR;
     fs.mkdirSync(this.certsDir, { recursive: true });
+    fs.mkdirSync(this.acmeWebrootDir, { recursive: true });
     this.ensureSchema();
   }
+
 
   ensureSchema() {
     try {
