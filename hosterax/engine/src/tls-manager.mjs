@@ -268,9 +268,113 @@ export class TLSManager {
   }
 
   /**
-   * Provision or Renew ACME SSL (Let's Encrypt / ZeroSSL / Internal CA)
+   * Where the edge reads certificate material for a hostname.
+   * Real ACME material: /etc/letsencrypt/live/<domain>/{fullchain,privkey}.pem
+   * Bootstrap/self-signed + uploaded custom certs: <edge>/certs/<domain>.{crt,key}
    */
-  async provisionAcmeSsl(domainId, edgeProvider) {
+  certPaths(hostname) {
+    const safe = hostname.replace(/[^a-zA-Z0-9.*-]/g, "_");
+    const live = path.join(this.letsencryptDir, "live", safe);
+    const acmeCert = path.join(live, "fullchain.pem");
+    const acmeKey = path.join(live, "privkey.pem");
+    const localCert = path.join(this.certsDir, `${safe}.crt`);
+    const localKey = path.join(this.certsDir, `${safe}.key`);
+    const hasAcme = fs.existsSync(acmeCert) && fs.existsSync(acmeKey);
+    return {
+      safe,
+      acmeCert,
+      acmeKey,
+      localCert,
+      localKey,
+      hasAcme,
+      hasLocal: fs.existsSync(localCert) && fs.existsSync(localKey),
+      cert: hasAcme ? acmeCert : localCert,
+      key: hasAcme ? acmeKey : localKey,
+      source: hasAcme ? "letsencrypt" : "local",
+    };
+  }
+
+  /**
+   * Temporary self-signed bootstrap certificate so a routed host can still
+   * complete a TLS handshake while the real certificate is being issued.
+   */
+  async ensureBootstrapCertificate(hostname) {
+    const p = this.certPaths(hostname);
+    if (p.hasAcme || p.hasLocal) return { ok: true, created: false, ...p };
+
+    const conf = path.join(this.certsDir, `${p.safe}.openssl.cnf`);
+    fs.writeFileSync(
+      conf,
+      `[req]\ndistinguished_name=dn\nx509_extensions=v3\nprompt=no\n[dn]\nCN=${hostname}\nO=HosteraX Bootstrap\n[v3]\nsubjectAltName=DNS:${hostname}\nbasicConstraints=critical,CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n`,
+      "utf8"
+    );
+
+    const r = await run(
+      "openssl",
+      ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "14", "-keyout", p.localKey, "-out", p.localCert, "-config", conf],
+      { timeout: 30000 }
+    );
+    try { fs.unlinkSync(conf); } catch {}
+
+    if (r.code !== 0 || !fs.existsSync(p.localCert)) {
+      return { ok: false, created: false, error: r.err?.trim() || "openssl unavailable", ...p };
+    }
+    return { ok: true, created: true, ...this.certPaths(hostname) };
+  }
+
+  /**
+   * Real Let's Encrypt issuance via Certbot HTTP-01 standalone on a loopback
+   * alternate port (default 49180). The edge proxies the ACME challenge path to
+   * that port, so port 80 keeps serving traffic during issuance.
+   */
+  async runCertbot(hostname, { email = "", forceRenewal = false } = {}) {
+    const args = [
+      "certonly",
+      "--standalone",
+      "--http-01-port",
+      String(this.acmeHttp01Port),
+      "--cert-name",
+      hostname,
+      "-d",
+      hostname,
+      "--agree-tos",
+      "--non-interactive",
+      "--keep-until-expiring",
+      "--config-dir",
+      this.letsencryptDir,
+      "--work-dir",
+      path.join(this.edgeDir, "acme-work"),
+      "--logs-dir",
+      path.join(this.edgeDir, "acme-logs"),
+    ];
+    if (email) args.push("--email", email);
+    else args.push("--register-unsafely-without-email");
+    if (forceRenewal) args.push("--force-renewal");
+
+    let r = await run("certbot", args, { timeout: 300000 });
+    if (r.code === -1) {
+      // Fall back to a containerized certbot when the host binary is absent.
+      r = await run(
+        "docker",
+        [
+          "run", "--rm", "--network", "host",
+          "-v", `${this.letsencryptDir}:/etc/letsencrypt`,
+          "certbot/certbot:latest",
+          ...args.filter((a, i, arr) => !["--config-dir", "--work-dir", "--logs-dir"].includes(arr[i - 1]) && !["--config-dir", "--work-dir", "--logs-dir"].includes(a)),
+        ],
+        { timeout: 300000 }
+      );
+    }
+    return { ok: r.code === 0, code: r.code, stdout: r.out, stderr: r.err, command: `certbot ${args.join(" ")}` };
+  }
+
+  /**
+   * Provision or renew TLS for a domain.
+   *  - Magic DNS / loopback hosts  -> internal self-signed (no public CA possible)
+   *  - Caddy provider              -> Caddy's own ACME (on-demand TLS) owns issuance
+   *  - OpenResty / external        -> Certbot standalone HTTP-01 on :49180
+   */
+  async provisionAcmeSsl(domainId, edgeProvider, opts = {}) {
     const dom = this.db.prepare("SELECT * FROM domains WHERE id=?").get(domainId);
     if (!dom) throw new Error("Domain not found");
 
@@ -278,41 +382,98 @@ export class TLSManager {
     const isMagicDns =
       hostname.endsWith(".sslip.io") ||
       hostname.endsWith(".nip.io") ||
+      hostname.endsWith(".traefik.me") ||
       hostname.endsWith(".localhost") ||
-      hostname === "localhost";
+      hostname === "localhost" ||
+      hostname === "127.0.0.1";
 
-    this.db.prepare("UPDATE domains SET ssl_status='provisioning' WHERE id=?").run(domainId);
+    this.db.prepare("UPDATE domains SET ssl_status='provisioning', challenge_type='http-01' WHERE id=?").run(domainId);
 
-    const now = Date.now();
-    const ninetyDays = now + 90 * 24 * 60 * 60 * 1000;
+    // Always have a handshake-capable certificate first.
+    const bootstrap = await this.ensureBootstrapCertificate(hostname);
 
-    let issuer = isMagicDns ? "HosteraX Internal CA (Local Dev)" : "Let's Encrypt Authority X3";
-    if (edgeProvider === "caddy" && !isMagicDns) {
-      issuer = "Let's Encrypt / ZeroSSL (Auto-Managed by Caddy)";
+    const finalize = (issuer, status, extra = {}) => {
+      const p = this.certPaths(hostname);
+      let inspect = { ok: false };
+      try {
+        if (p.hasAcme || p.hasLocal) inspect = this.inspectCertificate(fs.readFileSync(p.cert, "utf8"));
+      } catch {}
+      const expiresAt = inspect.ok ? inspect.validTo : 0;
+      this.db
+        .prepare(
+          `UPDATE domains SET ssl_status=?, ssl_issuer=?, ssl_expires_at=?, ssl_fingerprint=?, verified=? WHERE id=?`
+        )
+        .run(
+          status,
+          inspect.ok ? inspect.issuer || issuer : issuer,
+          expiresAt,
+          inspect.ok ? inspect.fingerprint256 : "",
+          status === "active" ? 1 : dom.verified ? 1 : 0,
+          domainId
+        );
+      return {
+        ok: status === "active",
+        hostname,
+        ssl_status: status,
+        issuer: inspect.ok ? inspect.issuer || issuer : issuer,
+        expiresAt,
+        daysRemaining: inspect.ok ? inspect.daysRemaining : 0,
+        fingerprint: inspect.ok ? inspect.fingerprint256 : "",
+        certPath: p.cert,
+        keyPath: p.key,
+        certSource: p.source,
+        challenge: "http-01",
+        challengePort: this.acmeHttp01Port,
+        ...extra,
+      };
+    };
+
+    if (isMagicDns) {
+      return finalize(
+        "HosteraX Internal CA (self-signed, local/loopback host)",
+        bootstrap.ok ? "active" : "failed",
+        { note: "Public CAs cannot validate loopback/Magic DNS hosts; a self-signed certificate is used." }
+      );
     }
 
-    const mockFingerprint = crypto.createHash("sha256").update(hostname + now).digest("hex").slice(0, 48);
+    if (edgeProvider === "caddy") {
+      // Caddy performs ACME itself (automatic HTTPS / on-demand TLS).
+      return finalize("Let's Encrypt / ZeroSSL (managed by Caddy Automatic HTTPS)", "active", {
+        managedBy: "caddy",
+      });
+    }
 
-    this.db
-      .prepare(
-        `UPDATE domains SET 
-        ssl_status='active', 
-        ssl_issuer=?, 
-        ssl_expires_at=?, 
-        ssl_fingerprint=?,
-        verified=1
-       WHERE id=?`
-      )
-      .run(issuer, ninetyDays, mockFingerprint, domainId);
+    const email = opts.email || "";
+    const cb = await this.runCertbot(hostname, { email, forceRenewal: Boolean(opts.forceRenewal) });
+    if (!cb.ok) {
+      const res = finalize("Bootstrap self-signed (ACME pending)", "pending", {
+        error: (cb.stderr || cb.stdout || "certbot failed").trim().split("\n").slice(-6).join("\n"),
+        command: cb.command,
+      });
+      return res;
+    }
+    return finalize("Let's Encrypt", "active", { command: cb.command });
+  }
 
-    return {
-      ok: true,
-      hostname,
-      ssl_status: "active",
-      issuer,
-      expiresAt: ninetyDays,
-      daysRemaining: 90,
-      fingerprint: mockFingerprint,
-    };
+  /**
+   * Renew every domain whose certificate expires within `withinDays`.
+   */
+  async renewExpiring(edgeProvider, withinDays = 30, email = "") {
+    const cutoff = Date.now() + withinDays * 86400000;
+    const rows = this.db
+      .prepare("SELECT id, hostname, ssl_expires_at FROM domains WHERE ssl_status IN ('active','pending')")
+      .all()
+      .filter((d) => !d.ssl_expires_at || d.ssl_expires_at < cutoff);
+
+    const results = [];
+    for (const d of rows) {
+      try {
+        results.push(await this.provisionAcmeSsl(d.id, edgeProvider, { email }));
+      } catch (e) {
+        results.push({ ok: false, hostname: d.hostname, error: e.message });
+      }
+    }
+    return { checked: rows.length, results };
   }
 }
+
