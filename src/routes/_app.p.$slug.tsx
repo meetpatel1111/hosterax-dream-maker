@@ -5,7 +5,13 @@ import { format, formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/hx/status-badge";
 import { STACKS, ENVIRONMENTS } from "@/lib/stacks";
-import { useEngine, useMagicDnsSettings, formatMagicDnsUrl } from "@/lib/engine";
+import {
+  useEngine,
+  useMagicDnsSettings,
+  formatMagicDnsUrl,
+  usePRPreviews,
+  useProjectWebhookConfig,
+} from "@/lib/engine";
 import { DeploymentDiffModal } from "@/components/hx/deployment-diff";
 import { HealthMetrics } from "@/components/hx/health-metrics";
 import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
@@ -25,6 +31,10 @@ import {
   FileCode,
   Cpu,
   ShieldCheck,
+  Webhook,
+  GitPullRequest,
+  Check,
+  Radio,
 } from "lucide-react";
 import { SelfHealingPanel } from "@/components/hx/self-healing-panel";
 
@@ -39,7 +49,15 @@ export const Route = createFileRoute("/_app/p/$slug")({
 });
 
 type Tab =
-  "overview" | "deployments" | "self-heal" | "logs" | "env" | "domains" | "databases" | "settings";
+  | "overview"
+  | "deployments"
+  | "webhooks"
+  | "self-heal"
+  | "logs"
+  | "env"
+  | "domains"
+  | "databases"
+  | "settings";
 
 function ProjectPage() {
   const { slug } = Route.useParams();
@@ -167,6 +185,7 @@ function ProjectPage() {
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
     { id: "deployments", label: "Deployments" },
+    { id: "webhooks", label: "Git & PR Previews" },
     { id: "self-heal", label: "Self-Healing & Health" },
     { id: "logs", label: "Logs" },
     { id: "env", label: "Env vars" },
@@ -268,6 +287,9 @@ function ProjectPage() {
       {tab === "overview" && <Overview project={project} />}
       {tab === "deployments" && (
         <DeploymentsTab projectId={project.id} projectName={project.name} />
+      )}
+      {tab === "webhooks" && (
+        <WebhooksTab projectName={project.name} project={project} />
       )}
       {tab === "self-heal" && <SelfHealingPanel projectName={project.name} />}
       {tab === "logs" && <LiveLogs projectName={project.name} />}
@@ -1109,6 +1131,258 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <label className="mb-1 block text-xs font-medium text-muted-foreground">{label}</label>
       {children}
+    </div>
+  );
+}
+
+function WebhooksTab({ projectName, project }: { projectName: string; project: any }) {
+  const engine = useEngine();
+  const { data: config, refetch: refetchConfig } = useProjectWebhookConfig(projectName);
+  const { data: previews = [], refetch: refetchPreviews } = usePRPreviews(projectName);
+
+  const [trackedBranch, setTrackedBranch] = useState(config?.tracked_branch || project.branch || "main");
+  const [autoDeployPush, setAutoDeployPush] = useState(config?.auto_deploy_push !== 0);
+  const [autoDeployPr, setAutoDeployPr] = useState(config?.auto_deploy_pr !== 0);
+  const [saving, setSaving] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
+  const [copiedSecret, setCopiedSecret] = useState(false);
+
+  useEffect(() => {
+    if (config) {
+      setTrackedBranch(config.tracked_branch || "main");
+      setAutoDeployPush(config.auto_deploy_push !== 0);
+      setAutoDeployPr(config.auto_deploy_pr !== 0);
+    }
+  }, [config]);
+
+  const webhookUrl = `${engine.url}/api/projects/${projectName}/webhooks/github`;
+  const webhookSecret = config?.secret || "Generating...";
+
+  async function handleSaveConfig() {
+    setSaving(true);
+    try {
+      await engine.call("POST", `/api/projects/${projectName}/webhook-config`, {
+        tracked_branch: trackedBranch,
+        auto_deploy_push: autoDeployPush ? 1 : 0,
+        auto_deploy_pr: autoDeployPr ? 1 : 0,
+      });
+      toast.success("GitHub Webhook settings saved!");
+      refetchConfig();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to save webhook settings");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDestroyPreview(prId: string, prNumber: number) {
+    if (!confirm(`Are you sure you want to tear down preview environment for PR #${prNumber}?`)) return;
+    try {
+      await engine.call("DELETE", `/api/previews/${prId}`);
+      toast.success(`Ephemeral preview for PR #${prNumber} torn down.`);
+      refetchPreviews();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to tear down preview");
+    }
+  }
+
+  function handleCopy(text: string, isSecret: boolean) {
+    navigator.clipboard.writeText(text);
+    if (isSecret) {
+      setCopiedSecret(true);
+      setTimeout(() => setCopiedSecret(false), 2000);
+    } else {
+      setCopiedUrl(true);
+      setTimeout(() => setCopiedUrl(false), 2000);
+    }
+    toast.success("Copied to clipboard!");
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* GitHub Webhook Configuration Card */}
+      <div className="rounded-xl border bg-card/60 p-6 shadow-sm space-y-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <Webhook className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold">GitHub Webhook & Push-to-Deploy</h3>
+              <p className="text-xs text-muted-foreground">
+                Automatically trigger zero-downtime builds on git push and spin up ephemeral PR previews.
+              </p>
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
+            <Radio className="w-3 h-3 animate-pulse" /> Webhook Listener Active
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+          {/* Payload URL */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Payload URL (GitHub Webhook)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                readOnly
+                value={webhookUrl}
+                className="w-full font-mono text-xs rounded-md border border-input bg-muted/40 px-3 py-2 text-foreground"
+              />
+              <button
+                onClick={() => handleCopy(webhookUrl, false)}
+                className="rounded-md border border-input bg-card p-2 hover:bg-muted"
+                title="Copy Webhook URL"
+              >
+                {copiedUrl ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+
+          {/* Webhook Secret */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Secret Token (HMAC-SHA256)</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="password"
+                readOnly
+                value={webhookSecret}
+                className="w-full font-mono text-xs rounded-md border border-input bg-muted/40 px-3 py-2 text-foreground"
+              />
+              <button
+                onClick={() => handleCopy(webhookSecret, true)}
+                className="rounded-md border border-input bg-card p-2 hover:bg-muted"
+                title="Copy Secret"
+              >
+                {copiedSecret ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Automation Toggles */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-border/40">
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Tracked Production Branch</label>
+            <input
+              type="text"
+              value={trackedBranch}
+              onChange={(e) => setTrackedBranch(e.target.value)}
+              className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs font-mono"
+              placeholder="main"
+            />
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border p-3 bg-muted/20">
+            <div>
+              <div className="text-xs font-medium">Auto-Deploy on Push</div>
+              <div className="text-[11px] text-muted-foreground">Build on git push to {trackedBranch}</div>
+            </div>
+            <input
+              type="checkbox"
+              checked={autoDeployPush}
+              onChange={(e) => setAutoDeployPush(e.target.checked)}
+              className="h-4 w-4 rounded border-border"
+            />
+          </div>
+
+          <div className="flex items-center justify-between rounded-lg border p-3 bg-muted/20">
+            <div>
+              <div className="text-xs font-medium">Ephemeral PR Previews</div>
+              <div className="text-[11px] text-muted-foreground">Auto-provision on PR open</div>
+            </div>
+            <input
+              type="checkbox"
+              checked={autoDeployPr}
+              onChange={(e) => setAutoDeployPr(e.target.checked)}
+              className="h-4 w-4 rounded border-border"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-2">
+          <button
+            onClick={handleSaveConfig}
+            disabled={saving}
+            className="rounded-md bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 shadow-sm"
+          >
+            {saving ? "Saving..." : "Save Webhook Settings"}
+          </button>
+        </div>
+      </div>
+
+      {/* Ephemeral PR Previews Card */}
+      <div className="rounded-xl border bg-card/60 shadow-sm overflow-hidden">
+        <div className="flex items-center justify-between p-5 border-b border-border/40">
+          <div className="flex items-center gap-2.5">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/10 text-sky-400">
+              <GitPullRequest className="h-5 w-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-semibold">Active Ephemeral PR Previews</h3>
+              <p className="text-xs text-muted-foreground">
+                Isolated sandbox preview environments running for open GitHub Pull Requests.
+              </p>
+            </div>
+          </div>
+          <span className="font-mono text-xs text-muted-foreground">
+            {previews.filter((p) => p.status === "live").length} Live Previews
+          </span>
+        </div>
+
+        {previews.length === 0 ? (
+          <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
+            <GitPullRequest className="mb-2 h-10 w-10 opacity-20" />
+            <p className="font-medium text-sm">No Active PR Previews</p>
+            <p className="text-xs mt-1">Open a GitHub Pull Request or send a webhook to automatically spin up an ephemeral preview environment.</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-border/40">
+            {previews.map((pr) => (
+              <div key={pr.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3 hover:bg-muted/20 transition-colors">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-primary">PR #{pr.pr_number}</span>
+                    <span className="text-sm font-semibold">{pr.pr_title}</span>
+                    {pr.status === "live" ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full">
+                        Live
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                        {pr.status}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-xs text-muted-foreground font-mono flex items-center gap-3">
+                    <span>branch: {pr.branch}</span>
+                    <span>commit: {pr.commit_sha.slice(0, 7)}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <a
+                    href={pr.preview_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary/10 border border-primary/20 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors font-mono"
+                  >
+                    <Globe className="w-3.5 h-3.5" />
+                    Open Preview <ExternalLink className="w-3 h-3 ml-0.5" />
+                  </a>
+                  <button
+                    onClick={() => handleDestroyPreview(pr.id, pr.pr_number)}
+                    className="inline-flex items-center gap-1 rounded-md border border-destructive/30 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Destroy
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

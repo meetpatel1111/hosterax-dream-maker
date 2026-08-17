@@ -65,6 +65,8 @@ before(async () => {
   child.stdout.on("data", () => {});
   child.stderr.on("data", (d) => process.stderr.write(d));
   await waitForHealth();
+  const t = await api("GET", "/api/token");
+  if (t?.token) bearer = t.token;
 });
 
 after(async () => {
@@ -253,5 +255,93 @@ test("model context protocol (MCP) JSON-RPC 2.0 server", async () => {
   });
   assert.equal(callCatalog.jsonrpc, "2.0");
   assert.ok(Array.isArray(JSON.parse(callCatalog.result.content[0].text)));
+});
+
+test("multi-node server management CRUD and connection test", async () => {
+  const list = await api("GET", "/api/servers");
+  assert.ok(Array.isArray(list));
+  const local = list.find((s) => s.id === "local");
+  assert.ok(local);
+  assert.equal(local.type, "local");
+  assert.equal(local.status, "online");
+
+  const created = await api("POST", "/api/servers", {
+    name: "Production VPS Node #1",
+    type: "remote",
+    host: "192.168.1.100",
+    port: 22,
+    username: "ubuntu",
+  });
+  assert.ok(created.id.startsWith("srv_"));
+  assert.equal(created.name, "Production VPS Node #1");
+
+  const tok = await api("GET", "/api/token");
+  const bootstrap = await fetch(`${baseUrl}/api/servers/${created.id}/bootstrap`, {
+    headers: { authorization: `Bearer ${tok.token}` },
+  }).then((r) => r.text());
+  assert.ok(bootstrap.includes("HosteraX Autonomous Node Provisioner"));
+
+  const testConn = await api("POST", `/api/servers/local/test`);
+  assert.equal(testConn.ok, true);
+
+  const del = await api("DELETE", `/api/servers/${created.id}`);
+  assert.equal(del.ok, true);
+});
+
+test("github webhooks and ephemeral pr previews lifecycle", async () => {
+  const proj = `whk-test-${Date.now()}`;
+  await api("POST", "/api/projects", { name: proj, source: "https://github.com/example/demo" });
+
+  // Webhook ping
+  const pingRes = await fetch(`${baseUrl}/api/projects/${proj}/webhooks/github`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "ping",
+    },
+    body: JSON.stringify({ zen: "Responsive is better than fast." }),
+  }).then((r) => r.json());
+  assert.equal(pingRes.ok, true);
+
+  // PR Opened event (Ephemeral Preview)
+  const prRes = await fetch(`${baseUrl}/api/projects/${proj}/webhooks/github`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "pull_request",
+    },
+    body: JSON.stringify({
+      action: "opened",
+      number: 42,
+      pull_request: {
+        title: "feat: new checkout workflow",
+        head: { ref: "feature/checkout", sha: "abc1234" },
+      },
+    }),
+  }).then((r) => r.json());
+  assert.equal(prRes.ok, true);
+  assert.equal(prRes.action, "preview_provisioned");
+  assert.equal(prRes.prNumber, 42);
+
+  // List previews
+  const previews = await api("GET", `/api/projects/${proj}/previews`);
+  assert.ok(previews.some((p) => p.pr_number === 42));
+
+  // PR Closed event (Teardown)
+  const closeRes = await fetch(`${baseUrl}/api/projects/${proj}/webhooks/github`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-github-event": "pull_request",
+    },
+    body: JSON.stringify({
+      action: "closed",
+      number: 42,
+    }),
+  }).then((r) => r.json());
+  assert.equal(closeRes.ok, true);
+  assert.equal(closeRes.action, "preview_torn_down");
+
+  await api("DELETE", `/api/projects/${proj}`);
 });
 

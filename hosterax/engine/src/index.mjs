@@ -24,6 +24,8 @@ import { EdgeManager } from "./edge-manager.mjs";
 import { BackupManager } from "./backup-manager.mjs";
 import { CronManager } from "./cron-manager.mjs";
 import { MCPServer } from "./mcp-server.mjs";
+import { ServerManager } from "./server-manager.mjs";
+import { WebhookManager } from "./webhook-manager.mjs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -690,6 +692,8 @@ const edgeManager = new EdgeManager({ db, edgeDir: EDGEDIR, tlsManager, HOME });
 const backupManager = new BackupManager({ db, HOME });
 const cronManager = new CronManager({ db, backupManager });
 cronManager.startScheduler();
+const serverManager = new ServerManager({ db, HOME });
+const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
 
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
@@ -2195,9 +2199,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/health") return json(res, 200, { ok: true, version: "0.2.0" });
-  // Rate limit: 60 req/min for auth endpoints, 120/min for others
+  // Rate limit: 120 req/min for auth endpoints, 600/min for others
   const isAuthEndpoint = url.pathname.startsWith("/api/auth") || url.pathname === "/api/token";
-  if (rateLimit(req, isAuthEndpoint ? 10 : 120)) {
+  if (rateLimit(req, isAuthEndpoint ? 120 : 600)) {
     return json(res, 429, { error: "too many requests" });
   }
   if (await catalogApi(req, res, url.pathname)) return;
@@ -2932,6 +2936,104 @@ const server = http.createServer(async (req, res) => {
         capabilities: { tools: true, resources: true, prompts: true },
         toolsCount: mcpServer.tools.length,
       });
+    }
+
+    // ────────── Multi-Node Compute Infrastructure (Servers) ──────────
+    if (url.pathname === "/api/servers" && req.method === "GET") {
+      return json(res, 200, serverManager.listServers());
+    }
+    if (url.pathname === "/api/servers" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const srv = serverManager.createServer(b);
+        return json(res, 201, srv);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)\/test$/)) && req.method === "POST") {
+      try {
+        const testRes = await serverManager.testServerConnection(m[1]);
+        return json(res, 200, testRes);
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)\/bootstrap$/)) && req.method === "GET") {
+      const script = serverManager.getBootstrapScript(m[1]);
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      return res.end(script);
+    }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)$/)) && req.method === "GET") {
+      const srv = serverManager.getServer(m[1]);
+      if (!srv) return json(res, 404, { error: "Server not found" });
+      return json(res, 200, srv);
+    }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)$/)) && req.method === "PATCH") {
+      const b = await readBody(req);
+      try {
+        const updated = serverManager.updateServer(m[1], b);
+        return json(res, 200, updated);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)$/)) && req.method === "DELETE") {
+      try {
+        const ok = serverManager.deleteServer(m[1]);
+        return json(res, 200, { ok });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // ────────── GitHub Webhooks & Ephemeral PR Previews ──────────
+    if ((url.pathname === "/api/webhooks/github" || (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhooks\/github$/))) && req.method === "POST") {
+      const projectName = m ? m[1] : null;
+      const event = req.headers["x-github-event"] || "push";
+      const sig = req.headers["x-hub-signature-256"] || "";
+      const rawText = await new Promise((resolve) => {
+        let s = "";
+        req.on("data", (c) => (s += c));
+        req.on("end", () => resolve(s));
+      });
+
+      let payload = {};
+      try {
+        payload = JSON.parse(rawText);
+      } catch {}
+
+      try {
+        const result = await webhookManager.handleGitHubWebhook({
+          event,
+          payload,
+          rawBodyText: rawText,
+          signatureHeader: sig,
+          projectName,
+        });
+        return json(res, 200, result);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook-config$/)) && req.method === "GET") {
+      const cfg = webhookManager.getProjectWebhookConfig(m[1]);
+      return json(res, 200, cfg);
+    }
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook-config$/)) && req.method === "POST") {
+      const b = await readBody(req);
+      const updated = webhookManager.updateProjectWebhookConfig(m[1], b);
+      return json(res, 200, updated);
+    }
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/previews$/)) && req.method === "GET") {
+      return json(res, 200, webhookManager.listPreviews(m[1]));
+    }
+    if (url.pathname === "/api/previews" && req.method === "GET") {
+      return json(res, 200, webhookManager.listPreviews());
+    }
+    if ((m = url.pathname.match(/^\/api\/previews\/([^/]+)$/)) && req.method === "DELETE") {
+      const ok = webhookManager.deletePreview(m[1]);
+      return json(res, 200, { ok });
     }
 
     // ────────── domains & tls ──────────

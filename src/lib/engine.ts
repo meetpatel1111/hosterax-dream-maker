@@ -506,3 +506,107 @@ export function useMCPInfo() {
   });
 }
 
+// ────────── Multi-Node Compute Infrastructure (Servers) ──────────
+export type ServerNode = {
+  id: string;
+  name: string;
+  type: "local" | "remote";
+  host?: string;
+  port: number;
+  username: string;
+  auth_type: string;
+  status: "online" | "offline" | "provisioning" | "unreachable";
+  docker_version?: string;
+  os_info?: string;
+  cpu_cores: number;
+  total_ram_mb: number;
+  cpu_usage_pct: number;
+  ram_usage_pct: number;
+  disk_usage_pct: number;
+  containers_count: number;
+  is_default: number;
+  last_ping_at?: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export function useServerNodes() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<ServerNode[]>({
+    queryKey: ["server-nodes", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<ServerNode[]>("GET", "/api/servers");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 5000,
+  });
+}
+
+// ────────── GitHub Webhooks & Ephemeral PR Previews ──────────
+export type PRPreview = {
+  id: string;
+  project_name: string;
+  pr_number: number;
+  pr_title: string;
+  branch: string;
+  commit_sha: string;
+  subdomain: string;
+  preview_url: string;
+  container_name?: string;
+  port: number;
+  status: "live" | "deploying" | "failed" | "stopped";
+  created_at: number;
+  updated_at: number;
+};
+
+export type WebhookConfig = {
+  project_name: string;
+  secret: string;
+  webhook_token: string;
+  auto_deploy_push: number;
+  auto_deploy_pr: number;
+  tracked_branch: string;
+  created_at: number;
+  updated_at: number;
+};
+
+export function usePRPreviews(projectName?: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<PRPreview[]>({
+    queryKey: ["pr-previews", eng.url, eng.token, projectName],
+    queryFn: async () => {
+      try {
+        const path = projectName ? `/api/projects/${projectName}/previews` : "/api/previews";
+        return await eng.call<PRPreview[]>("GET", path);
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 5000,
+  });
+}
+
+export function useProjectWebhookConfig(projectName?: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<WebhookConfig>({
+    queryKey: ["project-webhook-config", eng.url, eng.token, projectName],
+    queryFn: async () => {
+      if (!projectName) return null as any;
+      try {
+        return await eng.call<WebhookConfig>("GET", `/api/projects/${projectName}/webhook-config`);
+      } catch {
+        return null as any;
+      }
+    },
+    enabled: !!health.data?.ok && !!projectName,
+  });
+}
+

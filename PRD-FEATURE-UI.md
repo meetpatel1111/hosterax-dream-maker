@@ -3929,12 +3929,12 @@ Build configs include:
 | **Remote S3 / Cloudflare R2 / MinIO Backup Sync** | Phase 1 | Multi-cloud S3 streaming, storage providers DB table, automated bucket replication on snapshot completion. | ✅ Completed |
 | **Scheduled Cron Jobs Engine & UI** | Phase 1 | Native in-engine 5-field CRON runner, run history, execution logs, `/jobs` dashboard route. | ✅ Completed |
 | **Model Context Protocol (MCP) Server** | Phase 1 | JSON-RPC 2.0 endpoint (`/api/mcp`) with infrastructure tools for AI Agents (Cursor, Claude, ChatGPT). | ✅ Completed |
-| **Remote Multi-Node Server Management (SSH)** | Phase 2 | Agentless SSH connection pool, remote VPS provisioning, `/servers` management page. | ⚪ Next Up (Phase 2) |
-| **GitHub App Webhooks & Ephemeral PR Previews** | Phase 2 | Push-to-deploy webhooks, ephemeral `pr-<id>` preview subdomains, GitHub Actions status checks. | ⚪ Next Up (Phase 2) |
-| **Multi-Tenant Organizations, Teams & RBAC** | Phase 3 | Workspace/Org switcher, member invites, granular roles (`Owner`, `Admin`, `Member`, `Viewer`). | ⚪ Planned (Phase 3) |
-| **Self-Hosted Email Stack & Webmail** | Phase 3 | Postfix/Dovecot stack, SPF/DKIM/DMARC wizard, Zero Email webmail interface. | ⚪ Planned (Phase 3) |
-| **Electron 40 Native Desktop Packaging** | Phase 3 | Electron Forge builds for macOS (DMG), Windows (NSIS), Linux (AppImage) with local daemon supervision. | ⚪ Planned (Phase 3) |
-| **Localization (i18n)** | Phase 3 | 8 languages (EN, AR, DE, ES, FR, JA, PT, ZH) with RTL layout switching. | ⚪ Planned (Phase 3) |
+| **Remote Multi-Node Server Management (SSH)** | Phase 2 | Agentless SSH connection pool, remote VPS provisioning, `/servers` management page. | ✅ Completed |
+| **GitHub App Webhooks & Ephemeral PR Previews** | Phase 2 | Push-to-deploy webhooks, ephemeral `pr-<id>` preview subdomains, GitHub Actions status checks. | ✅ Completed |
+| **Multi-Tenant Organizations, Teams & RBAC** | Phase 3 | Workspace/Org switcher, member invites, granular roles (`Owner`, `Admin`, `Member`, `Viewer`). | ⚪ Next Up (Phase 3) |
+| **Self-Hosted Email Stack & Webmail** | Phase 3 | Postfix/Dovecot stack, SPF/DKIM/DMARC wizard, Zero Email webmail interface. | ⚪ Next Up (Phase 3) |
+| **Electron 40 Native Desktop Packaging** | Phase 3 | Electron Forge builds for macOS (DMG), Windows (NSIS), Linux (AppImage) with local daemon supervision. | ⚪ Next Up (Phase 3) |
+| **Localization (i18n)** | Phase 3 | 8 languages (EN, AR, DE, ES, FR, JA, PT, ZH) with RTL layout switching. | ⚪ Next Up (Phase 3) |
 
 ---
 
