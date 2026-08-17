@@ -2202,7 +2202,7 @@ const mcpServer = new MCPServer({
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
-  if (url.pathname === "/health") return json(res, 200, { ok: true, version: "0.2.0" });
+  if (url.pathname === "/health" || url.pathname === "/api/health") return json(res, 200, { ok: true, version: "0.2.0" });
   // Rate limit: 120 req/min for auth endpoints, 600/min for others
   const isAuthEndpoint = url.pathname.startsWith("/api/auth") || url.pathname === "/api/token";
   if (rateLimit(req, isAuthEndpoint ? 120 : 600)) {
