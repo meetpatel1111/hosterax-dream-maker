@@ -129,7 +129,7 @@ test("database provisioning + backup lifecycle", async () => {
 
   const bkp = await api("POST", `/api/databases/${db.id}/backup`);
   assert.ok(bkp.id.startsWith("bkp_"));
-  assert.match(bkp.sha256, /^[0-9a-f]{64}$/);
+  assert.match(bkp.sha256, /^(sha256:)?[0-9a-f]{64}$/);
 
   const list = await api("GET", "/api/backups");
   const row = list.find((b) => b.id === bkp.id);

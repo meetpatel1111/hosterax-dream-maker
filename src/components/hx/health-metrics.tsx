@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo } from "react";
 import {
   Cpu,
   MemoryStick,
@@ -6,8 +6,6 @@ import {
   HardDrive,
   ShieldCheck,
   Activity,
-  RefreshCw,
-  AlertTriangle,
   Box,
 } from "lucide-react";
 import { useEngineSystem, useProjectMetrics } from "@/lib/engine";
@@ -18,59 +16,50 @@ type HealthMetricsProps = {
   status: string;
 };
 
-export function HealthMetrics({ projectId, projectName, status }: HealthMetricsProps) {
-  const [ticks, setTicks] = useState(0);
+export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
   const sysQuery = useEngineSystem();
   const sys = sysQuery.data;
   const projectMetricsQuery = useProjectMetrics(projectName);
   const projData = projectMetricsQuery.data;
   const docker = projData?.docker;
 
-  useEffect(() => {
-    const timer = setInterval(() => setTicks((t) => t + 1), 3000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // Compute live fluctuating metrics fallback
   const metrics = useMemo(() => {
-    const seed = projectId.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    const timeFactor = Math.sin(ticks * 0.5);
-
-    // If Docker stats exist, use Docker container CPU and Memory
+    // Real CPU percent
     const cpuVal =
       docker?.cpu_percent != null
         ? Number(docker.cpu_percent)
         : sys?.cpu?.percent != null
           ? Number(sys.cpu.percent)
-          : Math.max(2, Math.min(95, 12 + Math.sin(seed + ticks) * 18 + timeFactor * 5));
+          : 0;
 
+    // Real Memory percent
     const memVal =
       docker?.memory_percent != null
         ? Number(docker.memory_percent)
         : sys?.memory?.percent != null
           ? parseFloat(String(sys.memory.percent))
-          : Math.max(10, Math.min(92, 45 + Math.cos(seed + ticks * 0.3) * 15));
+          : 0;
 
-    const diskVal =
-      sys?.disk?.percent != null ? Number(sys.disk.percent) : Math.max(15, 22 + (seed % 10));
+    // Real Storage percent
+    const diskVal = sys?.disk?.percent != null ? Number(sys.disk.percent) : 0;
 
+    // Real Host Uptime
+    const uptimeSecs = sys?.os?.uptime ?? sys?.uptime_seconds;
     const uptimeStr =
-      sys?.uptime_seconds != null
-        ? `${Math.floor(sys.uptime_seconds / 3600)}h ${Math.floor((sys.uptime_seconds % 3600) / 60)}m`
-        : status === "failed"
-          ? "98.40%"
-          : "99.98%";
+      uptimeSecs != null
+        ? `${Math.floor(uptimeSecs / 3600)}h ${Math.floor((uptimeSecs % 3600) / 60)}m`
+        : status === "running"
+          ? "Live"
+          : "Stopped";
 
     return {
       cpu: cpuVal,
       mem: memVal,
-      net: Math.max(0.2, 2.4 + Math.sin(ticks * 0.7) * 1.8).toFixed(2),
+      net: docker?.network_io || "Active",
       disk: diskVal,
       uptime: uptimeStr,
-      latency: Math.floor(24 + Math.sin(ticks * 0.8) * 12),
-      requestsPerMin: Math.floor(340 + Math.cos(ticks) * 90),
     };
-  }, [projectId, ticks, status, sys, docker]);
+  }, [status, sys, docker]);
 
   return (
     <div className="space-y-6">
@@ -85,7 +74,7 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
                 {docker.name}
               </code>
             </span>
-            <span className="text-muted-foreground">({docker.container_id.slice(0, 12)})</span>
+            <span className="text-muted-foreground">({docker.container_id?.slice(0, 12)})</span>
           </div>
           <div className="flex items-center gap-4 text-muted-foreground font-mono text-[11px]">
             <span>
@@ -108,10 +97,10 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <Cpu className="h-4 w-4 text-primary" />{" "}
-              {docker ? "Container CPU" : "CPU Utilization"}
+              {docker ? "Container CPU" : "Host CPU Load"}
             </span>
             <span className="font-mono text-xs text-primary font-semibold">
-              {metrics.cpu.toFixed(2)}%
+              {metrics.cpu.toFixed(1)}%
             </span>
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface-2">
@@ -125,13 +114,13 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
             <span>
               {docker
-                ? `Container: ${docker.pids} PIDs`
+                ? `${docker.pids} active threads`
                 : sys?.cpu?.cores
                   ? `${sys.cpu.cores} Physical Cores`
-                  : "Allocated: 2.0 vCPU"}
+                  : "--"}
             </span>
             <span className="truncate max-w-[120px]">
-              {sys?.cpu?.model ? sys.cpu.model.split(" ")[0] : "Peak: 4.0 vCPU"}
+              {sys?.cpu?.model ? sys.cpu.model.split(" ")[0] : "Physical CPU"}
             </span>
           </div>
         </div>
@@ -141,10 +130,10 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <MemoryStick className="h-4 w-4 text-primary" />{" "}
-              {docker ? "Container Memory" : "Memory Usage"}
+              {docker ? "Container RAM" : "Host Memory"}
             </span>
             <span className="font-mono text-xs text-primary font-semibold">
-              {metrics.mem.toFixed(2)}%
+              {metrics.mem.toFixed(1)}%
             </span>
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface-2">
@@ -155,50 +144,21 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
               style={{ width: `${Math.min(100, Math.max(2, metrics.mem))}%` }}
             />
           </div>
-          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
-            <span>
-              {docker?.memory_usage
-                ? docker.memory_usage
-                : sys?.memory
-                  ? `${(sys.memory.used_mb / 1024).toFixed(1)} GB / ${(sys.memory.total_mb / 1024).toFixed(1)} GB`
-                  : "512 MB / 1024 MB"}
-            </span>
-            <span>
-              {docker
-                ? "Isolated"
-                : sys?.memory
-                  ? `${((sys.memory.total_mb - sys.memory.used_mb) / 1024).toFixed(1)} GB Free`
-                  : "Heap: 380 MB"}
-            </span>
-          </div>
-        </div>
-
-        {/* Network */}
-        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
-          <div className="flex items-center justify-between">
-            <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <Network className="h-4 w-4 text-primary" />{" "}
-              {docker ? "Container Net I/O" : "Network Throughput"}
-            </span>
-            <span className="font-mono text-xs text-primary font-semibold">
-              {docker?.network_io ? docker.network_io : `${metrics.net} MB/s`}
-            </span>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-xl font-bold tracking-tight text-foreground font-mono">
-              {docker?.block_io ? `IO: ${docker.block_io}` : metrics.requestsPerMin}
-            </span>
-            <span className="text-xs text-muted-foreground">
-              {docker ? "Disk Block I/O" : "req / min"}
-            </span>
-          </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>Avg Latency: {metrics.latency}ms</span>
-            <span className="text-success font-medium">99.9% 2xx</span>
+            <span>
+              {sys?.memory?.used_mb != null
+                ? `${(sys.memory.used_mb / 1024).toFixed(1)} GB Used`
+                : "--"}
+            </span>
+            <span>
+              {sys?.memory?.total_mb != null
+                ? `${(sys.memory.total_mb / 1024).toFixed(1)} GB Total`
+                : "--"}
+            </span>
           </div>
         </div>
 
-        {/* Disk */}
+        {/* Storage */}
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
@@ -210,31 +170,47 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface-2">
             <div
-              className="h-full bg-primary transition-all duration-700"
-              style={{ width: `${Math.min(100, metrics.disk)}%` }}
+              className={`h-full transition-all duration-700 ${
+                metrics.disk > 90 ? "bg-destructive" : metrics.disk > 75 ? "bg-warning" : "bg-primary"
+              }`}
+              style={{ width: `${Math.min(100, Math.max(2, metrics.disk))}%` }}
             />
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
             <span>
-              {sys?.disk?.total_gb
-                ? `${sys.disk.used_gb} GB / ${sys.disk.total_gb} GB`
-                : "4.2 GB / 20 GB"}
+              {sys?.disk?.used_gb != null ? `${sys.disk.used_gb} GB Used` : "--"}
             </span>
-            <span
-              className={
-                metrics.disk > 90 ? "text-warning font-medium" : "text-success font-medium"
-              }
-            >
-              {metrics.disk > 90 ? "High Usage" : "Healthy"}
+            <span>
+              {sys?.disk?.total_gb != null ? `${sys.disk.total_gb} GB Total` : "--"}
             </span>
+          </div>
+        </div>
+
+        {/* Network & Node */}
+        <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <Network className="h-4 w-4 text-primary" /> Network & Sockets
+            </span>
+            <span className="font-mono text-xs text-emerald-400 font-semibold flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
+              Online
+            </span>
+          </div>
+          <div className="mt-3 font-mono text-lg font-bold text-foreground">
+            {docker?.network_io || (sys?.docker?.running ? "Docker Bridge" : "Native Loop")}
+          </div>
+          <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>Platform: {sys?.os?.platform || "Linux / Windows"}</span>
+            <span>Uptime: {metrics.uptime}</span>
           </div>
         </div>
       </div>
 
-      {/* System Status Banner */}
-      <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-surface/60 p-5">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-success/15 text-success">
+      {/* Real Node Telemetry Status Banner */}
+      <div className="flex flex-col gap-4 rounded-xl border border-border bg-surface-1 p-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-success/10 text-success">
             <ShieldCheck className="h-5 w-5" />
           </div>
           <div>
@@ -243,17 +219,17 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
                 {docker
                   ? `Docker Container · ${docker.name}`
                   : sys
-                    ? "System Status · Running Live"
-                    : "Simulated Preview · Engine Offline"}
+                    ? "System Status · Running Live Telemetry"
+                    : "Connecting to Engine..."}
               </span>
               <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
             </div>
             <p className="text-xs text-muted-foreground">
               {docker
-                ? `Running in isolated container environment on node '${sys?.hostname || "Local"}'.`
-                : sys?.hostname
-                  ? `Host node '${sys.hostname}' (${sys.platform}) reporting live metrics.`
-                  : "No engine connection — displaying simulated demo metrics. Start the engine (localhost:7777) for live data."}
+                ? `Running in isolated container environment on node '${sys?.os?.platform || "Host"}'.`
+                : sys
+                  ? `Host kernel reporting physical telemetry across ${sys.cpu?.cores || 1} cores.`
+                  : "Connecting to HosteraX daemon (localhost:7777) for live telemetry."}
             </p>
           </div>
         </div>
@@ -269,9 +245,11 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
           </div>
           <div>
             <div className="text-[10px] uppercase font-mono text-muted-foreground/70">
-              Edge Region
+              Active Containers
             </div>
-            <div className="mt-0.5 font-medium text-foreground">Local (127.0.0.1:7777)</div>
+            <div className="mt-0.5 font-mono text-sm font-semibold text-foreground">
+              {sys?.docker?.containers_count ?? (docker ? 1 : 0)}
+            </div>
           </div>
         </div>
       </div>

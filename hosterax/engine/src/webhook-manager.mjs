@@ -195,7 +195,7 @@ export class WebhookManager {
     const cleanProject = project.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
     const containerName = `hx_pr_${prNumber}_${cleanProject}`;
     const subdomain = `pr-${prNumber}-${project.name}`;
-    const port = 3000 + (prNumber % 1000) + Math.floor(Math.random() * 500);
+    const port = 4000 + (Number(prNumber) % 5000);
     const previewUrl = `http://${subdomain}.127-0-0-1.sslip.io`;
     const now = Date.now();
 

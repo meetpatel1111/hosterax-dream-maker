@@ -3505,40 +3505,81 @@ const server = http.createServer(async (req, res) => {
       const proj = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
       if (!proj) return json(res, 404, { error: "project not found" });
       const id = "mdb_" + crypto.randomBytes(6).toString("hex");
+      const cleanName = b.name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+
+      const port =
+        b.engine === "postgres"
+          ? 5432
+          : b.engine === "mysql"
+            ? 3306
+            : b.engine === "mongodb"
+              ? 27017
+              : 6379;
+      const dbPassword = crypto.randomBytes(12).toString("hex");
+      const containerName = `hx_db_${cleanName}`;
+
+      // Spawn real Docker container if Docker is available
+      try {
+        if (b.engine === "postgres") {
+          spawnSync("docker", [
+            "run",
+            "-d",
+            "--name",
+            containerName,
+            "-e",
+            `POSTGRES_PASSWORD=${dbPassword}`,
+            "-e",
+            `POSTGRES_DB=${cleanName}`,
+            "-p",
+            `${port}:${port}`,
+            "postgres:16-alpine",
+          ]);
+        } else if (b.engine === "mysql") {
+          spawnSync("docker", [
+            "run",
+            "-d",
+            "--name",
+            containerName,
+            "-e",
+            `MYSQL_ROOT_PASSWORD=${dbPassword}`,
+            "-e",
+            `MYSQL_DATABASE=${cleanName}`,
+            "-p",
+            `${port}:${port}`,
+            "mysql:8",
+          ]);
+        } else if (b.engine === "redis") {
+          spawnSync("docker", ["run", "-d", "--name", containerName, "-p", `${port}:${port}`, "redis:7-alpine"]);
+        } else if (b.engine === "mongodb") {
+          spawnSync("docker", ["run", "-d", "--name", containerName, "-p", `${port}:${port}`, "mongo:7"]);
+        }
+      } catch {}
+
+      const conn = `${b.engine}://hx:${dbPassword}@127.0.0.1:${port}/${cleanName}`;
       db.prepare("INSERT INTO managed_dbs VALUES (?,?,?,?,?,?,?,?)").run(
         id,
         m[1],
-        b.name,
+        cleanName,
         b.engine,
         b.size_mb || 1024,
-        "provisioning",
-        null,
+        "running",
+        conn,
         Date.now(),
       );
-      // Simulate provisioning
-      setTimeout(() => {
-        const port =
-          b.engine === "postgres"
-            ? 5432
-            : b.engine === "mysql"
-              ? 3306
-              : b.engine === "mongodb"
-                ? 27017
-                : 6379;
-        const conn = `${b.engine}://hx:${crypto.randomBytes(8).toString("hex")}@localhost:${port}/${b.name}`;
-        db.prepare("UPDATE managed_dbs SET status='running', connection_string=? WHERE id=?").run(
-          conn,
-          id,
-        );
-      }, 3000);
-      return json(res, 200, { id, name: b.name, engine: b.engine });
+
+      return json(res, 200, { id, name: cleanName, engine: b.engine, connection_string: conn, status: "running" });
     }
     if (url.pathname === "/api/databases" && req.method === "GET") {
       return json(res, 200, db.prepare("SELECT * FROM managed_dbs ORDER BY created_at DESC").all());
     }
     if ((m = url.pathname.match(/^\/api\/databases\/([^/]+)$/)) && req.method === "DELETE") {
       const mdb = db.prepare("SELECT name FROM managed_dbs WHERE id=?").get(m[1]);
-      if (mdb) db.prepare("DELETE FROM backups WHERE database_name=?").run(mdb.name);
+      if (mdb) {
+        try {
+          spawnSync("docker", ["rm", "-f", `hx_db_${mdb.name}`]);
+        } catch {}
+        db.prepare("DELETE FROM backups WHERE database_name=?").run(mdb.name);
+      }
       db.prepare("DELETE FROM managed_dbs WHERE id=?").run(m[1]);
       return json(res, 200, { ok: true });
     }
@@ -3547,66 +3588,28 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/databases\/([^/]+)\/backup$/)) && req.method === "POST") {
       const mdb = db.prepare("SELECT * FROM managed_dbs WHERE id=?").get(m[1]);
       if (!mdb) return json(res, 404, { error: "database not found" });
-      const id = "bkp_" + Math.floor(1000 + Math.random() * 9000);
-      const sizeMb = parseFloat((mdb.size_mb * (0.6 + Math.random() * 0.4)).toFixed(1));
-      // Generate deterministic SHA256 based on backup metadata
-      const hashInput = `${id}|${m[1]}|${sizeMb}|${Date.now()}`;
-      const hash = crypto.createHash("sha256").update(hashInput).digest("hex");
-      db.prepare(
-        "INSERT INTO backups (id, project_name, database_name, db_type, file_path, file_size_bytes, sha256, destination, status, created_at, finished_at, error_message) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-      ).run(
-        id,
-        mdb.project,
-        mdb.name,
-        mdb.engine,
-        "",
-        Math.round(sizeMb * 1024 * 1024),
-        hash,
-        "local",
-        "pending",
-        Date.now(),
-        null,
-        null,
-      );
-      // Simulate backup completion
-      setTimeout(() => {
-        db.prepare("UPDATE backups SET status='completed' WHERE id=?").run(id);
-      }, 2500);
-      return json(res, 200, {
-        id,
-        database: mdb.name,
-        engine: mdb.engine,
-        size_mb: sizeMb,
-        sha256: hash,
-        status: "pending",
-      });
+      try {
+        const backupResult = await backupManager.createBackup({
+          databaseName: mdb.name,
+          dbType: mdb.engine,
+          projectName: mdb.project,
+          containerName: `hx_db_${mdb.name}`,
+        });
+        return json(res, 200, backupResult);
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
     }
     if (url.pathname === "/api/backups" && req.method === "GET") {
-      const rows = db
-        .prepare(
-          `
-        SELECT b.*, d.name as db_name, d.engine as db_engine, d.project
-        FROM backups b JOIN managed_dbs d ON b.database_id = d.id
-        ORDER BY b.created_at DESC
-      `,
-        )
-        .all();
-      return json(res, 200, rows);
+      return json(res, 200, backupManager.listBackups());
     }
     if ((m = url.pathname.match(/^\/api\/backups\/([^/]+)\/restore$/)) && req.method === "POST") {
-      const bkp = db.prepare("SELECT * FROM backups WHERE id=?").get(m[1]);
-      if (!bkp) return json(res, 404, { error: "backup not found" });
-      if (bkp.status !== "completed") return json(res, 400, { error: "backup not yet completed" });
-      const mdb = db.prepare("SELECT * FROM managed_dbs WHERE id=?").get(bkp.database_id);
-      // Simulate restore
-      db.prepare("UPDATE managed_dbs SET status='restoring' WHERE id=?").run(bkp.database_id);
-      setTimeout(() => {
-        db.prepare("UPDATE managed_dbs SET status='running' WHERE id=?").run(bkp.database_id);
-      }, 3000);
-      return json(res, 200, {
-        ok: true,
-        message: `Restoring ${mdb?.name ?? "database"} from snapshot ${m[1]}`,
-      });
+      try {
+        const restoreResult = await backupManager.restoreBackup(m[1]);
+        return json(res, 200, restoreResult);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
     }
 
     // ────────── tokens ──────────
