@@ -3271,7 +3271,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/email/send" && req.method === "POST") {
       const b = await readBody(req);
       try {
-        const msg = emailManager.sendMessage(b);
+        const msg = await emailManager.sendMessage(b);
         return json(res, 201, msg);
       } catch (err) {
         return json(res, 400, { error: err.message });

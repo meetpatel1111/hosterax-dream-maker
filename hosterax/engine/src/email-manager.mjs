@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import dns from "node:dns";
 import net from "node:net";
 import tls from "node:tls";
+import nodemailer from "nodemailer";
 
 export class EmailManager {
   constructor({ db, HOME }) {
@@ -461,7 +462,7 @@ export class EmailManager {
       .all(mailboxId, folder);
   }
 
-  sendMessage({ mailbox_id, to, subject, body_text, body_html }) {
+  async sendMessage({ mailbox_id, to, subject, body_text, body_html }) {
     const mbox = this.db.prepare("SELECT * FROM mailboxes WHERE id=?").get(mailbox_id);
     if (!mbox) throw new Error("Mailbox not found.");
 
@@ -486,6 +487,46 @@ export class EmailManager {
         now
       );
 
+    // Check if there is an active SMTP relay configured to transmit this to the internet (e.g. Gmail / Outlook / Yahoo)
+    let relayInfo = null;
+    const defaultRelay =
+      this.db.prepare("SELECT * FROM email_smtp_relays WHERE is_default=1 LIMIT 1").get() ||
+      this.db.prepare("SELECT * FROM email_smtp_relays ORDER BY created_at DESC LIMIT 1").get();
+
+    if (defaultRelay && defaultRelay.host && defaultRelay.password) {
+      try {
+        const transporter = nodemailer.createTransport({
+          host: defaultRelay.host,
+          port: Number(defaultRelay.port),
+          secure: Number(defaultRelay.port) === 465,
+          auth: {
+            user: defaultRelay.username || defaultRelay.from_email || mbox.email,
+            pass: defaultRelay.password,
+          },
+        });
+
+        const sendResult = await transporter.sendMail({
+          from: defaultRelay.from_email || mbox.email,
+          to: to.trim().toLowerCase(),
+          subject: subject.trim(),
+          text: body_text || "",
+          html: body_html || `<p>${body_text || ""}</p>`,
+        });
+
+        relayInfo = {
+          sent_via_relay: true,
+          provider: defaultRelay.provider,
+          message_id: sendResult.messageId,
+          relay_name: defaultRelay.name,
+        };
+      } catch (relayErr) {
+        relayInfo = {
+          sent_via_relay: false,
+          error: `SMTP Relay delivery failed: ${relayErr.message}`,
+        };
+      }
+    }
+
     // If destination matches any local alias with webhook, trigger webhook in background
     const alias = this.db.prepare("SELECT * FROM email_aliases WHERE source_email=? AND is_active=1").get(to.trim().toLowerCase());
     if (alias && alias.destination_type === "webhook" && alias.destination_target.startsWith("http")) {
@@ -503,7 +544,15 @@ export class EmailManager {
       }).catch(() => {});
     }
 
-    return this.db.prepare("SELECT * FROM email_messages WHERE id=?").get(id);
+    const msg = this.db.prepare("SELECT * FROM email_messages WHERE id=?").get(id);
+    return {
+      ...msg,
+      delivery_report: relayInfo || {
+        sent_via_relay: false,
+        notice:
+          "Saved to local mailbox. Connect an Outbound SMTP Relay (Resend, SES, Postmark, SendGrid) to deliver directly to personal inboxes like Gmail / Outlook.",
+      },
+    };
   }
 
   markMessageRead(id, isRead = 1) {
