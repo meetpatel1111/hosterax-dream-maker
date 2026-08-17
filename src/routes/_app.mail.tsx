@@ -241,13 +241,21 @@ function MailboxesPage() {
     if (!activeMailbox || !composeTo.trim() || !composeSubject.trim()) return;
     setSending(true);
     try {
-      await engine.call("POST", "/api/email/send", {
+      const res: any = await engine.call("POST", "/api/email/send", {
         mailbox_id: activeMailbox.id,
         to: composeTo.trim(),
         subject: composeSubject.trim(),
         body_text: composeBody,
       });
-      toast.success("Email sent successfully!");
+
+      if (res?.delivery_report?.sent_via_relay) {
+        toast.success(`Delivered to ${composeTo.trim()} via ${res.delivery_report.provider || "SMTP Relay"}!`);
+      } else if (res?.delivery_report?.error) {
+        toast.error(`Relay Error: ${res.delivery_report.error}`);
+      } else {
+        toast.info(res?.delivery_report?.notice || "Email saved to local sent folder.");
+      }
+
       setComposeTo("");
       setComposeSubject("");
       setComposeBody("");

@@ -436,6 +436,31 @@ export class EmailManager {
   }
 
   async testSmtpRelay(relayConfig) {
+    if (relayConfig.password) {
+      return new Promise((resolve) => {
+        const transporter = nodemailer.createTransport({
+          host: relayConfig.host,
+          port: Number(relayConfig.port),
+          secure: Number(relayConfig.port) === 465,
+          auth: {
+            user: relayConfig.username || "resend",
+            pass: relayConfig.password,
+          },
+        });
+
+        transporter.verify((err) => {
+          if (err) {
+            resolve({ ok: false, error: `Authentication failed: ${err.message}` });
+          } else {
+            resolve({
+              ok: true,
+              message: `Authenticated successfully with ${relayConfig.provider || "SMTP"} server (${relayConfig.host}:${relayConfig.port})!`,
+            });
+          }
+        });
+      });
+    }
+
     return new Promise((resolve) => {
       const socket = net.createConnection({ host: relayConfig.host, port: Number(relayConfig.port), timeout: 5000 });
 
