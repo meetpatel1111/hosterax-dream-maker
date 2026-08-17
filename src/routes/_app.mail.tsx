@@ -76,6 +76,8 @@ function MailboxesPage() {
   const [sending, setSending] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
+  const [verifyingDns, setVerifyingDns] = useState(false);
+
   async function handleAddDomain() {
     if (!newDomainName.trim()) return;
     try {
@@ -86,6 +88,20 @@ function MailboxesPage() {
       refetchDomains();
     } catch (e: any) {
       toast.error(e.message || "Failed to add email domain");
+    }
+  }
+
+  async function handleVerifyLiveDns() {
+    if (!activeDomain) return;
+    setVerifyingDns(true);
+    try {
+      const res: any = await engine.call("POST", `/api/email/domains/${activeDomain.id}/verify-dns`);
+      toast.success(`Live DNS verified! SPF: ${res.spf_status}, DKIM: ${res.dkim_status}, DMARC: ${res.dmarc_status}, MX: ${res.mx_status}`);
+      refetchDomains();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to verify live DNS");
+    } finally {
+      setVerifyingDns(false);
     }
   }
 
@@ -192,19 +208,31 @@ function MailboxesPage() {
               </div>
             </div>
 
-            {domains.length > 1 && (
-              <select
-                value={activeDomain.id}
-                onChange={(e) => setSelectedDomainId(e.target.value)}
-                className="h-9 rounded-md border border-input bg-background px-3 text-xs"
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 text-xs"
+                disabled={verifyingDns}
+                onClick={handleVerifyLiveDns}
               >
-                {domains.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.domain}
-                  </option>
-                ))}
-              </select>
-            )}
+                <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${verifyingDns ? "animate-spin" : ""}`} />
+                {verifyingDns ? "Resolving DNS..." : "Verify Live DNS"}
+              </Button>
+              {domains.length > 1 && (
+                <select
+                  value={activeDomain.id}
+                  onChange={(e) => setSelectedDomainId(e.target.value)}
+                  className="h-9 rounded-md border border-input bg-background px-3 text-xs"
+                >
+                  {domains.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.domain}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
           </div>
 
           {/* DNS Records Grid */}
@@ -213,9 +241,15 @@ function MailboxesPage() {
               <div key={i} className="rounded-lg border bg-muted/20 p-3 space-y-2 text-xs">
                 <div className="flex items-center justify-between">
                   <span className="font-mono font-bold text-primary">{record.type} Record</span>
-                  <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-1.5 py-0.5 rounded">
-                    <CheckCircle2 className="w-2.5 h-2.5" /> Valid
-                  </span>
+                  {record.status === "verified" ? (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400 font-medium bg-emerald-500/10 px-1.5 py-0.5 rounded">
+                      <CheckCircle2 className="w-2.5 h-2.5" /> Valid
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 text-[10px] text-amber-400 font-medium bg-amber-500/10 px-1.5 py-0.5 rounded">
+                      <AlertCircle className="w-2.5 h-2.5" /> {record.status}
+                    </span>
+                  )}
                 </div>
                 <div className="text-muted-foreground text-[11px]">{record.purpose}</div>
                 <div className="flex items-center justify-between bg-background/60 p-1.5 rounded font-mono text-[11px] overflow-hidden">
