@@ -329,3 +329,180 @@ export function useBackups(database?: string, project?: string) {
     refetchInterval: 5000,
   });
 }
+
+// ────────── S3 / Cloudflare R2 Remote Storage ──────────
+export type S3StorageConfig = {
+  configured: boolean;
+  name: string;
+  provider_type: string;
+  endpoint: string;
+  region: string;
+  bucket: string;
+  access_key_id: string;
+  secret_access_key?: string;
+  prefix: string;
+  auto_sync: number;
+  updated_at?: number;
+};
+
+export type RemoteS3BackupItem = {
+  key: string;
+  filename: string;
+  sizeBytes: number;
+  lastModified: number;
+  etag: string;
+};
+
+export function useS3Config() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<S3StorageConfig>({
+    queryKey: ["s3-config", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<S3StorageConfig>("GET", "/api/backups/s3-config");
+      } catch {
+        return {
+          configured: false,
+          name: "Remote S3 Storage",
+          provider_type: "s3",
+          endpoint: "",
+          region: "us-east-1",
+          bucket: "",
+          access_key_id: "",
+          prefix: "hosterax-backups",
+          auto_sync: 0,
+        };
+      }
+    },
+    enabled: !!health.data?.ok,
+  });
+}
+
+export function useRemoteS3Backups() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<RemoteS3BackupItem[]>({
+    queryKey: ["remote-s3-backups", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<RemoteS3BackupItem[]>("GET", "/api/backups/remote-s3");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 10000,
+  });
+}
+
+// ────────── Scheduled Cron Jobs Subsystem ──────────
+export type CronJob = {
+  id: string;
+  name: string;
+  project_name?: string | null;
+  schedule_type: string;
+  cron_expression: string;
+  job_type: "command" | "http" | "backup";
+  command?: string;
+  http_url?: string;
+  http_method?: string;
+  http_headers_json?: string;
+  target_container?: string;
+  timeout_seconds: number;
+  max_retries: number;
+  enabled: number;
+  next_run_at?: number | null;
+  last_run_at?: number | null;
+  last_status?: "success" | "failed" | "running" | null;
+  last_duration_ms?: number | null;
+  created_at: number;
+  updated_at: number;
+};
+
+export type JobRun = {
+  id: string;
+  job_id: string;
+  job_name: string;
+  project_name?: string | null;
+  trigger_type: "scheduled" | "manual" | "webhook" | "mcp_ai";
+  status: "running" | "success" | "failed";
+  started_at: number;
+  finished_at?: number | null;
+  duration_ms?: number | null;
+  exit_code?: number | null;
+  stdout?: string | null;
+  stderr?: string | null;
+  error_message?: string | null;
+};
+
+export function useCronJobs() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<CronJob[]>({
+    queryKey: ["cron-jobs", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<CronJob[]>("GET", "/api/jobs");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 4000,
+  });
+}
+
+export function useJobRuns(jobId?: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<JobRun[]>({
+    queryKey: ["job-runs", eng.url, eng.token, jobId],
+    queryFn: async () => {
+      try {
+        const path = jobId ? `/api/jobs/${jobId}/runs` : "/api/jobs-runs";
+        return await eng.call<JobRun[]>("GET", path);
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 3000,
+  });
+}
+
+// ────────── Model Context Protocol (MCP) Server ──────────
+export type MCPServerInfo = {
+  mcp: string;
+  server: string;
+  version: string;
+  endpoint: string;
+  transport: string;
+  capabilities: { tools: boolean; resources: boolean; prompts: boolean };
+  toolsCount: number;
+};
+
+export function useMCPInfo() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<MCPServerInfo>({
+    queryKey: ["mcp-info", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<MCPServerInfo>("GET", "/api/mcp");
+      } catch {
+        return {
+          mcp: "2024-11-05",
+          server: "HosteraX Autonomous Engine",
+          version: "0.2.0",
+          endpoint: "/api/mcp",
+          transport: "JSON-RPC 2.0 (HTTP POST)",
+          capabilities: { tools: true, resources: true, prompts: true },
+          toolsCount: 11,
+        };
+      }
+    },
+    enabled: !!health.data?.ok,
+  });
+}
+

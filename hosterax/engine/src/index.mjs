@@ -22,6 +22,11 @@ import { pullWithUniversalHealing } from "./image-resolver.mjs";
 import { TLSManager } from "./tls-manager.mjs";
 import { EdgeManager } from "./edge-manager.mjs";
 import { BackupManager } from "./backup-manager.mjs";
+import { CronManager } from "./cron-manager.mjs";
+import { MCPServer } from "./mcp-server.mjs";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const HOME = process.env.HOSTERAX_HOME
   ? path.resolve(process.env.HOSTERAX_HOME)
@@ -680,10 +685,11 @@ export function allocateProjectPort(projectName, preferredPort = null) {
   }
 }
 
-// ---------- edge routing (applied AFTER the app is live) ----------
 const tlsManager = new TLSManager(db, EDGEDIR);
-const edgeManager = new EdgeManager(db, HOME, tlsManager);
+const edgeManager = new EdgeManager({ db, edgeDir: EDGEDIR, tlsManager, HOME });
 const backupManager = new BackupManager({ db, HOME });
+const cronManager = new CronManager({ db, backupManager });
+cronManager.startScheduler();
 
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
@@ -2168,6 +2174,23 @@ const selfHeal = new SelfHealEngine({
   HOME,
 });
 
+let catalogAppsList = [];
+try {
+  const dbJson = path.join(__dirname, "awesome-selfhosted-db.json");
+  if (fs.existsSync(dbJson)) {
+    catalogAppsList = JSON.parse(fs.readFileSync(dbJson, "utf8")).apps || [];
+  }
+} catch {}
+
+const mcpServer = new MCPServer({
+  db,
+  backupManager,
+  cronManager,
+  selfHeal,
+  projectsApi,
+  catalogApps: catalogAppsList,
+});
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
@@ -2799,6 +2822,37 @@ const server = http.createServer(async (req, res) => {
       const readStream = fs.createReadStream(bkp.file_path);
       return readStream.pipe(res);
     }
+    if (url.pathname === "/api/backups/s3-config" && req.method === "GET") {
+      return json(res, 200, backupManager.getS3Config());
+    }
+    if (url.pathname === "/api/backups/s3-config" && req.method === "POST") {
+      const b = await readBody(req);
+      const updated = backupManager.saveS3Config(b);
+      return json(res, 200, { ok: true, config: updated });
+    }
+    if (url.pathname === "/api/backups/s3-test" && req.method === "POST") {
+      const b = await readBody(req);
+      const testRes = await backupManager.testS3Connection(b?.bucket ? b : null);
+      return json(res, 200, testRes);
+    }
+    if (url.pathname === "/api/backups/remote-s3" && req.method === "GET") {
+      const list = await backupManager.listRemoteS3Backups();
+      return json(res, 200, list);
+    }
+    if (url.pathname === "/api/backups/remote-s3" && req.method === "DELETE") {
+      const s3Key = url.searchParams.get("key");
+      if (!s3Key) return json(res, 400, { error: "key required" });
+      const ok = await backupManager.deleteRemoteS3Backup(s3Key);
+      return json(res, 200, { ok });
+    }
+    if ((m = url.pathname.match(/^\/api\/backups\/([^/]+)\/sync-s3$/)) && req.method === "POST") {
+      try {
+        const syncRes = await backupManager.syncBackupToS3(m[1]);
+        return json(res, 200, syncRes);
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
+    }
     if ((m = url.pathname.match(/^\/api\/backups\/([^/]+)$/)) && req.method === "GET") {
       const bkp = backupManager.getBackup(m[1]);
       if (!bkp) return json(res, 404, { error: "Backup not found" });
@@ -2807,6 +2861,77 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/backups\/([^/]+)$/)) && req.method === "DELETE") {
       const result = backupManager.deleteBackup(m[1]);
       return json(res, 200, result);
+    }
+
+    // ────────── Scheduled Cron Jobs Subsystem ──────────
+    if (url.pathname === "/api/jobs" && req.method === "GET") {
+      return json(res, 200, cronManager.listJobs());
+    }
+    if (url.pathname === "/api/jobs" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const job = cronManager.createJob(b);
+        return json(res, 201, job);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)) && req.method === "GET") {
+      const job = cronManager.getJob(m[1]);
+      if (!job) return json(res, 404, { error: "Job not found" });
+      return json(res, 200, job);
+    }
+    if ((m = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)) && req.method === "PATCH") {
+      const b = await readBody(req);
+      try {
+        const updated = cronManager.updateJob(m[1], b);
+        return json(res, 200, updated);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/jobs\/([^/]+)$/)) && req.method === "DELETE") {
+      const ok = cronManager.deleteJob(m[1]);
+      return json(res, 200, { ok });
+    }
+    if ((m = url.pathname.match(/^\/api\/jobs\/([^/]+)\/run$/)) && req.method === "POST") {
+      try {
+        const runRes = await cronManager.executeJob(m[1], "manual");
+        return json(res, 200, runRes);
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/jobs\/([^/]+)\/runs$/)) && req.method === "GET") {
+      const limit = Number(url.searchParams.get("limit") || 50);
+      return json(res, 200, cronManager.listJobRuns(m[1], limit));
+    }
+    if (url.pathname === "/api/jobs-runs" && req.method === "GET") {
+      const limit = Number(url.searchParams.get("limit") || 50);
+      return json(res, 200, cronManager.listJobRuns(null, limit));
+    }
+    if ((m = url.pathname.match(/^\/api\/jobs\/runs\/([^/]+)$/)) && req.method === "GET") {
+      const run = cronManager.getJobRun(m[1]);
+      if (!run) return json(res, 404, { error: "Run record not found" });
+      return json(res, 200, run);
+    }
+
+    // ────────── Model Context Protocol (MCP) for AI Agents ──────────
+    if ((url.pathname === "/api/mcp" || url.pathname === "/mcp") && req.method === "POST") {
+      const b = await readBody(req);
+      const rpcRes = await mcpServer.handleJsonRpc(b);
+      return json(res, 200, rpcRes);
+    }
+    if ((url.pathname === "/api/mcp" || url.pathname === "/mcp") && req.method === "GET") {
+      return json(res, 200, {
+        mcp: "2024-11-05",
+        server: "HosteraX Autonomous Engine",
+        version: "0.2.0",
+        endpoint: "/api/mcp",
+        transport: "JSON-RPC 2.0 (HTTP POST)",
+        capabilities: { tools: true, resources: true, prompts: true },
+        toolsCount: mcpServer.tools.length,
+      });
     }
 
     // ────────── domains & tls ──────────

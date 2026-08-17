@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
+import { S3StorageClient } from "./s3-storage.mjs";
 
 export class BackupManager {
   constructor({ db, HOME }) {
@@ -36,12 +37,29 @@ export class BackupManager {
         sha256 TEXT NOT NULL,
         destination TEXT NOT NULL DEFAULT 'local',
         status TEXT NOT NULL DEFAULT 'completed',
+        s3_key TEXT,
+        s3_synced_at INTEGER,
         created_at INTEGER NOT NULL,
         finished_at INTEGER,
         error_message TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_backups_db ON backups(database_name);
       CREATE INDEX IF NOT EXISTS idx_backups_created ON backups(created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS storage_providers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        provider_type TEXT NOT NULL,
+        endpoint TEXT,
+        region TEXT DEFAULT 'us-east-1',
+        bucket TEXT NOT NULL,
+        access_key_id TEXT NOT NULL,
+        secret_access_key TEXT NOT NULL,
+        prefix TEXT DEFAULT 'hosterax-backups',
+        auto_sync INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -228,6 +246,19 @@ export class BackupManager {
         )
         .run(fileStats.size, sha256, finishedAt, bkpId);
 
+      const s3Raw = this.getRawS3Config();
+      let s3Synced = false;
+      let s3Location = null;
+      if (s3Raw && s3Raw.auto_sync && s3Raw.bucket) {
+        try {
+          const syncRes = await this.syncBackupToS3(bkpId);
+          s3Synced = syncRes.ok;
+          s3Location = syncRes.location;
+        } catch (s3Err) {
+          console.warn("[backup-manager] S3 auto-sync error:", s3Err.message);
+        }
+      }
+
       return {
         ok: true,
         id: bkpId,
@@ -237,6 +268,8 @@ export class BackupManager {
         fileSizeBytes: fileStats.size,
         sha256,
         filePath: outPath,
+        s3Synced,
+        s3Location,
         createdAt: new Date(createdAt).toISOString(),
         finishedAt: new Date(finishedAt).toISOString(),
       };
@@ -536,5 +569,172 @@ export class BackupManager {
       stream.on("end", () => resolve(`sha256:${hash.digest("hex")}`));
       stream.on("error", reject);
     });
+  }
+
+  // ────────── S3 / Cloudflare R2 Remote Storage Subsystem ──────────
+
+  getS3Config() {
+    const row = this.db.prepare("SELECT * FROM storage_providers WHERE id='default_s3'").get();
+    if (!row) {
+      return {
+        configured: false,
+        name: "Remote S3 Bucket",
+        provider_type: "s3",
+        endpoint: "",
+        region: "us-east-1",
+        bucket: "",
+        access_key_id: "",
+        secret_access_key: "",
+        prefix: "hosterax-backups",
+        auto_sync: 0,
+      };
+    }
+    return {
+      configured: Boolean(row.bucket && row.access_key_id && row.secret_access_key),
+      name: row.name,
+      provider_type: row.provider_type,
+      endpoint: row.endpoint || "",
+      region: row.region || "us-east-1",
+      bucket: row.bucket,
+      access_key_id: row.access_key_id,
+      secret_access_key: row.secret_access_key ? "••••••••••••••••" : "",
+      prefix: row.prefix || "hosterax-backups",
+      auto_sync: row.auto_sync || 0,
+      updated_at: row.updated_at,
+    };
+  }
+
+  getRawS3Config() {
+    return this.db.prepare("SELECT * FROM storage_providers WHERE id='default_s3'").get();
+  }
+
+  saveS3Config(cfg) {
+    const now = Date.now();
+    const existing = this.getRawS3Config();
+
+    const secretKey =
+      cfg.secret_access_key && !cfg.secret_access_key.includes("•••")
+        ? cfg.secret_access_key
+        : existing?.secret_access_key || "";
+
+    const clean = {
+      id: "default_s3",
+      name: cfg.name || "Remote S3 Storage",
+      provider_type: cfg.provider_type || "s3",
+      endpoint: (cfg.endpoint || "").trim(),
+      region: (cfg.region || "us-east-1").trim(),
+      bucket: (cfg.bucket || "").trim(),
+      access_key_id: (cfg.access_key_id || "").trim(),
+      secret_access_key: secretKey.trim(),
+      prefix: (cfg.prefix || "hosterax-backups").trim(),
+      auto_sync: cfg.auto_sync ? 1 : 0,
+      created_at: existing?.created_at || now,
+      updated_at: now,
+    };
+
+    this.db
+      .prepare(
+        `
+      INSERT INTO storage_providers (id, name, provider_type, endpoint, region, bucket, access_key_id, secret_access_key, prefix, auto_sync, created_at, updated_at)
+      VALUES (@id, @name, @provider_type, @endpoint, @region, @bucket, @access_key_id, @secret_access_key, @prefix, @auto_sync, @created_at, @updated_at)
+      ON CONFLICT(id) DO UPDATE SET
+        name=excluded.name,
+        provider_type=excluded.provider_type,
+        endpoint=excluded.endpoint,
+        region=excluded.region,
+        bucket=excluded.bucket,
+        access_key_id=excluded.access_key_id,
+        secret_access_key=excluded.secret_access_key,
+        prefix=excluded.prefix,
+        auto_sync=excluded.auto_sync,
+        updated_at=excluded.updated_at
+    `
+      )
+      .run(clean);
+
+    return this.getS3Config();
+  }
+
+  async testS3Connection(cfg = null) {
+    const raw = cfg || this.getRawS3Config();
+    if (!raw) return { ok: false, message: "No S3 storage credentials configured." };
+
+    const client = new S3StorageClient({
+      endpoint: raw.endpoint,
+      region: raw.region,
+      bucket: raw.bucket,
+      accessKeyId: raw.access_key_id,
+      secretAccessKey: raw.secret_access_key,
+      prefix: raw.prefix,
+    });
+
+    return await client.testConnection();
+  }
+
+  async syncBackupToS3(backupId) {
+    const bkp = this.getBackup(backupId);
+    if (!bkp) throw new Error(`Backup with ID "${backupId}" not found.`);
+
+    const raw = this.getRawS3Config();
+    if (!raw || !raw.bucket) throw new Error("S3 remote storage is not configured.");
+
+    const client = new S3StorageClient({
+      endpoint: raw.endpoint,
+      region: raw.region,
+      bucket: raw.bucket,
+      accessKeyId: raw.access_key_id,
+      secretAccessKey: raw.secret_access_key,
+      prefix: raw.prefix,
+    });
+
+    const filename = path.basename(bkp.file_path);
+    const s3Key = `${raw.prefix || "hosterax-backups"}/${bkp.database_name}/${filename}`;
+
+    const res = await client.uploadBackupFile(bkp.file_path, s3Key);
+
+    const now = Date.now();
+    this.db
+      .prepare("UPDATE backups SET s3_key=?, s3_synced_at=?, destination='s3_synced' WHERE id=?")
+      .run(s3Key, now, backupId);
+
+    return {
+      ok: true,
+      backupId,
+      s3Key,
+      location: res.location,
+      syncedAt: new Date(now).toISOString(),
+    };
+  }
+
+  async listRemoteS3Backups() {
+    const raw = this.getRawS3Config();
+    if (!raw || !raw.bucket) return [];
+
+    const client = new S3StorageClient({
+      endpoint: raw.endpoint,
+      region: raw.region,
+      bucket: raw.bucket,
+      accessKeyId: raw.access_key_id,
+      secretAccessKey: raw.secret_access_key,
+      prefix: raw.prefix,
+    });
+
+    return await client.listRemoteBackups();
+  }
+
+  async deleteRemoteS3Backup(s3Key) {
+    const raw = this.getRawS3Config();
+    if (!raw || !raw.bucket) return false;
+
+    const client = new S3StorageClient({
+      endpoint: raw.endpoint,
+      region: raw.region,
+      bucket: raw.bucket,
+      accessKeyId: raw.access_key_id,
+      secretAccessKey: raw.secret_access_key,
+      prefix: raw.prefix,
+    });
+
+    return await client.deleteRemoteBackup(s3Key);
   }
 }

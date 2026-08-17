@@ -161,3 +161,97 @@ test("system stats", async () => {
   assert.equal(typeof s.deployments.total, "number");
   assert.equal(typeof s.system.cpu.percent, "number");
 });
+
+test("s3 storage configuration and remote sync api", async () => {
+  const cfg = await api("GET", "/api/backups/s3-config");
+  assert.equal(typeof cfg.configured, "boolean");
+
+  const updated = await api("POST", "/api/backups/s3-config", {
+    name: "Cloudflare R2 Test",
+    provider_type: "r2",
+    endpoint: "https://example.r2.cloudflarestorage.com",
+    bucket: "hosterax-test-bucket",
+    access_key_id: "test-key-id",
+    secret_access_key: "test-secret-key",
+    auto_sync: 1,
+  });
+  assert.equal(updated.ok, true);
+  assert.equal(updated.config.bucket, "hosterax-test-bucket");
+  assert.equal(updated.config.auto_sync, 1);
+});
+
+test("cron jobs engine CRUD and manual execution", async () => {
+  const job = await api("POST", "/api/jobs", {
+    name: "Test Echo Job",
+    cron_expression: "*/5 * * * *",
+    job_type: "command",
+    command: "echo 'HosteraX Cron Engine Active'",
+  });
+  assert.ok(job.id.startsWith("job_"));
+  assert.equal(job.name, "Test Echo Job");
+
+  const list = await api("GET", "/api/jobs");
+  assert.ok(list.some((j) => j.id === job.id));
+
+  const run = await api("POST", `/api/jobs/${job.id}/run`);
+  assert.ok(run.id.startsWith("run_"));
+  assert.equal(run.status, "success");
+  assert.ok(run.stdout.includes("HosteraX Cron Engine Active"));
+
+  const runs = await api("GET", `/api/jobs/${job.id}/runs`);
+  assert.ok(runs.length >= 1);
+  assert.equal(runs[0].id, run.id);
+
+  const del = await api("DELETE", `/api/jobs/${job.id}`);
+  assert.equal(del.ok, true);
+});
+
+test("model context protocol (MCP) JSON-RPC 2.0 server", async () => {
+  // Discovery endpoint
+  const discovery = await api("GET", "/api/mcp");
+  assert.equal(discovery.mcp, "2024-11-05");
+  assert.ok(discovery.toolsCount >= 10);
+
+  // JSON-RPC initialize
+  const initRes = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+  });
+  assert.equal(initRes.jsonrpc, "2.0");
+  assert.equal(initRes.result.serverInfo.name, "hosterax-engine");
+
+  // JSON-RPC tools/list
+  const toolsList = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/list",
+  });
+  assert.ok(Array.isArray(toolsList.result.tools));
+  const toolNames = toolsList.result.tools.map((t) => t.name);
+  assert.ok(toolNames.includes("get_system_stats"));
+  assert.ok(toolNames.includes("list_projects"));
+  assert.ok(toolNames.includes("list_cron_jobs"));
+  assert.ok(toolNames.includes("search_catalog"));
+
+  // JSON-RPC tools/call: get_system_stats
+  const callStats = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "get_system_stats" },
+  });
+  assert.equal(callStats.jsonrpc, "2.0");
+  assert.ok(callStats.result.content[0].text.includes("HosteraX"));
+
+  // JSON-RPC tools/call: search_catalog
+  const callCatalog = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: { name: "search_catalog", arguments: { query: "postgres" } },
+  });
+  assert.equal(callCatalog.jsonrpc, "2.0");
+  assert.ok(Array.isArray(JSON.parse(callCatalog.result.content[0].text)));
+});
+

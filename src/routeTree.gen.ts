@@ -19,6 +19,7 @@ import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
 import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
 import { Route as AppDockerhubRouteImport } from './routes/_app.dockerhub'
 import { Route as AppDomainsRouteImport } from './routes/_app.domains'
+import { Route as AppJobsRouteImport } from './routes/_app.jobs'
 import { Route as AppLocalRouteImport } from './routes/_app.local'
 import { Route as AppNewRouteImport } from './routes/_app.new'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
@@ -76,6 +77,11 @@ const AppDomainsRoute = AppDomainsRouteImport.update({
   path: '/domains',
   getParentRoute: () => AppRoute,
 } as any)
+const AppJobsRoute = AppJobsRouteImport.update({
+  id: '/jobs',
+  path: '/jobs',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppLocalRoute = AppLocalRouteImport.update({
   id: '/local',
   path: '/local',
@@ -122,6 +128,7 @@ export interface FileRoutesByFullPath {
   '/deployments': typeof AppDeploymentsRoute
   '/dockerhub': typeof AppDockerhubRoute
   '/domains': typeof AppDomainsRoute
+  '/jobs': typeof AppJobsRoute
   '/local': typeof AppLocalRoute
   '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
@@ -140,6 +147,7 @@ export interface FileRoutesByTo {
   '/deployments': typeof AppDeploymentsRoute
   '/dockerhub': typeof AppDockerhubRoute
   '/domains': typeof AppDomainsRoute
+  '/jobs': typeof AppJobsRoute
   '/local': typeof AppLocalRoute
   '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
@@ -160,6 +168,7 @@ export interface FileRoutesById {
   '/_app/deployments': typeof AppDeploymentsRoute
   '/_app/dockerhub': typeof AppDockerhubRoute
   '/_app/domains': typeof AppDomainsRoute
+  '/_app/jobs': typeof AppJobsRoute
   '/_app/local': typeof AppLocalRoute
   '/_app/new': typeof AppNewRoute
   '/_app/oauth': typeof AppOauthRoute
@@ -180,6 +189,7 @@ export interface FileRouteTypes {
     | '/deployments'
     | '/dockerhub'
     | '/domains'
+    | '/jobs'
     | '/local'
     | '/new'
     | '/oauth'
@@ -198,6 +208,7 @@ export interface FileRouteTypes {
     | '/deployments'
     | '/dockerhub'
     | '/domains'
+    | '/jobs'
     | '/local'
     | '/new'
     | '/oauth'
@@ -217,6 +228,7 @@ export interface FileRouteTypes {
     | '/_app/deployments'
     | '/_app/dockerhub'
     | '/_app/domains'
+    | '/_app/jobs'
     | '/_app/local'
     | '/_app/new'
     | '/_app/oauth'
@@ -304,6 +316,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDomainsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/jobs': {
+      id: '/_app/jobs'
+      path: '/jobs'
+      fullPath: '/jobs'
+      preLoaderRoute: typeof AppJobsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/local': {
       id: '/_app/local'
       path: '/local'
@@ -364,6 +383,7 @@ interface AppRouteChildren {
   AppDeploymentsRoute: typeof AppDeploymentsRoute
   AppDockerhubRoute: typeof AppDockerhubRoute
   AppDomainsRoute: typeof AppDomainsRoute
+  AppJobsRoute: typeof AppJobsRoute
   AppLocalRoute: typeof AppLocalRoute
   AppNewRoute: typeof AppNewRoute
   AppOauthRoute: typeof AppOauthRoute
@@ -381,6 +401,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppDeploymentsRoute: AppDeploymentsRoute,
   AppDockerhubRoute: AppDockerhubRoute,
   AppDomainsRoute: AppDomainsRoute,
+  AppJobsRoute: AppJobsRoute,
   AppLocalRoute: AppLocalRoute,
   AppNewRoute: AppNewRoute,
   AppOauthRoute: AppOauthRoute,

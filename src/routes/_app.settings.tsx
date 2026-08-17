@@ -121,6 +121,48 @@ function SettingsPage() {
       </div>
 
       <div className="rounded-lg border border-border bg-card p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-medium flex items-center gap-2">
+              <span className="flex h-2 w-2 rounded-full bg-emerald-400"></span>
+              Model Context Protocol (MCP) AI Server
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Native JSON-RPC 2.0 endpoint allowing AI Agents (Cursor, Claude Desktop, Antigravity, ChatGPT) to autonomously query and manage your infrastructure.
+            </p>
+          </div>
+          <span className="rounded bg-primary/10 text-primary px-2 py-0.5 text-xs font-mono">
+            MCP 2024-11-05
+          </span>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3 text-xs bg-muted/20 p-3 rounded-lg font-mono">
+            <div>Endpoint: <span className="text-foreground">{engine.url}/api/mcp</span></div>
+            <div>Transport: <span className="text-foreground">HTTP POST (JSON-RPC 2.0)</span></div>
+            <div>Available Tools: <span className="text-emerald-400 font-semibold">11 Native Tools</span></div>
+            <div>Capabilities: <span className="text-foreground">Tools, Resources, Prompts</span></div>
+          </div>
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Claude Desktop & Cursor MCP Config:</label>
+            <pre className="p-3 rounded-md bg-muted/40 font-mono text-[11px] text-foreground/90 overflow-x-auto whitespace-pre">
+{JSON.stringify({
+  mcpServers: {
+    hosterax: {
+      url: `${engine.url}/api/mcp`,
+      headers: {
+        Authorization: `Bearer ${engine.token || "your_engine_token"}`
+      }
+    }
+  }
+}, null, 2)}
+            </pre>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border bg-card p-6">
         <div className="text-sm font-medium">Instance Specifications</div>
         <div className="mt-3 grid gap-3 text-sm">
           <Row k="Version" v="HosteraX v0.2.2" />
@@ -129,6 +171,7 @@ function SettingsPage() {
           <Row k="Mode" v="Self-hosted (control plane)" />
           <Row k="Reverse Proxy" v="HosteraX Edge Proxy (Port 7777)" />
           <Row k="TLS Issuer" v="Let's Encrypt ACME v2" />
+          <Row k="MCP Protocol" v="JSON-RPC 2.0 Enabled" />
         </div>
       </div>
     </div>

@@ -23,11 +23,18 @@ const OPENRESTY_KNOWN_CONFS = [
 ];
 
 export class EdgeManager {
-  constructor(db, homeDir, tlsManager) {
-    this.db = db;
-    this.homeDir = homeDir;
-    this.tlsManager = tlsManager;
-    this.edgeDir = path.join(homeDir, "edge");
+  constructor(dbOrOpts, homeDir, tlsManager) {
+    if (dbOrOpts && typeof dbOrOpts === "object" && dbOrOpts.db) {
+      this.db = dbOrOpts.db;
+      this.homeDir = dbOrOpts.homeDir || dbOrOpts.HOME;
+      this.tlsManager = dbOrOpts.tlsManager;
+      this.edgeDir = dbOrOpts.edgeDir || (this.homeDir ? path.join(this.homeDir, "edge") : "");
+    } else {
+      this.db = dbOrOpts;
+      this.homeDir = homeDir;
+      this.tlsManager = tlsManager;
+      this.edgeDir = homeDir ? path.join(homeDir, "edge") : "";
+    }
     this.caddyDataDir = path.join(this.edgeDir, "caddy-data");
     this.caddyConfigDir = path.join(this.edgeDir, "caddy-config");
     this.openrestySitesDir = path.join(this.edgeDir, "sites-enabled");
@@ -37,7 +44,9 @@ export class EdgeManager {
     this.mgmtPort = EDGE_MGMT_PORT;
     this.letsencryptDir = LETSENCRYPT_DIR;
 
-    fs.mkdirSync(this.edgeDir, { recursive: true });
+    if (this.edgeDir) {
+      fs.mkdirSync(this.edgeDir, { recursive: true });
+    }
     fs.mkdirSync(this.caddyDataDir, { recursive: true });
     fs.mkdirSync(this.caddyConfigDir, { recursive: true });
     fs.mkdirSync(this.openrestySitesDir, { recursive: true });

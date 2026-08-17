@@ -14,6 +14,7 @@ import {
   Globe,
   Boxes,
   Sparkles,
+  Clock,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
@@ -25,6 +26,7 @@ const NAV = [
   { to: "/apps", label: "App Store", icon: Sparkles },
   { to: "/dockerhub", label: "Registries (Docker/GHCR)", icon: Boxes },
   { to: "/deployments", label: "Deployments", icon: Rocket },
+  { to: "/jobs", label: "Jobs & Schedules", icon: Clock },
   { to: "/domains", label: "Domains & SSL", icon: Globe },
   { to: "/databases", label: "Databases", icon: Database },
   { to: "/servers", label: "Servers", icon: Cpu },

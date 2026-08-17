@@ -3922,8 +3922,20 @@ Build configs include:
 5. **No database UI** — No built-in database browser for Postgres/MySQL/MongoDB.
 6. **Incomplete i18n coverage** — Some locales have fewer namespace files (19-21) compared to English (23).
 7. **No mobile responsive dashboard** — Dashboard is desktop-only.
-8. **No PWA support** — Dashboard could benefit from service worker caching for offline access.
+## 19. HosteraX vs. OpenShip Parity Roadmap & Implementation Tracking
+
+| Subsystem / Feature | Target Phase | Implementation Scope | Status |
+|---|---|---|---|
+| **Remote S3 / Cloudflare R2 / MinIO Backup Sync** | Phase 1 | Multi-cloud S3 streaming, storage providers DB table, automated bucket replication on snapshot completion. | ✅ Completed |
+| **Scheduled Cron Jobs Engine & UI** | Phase 1 | Native in-engine 5-field CRON runner, run history, execution logs, `/jobs` dashboard route. | ✅ Completed |
+| **Model Context Protocol (MCP) Server** | Phase 1 | JSON-RPC 2.0 endpoint (`/api/mcp`) with infrastructure tools for AI Agents (Cursor, Claude, ChatGPT). | ✅ Completed |
+| **Remote Multi-Node Server Management (SSH)** | Phase 2 | Agentless SSH connection pool, remote VPS provisioning, `/servers` management page. | ⚪ Next Up (Phase 2) |
+| **GitHub App Webhooks & Ephemeral PR Previews** | Phase 2 | Push-to-deploy webhooks, ephemeral `pr-<id>` preview subdomains, GitHub Actions status checks. | ⚪ Next Up (Phase 2) |
+| **Multi-Tenant Organizations, Teams & RBAC** | Phase 3 | Workspace/Org switcher, member invites, granular roles (`Owner`, `Admin`, `Member`, `Viewer`). | ⚪ Planned (Phase 3) |
+| **Self-Hosted Email Stack & Webmail** | Phase 3 | Postfix/Dovecot stack, SPF/DKIM/DMARC wizard, Zero Email webmail interface. | ⚪ Planned (Phase 3) |
+| **Electron 40 Native Desktop Packaging** | Phase 3 | Electron Forge builds for macOS (DMG), Windows (NSIS), Linux (AppImage) with local daemon supervision. | ⚪ Planned (Phase 3) |
+| **Localization (i18n)** | Phase 3 | 8 languages (EN, AR, DE, ES, FR, JA, PT, ZH) with RTL layout switching. | ⚪ Planned (Phase 3) |
 
 ---
 
-_This PRD is a living document reflecting the complete codebase inventory as of v0.2.2. Features and priorities should be reviewed quarterly based on user feedback and business goals._
+_This PRD is a living document reflecting the complete codebase inventory and ongoing parity implementation roadmap._
