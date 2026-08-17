@@ -15,7 +15,10 @@ export class BackupManager {
 
   initSchema() {
     try {
-      const cols = this.db.prepare("PRAGMA table_info(backups)").all().map((c) => c.name);
+      const cols = this.db
+        .prepare("PRAGMA table_info(backups)")
+        .all()
+        .map((c) => c.name);
       if (cols.length > 0 && !cols.includes("database_name")) {
         // Drop legacy empty table
         this.db.exec("DROP TABLE backups");
@@ -183,10 +186,14 @@ export class BackupManager {
     const createdAt = Date.now();
 
     // Insert pending record
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       INSERT INTO backups (id, project_name, database_name, db_type, file_path, file_size_bytes, sha256, destination, status, created_at)
       VALUES (?, ?, ?, ?, ?, 0, '', 'local', 'in_progress', ?)
-    `).run(bkpId, projectName || targetDb, targetDb, type, outPath, createdAt);
+    `,
+      )
+      .run(bkpId, projectName || targetDb, targetDb, type, outPath, createdAt);
 
     try {
       if (type === "mongodb" || type === "mongo") {
@@ -211,11 +218,15 @@ export class BackupManager {
       const sha256 = await this._computeSha256(outPath);
       const finishedAt = Date.now();
 
-      this.db.prepare(`
+      this.db
+        .prepare(
+          `
         UPDATE backups
         SET file_size_bytes=?, sha256=?, status='completed', finished_at=?
         WHERE id=?
-      `).run(fileStats.size, sha256, finishedAt, bkpId);
+      `,
+        )
+        .run(fileStats.size, sha256, finishedAt, bkpId);
 
       return {
         ok: true,
@@ -230,11 +241,15 @@ export class BackupManager {
         finishedAt: new Date(finishedAt).toISOString(),
       };
     } catch (err) {
-      this.db.prepare(`
+      this.db
+        .prepare(
+          `
         UPDATE backups
         SET status='failed', error_message=?, finished_at=?
         WHERE id=?
-      `).run(err.message, Date.now(), bkpId);
+      `,
+        )
+        .run(err.message, Date.now(), bkpId);
       throw err;
     }
   }
@@ -254,7 +269,7 @@ export class BackupManager {
     const currentHash = await this._computeSha256(bkp.file_path);
     if (bkp.sha256 && currentHash !== bkp.sha256) {
       throw new Error(
-        `SHA-256 integrity mismatch! Expected ${bkp.sha256}, but file computed ${currentHash}. Restore aborted to prevent corruption.`
+        `SHA-256 integrity mismatch! Expected ${bkp.sha256}, but file computed ${currentHash}. Restore aborted to prevent corruption.`,
       );
     }
 
@@ -307,13 +322,7 @@ export class BackupManager {
   async _dumpMongo(containerName, outPath) {
     return new Promise((resolve, reject) => {
       const outStream = fs.createWriteStream(outPath);
-      const child = spawn("docker", [
-        "exec",
-        containerName,
-        "mongodump",
-        "--archive",
-        "--gzip",
-      ]);
+      const child = spawn("docker", ["exec", containerName, "mongodump", "--archive", "--gzip"]);
 
       child.stdout.pipe(outStream);
       let stderr = "";
@@ -362,7 +371,13 @@ export class BackupManager {
       gzip.on("error", () => {
         // Fallback without gzip if gzip binary not in path
         const directStream = fs.createWriteStream(outPath);
-        const directChild = spawn("docker", ["exec", containerName, "pg_dumpall", "-U", "postgres"]);
+        const directChild = spawn("docker", [
+          "exec",
+          containerName,
+          "pg_dumpall",
+          "-U",
+          "postgres",
+        ]);
         directChild.stdout.pipe(directStream);
         directChild.on("close", () => resolve());
       });

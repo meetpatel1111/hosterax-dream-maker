@@ -1,6 +1,11 @@
 import React, { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useEngine, useMagicDnsSettings, formatMagicDnsUrl, MagicDnsProviderInfo } from "@/lib/engine";
+import {
+  useEngine,
+  useMagicDnsSettings,
+  formatMagicDnsUrl,
+  MagicDnsProviderInfo,
+} from "@/lib/engine";
 import { toast } from "sonner";
 import {
   Globe,
@@ -113,7 +118,8 @@ export function MagicDnsSelector({
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Select your preferred wildcard DNS service for instant, zero-config local domain resolution.
+              Select your preferred wildcard DNS service for instant, zero-config local domain
+              resolution.
             </p>
           </div>
           <div className="flex items-center gap-2">

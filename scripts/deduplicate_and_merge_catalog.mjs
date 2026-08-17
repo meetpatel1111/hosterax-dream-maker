@@ -1,27 +1,27 @@
-import fs from 'node:fs';
+import fs from "node:fs";
 
 function normalizeKey(str) {
-  if (!str) return '';
+  if (!str) return "";
   return str
     .toLowerCase()
-    .replace(/^https?:\/\//, '')
-    .replace(/^github\.com\//, '')
-    .replace(/\.git$/, '')
-    .replace(/[^a-z0-9]/g, '');
+    .replace(/^https?:\/\//, "")
+    .replace(/^github\.com\//, "")
+    .replace(/\.git$/, "")
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function getRepoKey(url) {
-  if (!url) return '';
+  if (!url) return "";
   const m = url.match(/github\.com\/([^/]+)\/([^/#?]+)/i);
   if (m) {
-    return `${m[1].toLowerCase()}/${m[2].toLowerCase().replace(/\.git$/, '')}`;
+    return `${m[1].toLowerCase()}/${m[2].toLowerCase().replace(/\.git$/, "")}`;
   }
-  return '';
+  return "";
 }
 
 async function main() {
-  console.log('Starting Unified Canonical Deduplication & Multi-Source Merging...');
-  const mainDb = JSON.parse(fs.readFileSync('src/lib/awesome-selfhosted-db.json', 'utf8'));
+  console.log("Starting Unified Canonical Deduplication & Multi-Source Merging...");
+  const mainDb = JSON.parse(fs.readFileSync("src/lib/awesome-selfhosted-db.json", "utf8"));
 
   const canonicalMap = new Map(); // key -> app
   let duplicateCount = 0;
@@ -41,7 +41,7 @@ async function main() {
       canonical = canonicalMap.get(`name:${normName}`);
     }
 
-    const currentSource = rawApp.source || 'awesome_selfhosted';
+    const currentSource = rawApp.source || "awesome_selfhosted";
 
     if (canonical) {
       duplicateCount++;
@@ -65,10 +65,13 @@ async function main() {
       if (!canonical.webpIcon && rawApp.webpIcon) canonical.webpIcon = rawApp.webpIcon;
 
       // Merge URLs
-      if ((!canonical.website || canonical.website.includes('awesome-selfhosted')) && rawApp.website) {
+      if (
+        (!canonical.website || canonical.website.includes("awesome-selfhosted")) &&
+        rawApp.website
+      ) {
         canonical.website = rawApp.website;
       }
-      if ((!canonical.url || canonical.url.includes('awesome-selfhosted')) && rawApp.url) {
+      if ((!canonical.url || canonical.url.includes("awesome-selfhosted")) && rawApp.url) {
         canonical.url = rawApp.url;
       }
 
@@ -78,7 +81,12 @@ async function main() {
       }
 
       // Retain most specific docker image
-      if ((!canonical.image || canonical.image.includes(':') && canonical.image.split(':')[0] === canonical.id) && rawApp.image && !rawApp.image.includes(`${rawApp.id}:${rawApp.id}`)) {
+      if (
+        (!canonical.image ||
+          (canonical.image.includes(":") && canonical.image.split(":")[0] === canonical.id)) &&
+        rawApp.image &&
+        !rawApp.image.includes(`${rawApp.id}:${rawApp.id}`)
+      ) {
         canonical.image = rawApp.image;
       }
     } else {
@@ -86,7 +94,7 @@ async function main() {
       const newCanonical = {
         ...rawApp,
         sources: [currentSource],
-        tags: Array.from(new Set([...(rawApp.tags || []), currentSource]))
+        tags: Array.from(new Set([...(rawApp.tags || []), currentSource])),
       };
 
       if (repoKey) canonicalMap.set(`repo:${repoKey}`, newCanonical);
@@ -105,10 +113,16 @@ async function main() {
   console.log(`- Unique Canonical Apps Remaining: ${uniqueApps.length}`);
 
   // Count apps by source presence
-  const selfhstCount = uniqueApps.filter(a => a.sources?.includes('selfhst') || a.tags?.includes('selfhst')).length;
-  const sysadminCount = uniqueApps.filter(a => a.sources?.includes('awesome_sysadmin') || a.tags?.includes('sysadmin')).length;
-  const awesomeCount = uniqueApps.filter(a => a.sources?.includes('awesome_selfhosted') || a.source === 'awesome_selfhosted').length;
-  const multiSourceCount = uniqueApps.filter(a => (a.sources?.length || 1) > 1).length;
+  const selfhstCount = uniqueApps.filter(
+    (a) => a.sources?.includes("selfhst") || a.tags?.includes("selfhst"),
+  ).length;
+  const sysadminCount = uniqueApps.filter(
+    (a) => a.sources?.includes("awesome_sysadmin") || a.tags?.includes("sysadmin"),
+  ).length;
+  const awesomeCount = uniqueApps.filter(
+    (a) => a.sources?.includes("awesome_selfhosted") || a.source === "awesome_selfhosted",
+  ).length;
+  const multiSourceCount = uniqueApps.filter((a) => (a.sources?.length || 1) > 1).length;
 
   console.log(`- Apps in selfh.st: ${selfhstCount}`);
   console.log(`- Apps in Awesome-Selfhosted: ${awesomeCount}`);
@@ -119,9 +133,14 @@ async function main() {
   mainDb.apps = uniqueApps;
   mainDb.totalApps = uniqueApps.length;
 
-  fs.writeFileSync('src/lib/awesome-selfhosted-db.json', JSON.stringify(mainDb, null, 2), 'utf8');
-  fs.writeFileSync('hosterax/engine/src/awesome-selfhosted-db.json', JSON.stringify(mainDb, null, 2), 'utf8');
-  console.log('Saved clean deduplicated canonical database!');
+  fs.writeFileSync("src/lib/awesome-selfhosted-db.json", JSON.stringify(mainDb, null, 2), "utf8");
+  fs.writeFileSync(
+    "hosterax/engine/src/awesome-selfhosted-db.json",
+    JSON.stringify(mainDb, null, 2),
+    "utf8",
+  );
+  fs.writeFileSync("public/catalog.json", JSON.stringify(mainDb, null, 2), "utf8");
+  console.log("Saved clean deduplicated canonical database!");
 }
 
-main().catch(err => console.error(err));
+main().catch((err) => console.error(err));

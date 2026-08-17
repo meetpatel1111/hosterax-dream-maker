@@ -103,7 +103,7 @@ export const UNIVERSAL_IMAGE_MAP = {
   "nginx-proxy-manager": "jc21/nginx-proxy-manager:latest",
   npm: "jc21/nginx-proxy-manager:latest",
 
-  // Databases & Vector Engines
+  // Databases, Search & Vector Engines
   redis: "redis:alpine",
   valkey: "valkey/valkey:latest",
   dragonfly: "docker.dragonflydb.io/dragonflydb/dragonfly:latest",
@@ -115,6 +115,16 @@ export const UNIVERSAL_IMAGE_MAP = {
   mongo: "mongo:latest",
   couchdb: "couchdb:latest",
   surrealdb: "surrealdb/surrealdb:latest",
+  elasticsearch: "docker.elastic.co/elasticsearch/elasticsearch:8.15.0",
+  "elasticsearch:latest": "docker.elastic.co/elasticsearch/elasticsearch:8.15.0",
+  "elasticsearch:8": "docker.elastic.co/elasticsearch/elasticsearch:8.15.0",
+  "elasticsearch:7": "docker.elastic.co/elasticsearch/elasticsearch:7.17.23",
+  opensearch: "opensearchproject/opensearch:latest",
+  "opensearchproject/opensearch": "opensearchproject/opensearch:latest",
+  kibana: "docker.elastic.co/kibana/kibana:8.15.0",
+  "kibana:latest": "docker.elastic.co/kibana/kibana:8.15.0",
+  logstash: "docker.elastic.co/logstash/logstash:8.15.0",
+  "logstash:latest": "docker.elastic.co/logstash/logstash:8.15.0",
   typesense: "typesense/typesense:latest",
   meilisearch: "getmeili/meilisearch:latest",
   qdrant: "qdrant/qdrant:latest",
@@ -187,7 +197,10 @@ async function searchDockerHub(query) {
     const url = `https://hub.docker.com/v2/search/repositories/?query=${encodeURIComponent(qClean)}&page_size=6`;
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 3500);
-    const res = await fetch(url, { signal: ctrl.signal, headers: { "User-Agent": "HosteraX-UniversalResolver/1.0" } });
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      headers: { "User-Agent": "HosteraX-UniversalResolver/1.0" },
+    });
     clearTimeout(timeout);
     if (!res.ok) return null;
     const data = await res.json();
@@ -274,7 +287,14 @@ export function generateCandidateImageTags(rawTarget, projectName = "") {
   }
 
   // 5. Prefix-based compound heuristics
-  const KNOWN_PREFIXES = ["apache", "linuxserver", "bitnami", "cloudpirates", "prom", "victoriametrics"];
+  const KNOWN_PREFIXES = [
+    "apache",
+    "linuxserver",
+    "bitnami",
+    "cloudpirates",
+    "prom",
+    "victoriametrics",
+  ];
   for (const pfx of KNOWN_PREFIXES) {
     if (baseNorm.startsWith(pfx) && baseNorm.length > pfx.length) {
       const remainder = baseNorm.slice(pfx.length);
@@ -384,7 +404,12 @@ export async function pullWithUniversalHealing({
       stream: "system",
       text: `[docker] Retrying with cross-architecture emulation: --platform linux/amd64 ${candidate}...`,
     });
-    const platRc = await runStep(deploymentId, workdir, `docker pull --platform linux/amd64 ${candidate}`, {});
+    const platRc = await runStep(
+      deploymentId,
+      workdir,
+      `docker pull --platform linux/amd64 ${candidate}`,
+      {},
+    );
     if (platRc === 0) {
       publish(deploymentId, {
         ts: Date.now(),

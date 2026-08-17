@@ -22,7 +22,11 @@ function Tokens() {
   const engine = useEngine();
   const qc = useQueryClient();
   const [name, setName] = useState("");
-  const [scopes, setScopes] = useState<Array<"read" | "deploy" | "admin">>(["read", "deploy", "admin"]);
+  const [scopes, setScopes] = useState<Array<"read" | "deploy" | "admin">>([
+    "read",
+    "deploy",
+    "admin",
+  ]);
   const [issued, setIssued] = useState<string | null>(null);
 
   const { data: tokens = [], isLoading } = useQuery({
@@ -34,7 +38,9 @@ function Tokens() {
           id: t.token,
           token: t.token,
           name: t.name || "token",
-          created_at: t.created_at ? new Date(t.created_at).toISOString() : new Date().toISOString(),
+          created_at: t.created_at
+            ? new Date(t.created_at).toISOString()
+            : new Date().toISOString(),
           token_prefix: (t.token || "").slice(0, 10),
           scopes: ["read", "deploy", "admin"],
         }));
@@ -103,9 +109,7 @@ function Tokens() {
                   type="checkbox"
                   checked={scopes.includes(s)}
                   onChange={(e) => {
-                    setScopes(
-                      e.target.checked ? [...scopes, s] : scopes.filter((x) => x !== s),
-                    );
+                    setScopes(e.target.checked ? [...scopes, s] : scopes.filter((x) => x !== s));
                   }}
                 />
                 <span className="capitalize">{s}</span>
@@ -169,7 +173,9 @@ function Tokens() {
                   <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
                     <span>{t.token_prefix}••••••••</span>
                     <span>·</span>
-                    <span>Created {formatDistanceToNow(new Date(t.created_at), { addSuffix: true })}</span>
+                    <span>
+                      Created {formatDistanceToNow(new Date(t.created_at), { addSuffix: true })}
+                    </span>
                   </div>
                 </div>
                 <button

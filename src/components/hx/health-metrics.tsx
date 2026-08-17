@@ -37,25 +37,29 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
     const timeFactor = Math.sin(ticks * 0.5);
 
     // If Docker stats exist, use Docker container CPU and Memory
-    const cpuVal = docker?.cpu_percent != null
-      ? Number(docker.cpu_percent)
-      : sys?.cpu?.percent != null 
-        ? Number(sys.cpu.percent) 
-        : Math.max(2, Math.min(95, 12 + Math.sin(seed + ticks) * 18 + timeFactor * 5));
+    const cpuVal =
+      docker?.cpu_percent != null
+        ? Number(docker.cpu_percent)
+        : sys?.cpu?.percent != null
+          ? Number(sys.cpu.percent)
+          : Math.max(2, Math.min(95, 12 + Math.sin(seed + ticks) * 18 + timeFactor * 5));
 
-    const memVal = docker?.memory_percent != null
-      ? Number(docker.memory_percent)
-      : sys?.memory?.percent != null 
-        ? parseFloat(String(sys.memory.percent)) 
-        : Math.max(10, Math.min(92, 45 + Math.cos(seed + ticks * 0.3) * 15));
+    const memVal =
+      docker?.memory_percent != null
+        ? Number(docker.memory_percent)
+        : sys?.memory?.percent != null
+          ? parseFloat(String(sys.memory.percent))
+          : Math.max(10, Math.min(92, 45 + Math.cos(seed + ticks * 0.3) * 15));
 
-    const diskVal = sys?.disk?.percent != null 
-      ? Number(sys.disk.percent) 
-      : Math.max(15, 22 + (seed % 10));
+    const diskVal =
+      sys?.disk?.percent != null ? Number(sys.disk.percent) : Math.max(15, 22 + (seed % 10));
 
-    const uptimeStr = sys?.uptime_seconds != null
-      ? `${Math.floor(sys.uptime_seconds / 3600)}h ${Math.floor((sys.uptime_seconds % 3600) / 60)}m`
-      : status === "failed" ? "98.40%" : "99.98%";
+    const uptimeStr =
+      sys?.uptime_seconds != null
+        ? `${Math.floor(sys.uptime_seconds / 3600)}h ${Math.floor((sys.uptime_seconds % 3600) / 60)}m`
+        : status === "failed"
+          ? "98.40%"
+          : "99.98%";
 
     return {
       cpu: cpuVal,
@@ -75,13 +79,24 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
         <div className="flex items-center justify-between gap-4 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-xs text-foreground">
           <div className="flex items-center gap-2 font-medium">
             <Box className="h-4 w-4 text-primary animate-pulse" />
-            <span>Docker Container: <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-primary font-semibold">{docker.name}</code></span>
+            <span>
+              Docker Container:{" "}
+              <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-primary font-semibold">
+                {docker.name}
+              </code>
+            </span>
             <span className="text-muted-foreground">({docker.container_id.slice(0, 12)})</span>
           </div>
           <div className="flex items-center gap-4 text-muted-foreground font-mono text-[11px]">
-            <span>Net I/O: <strong className="text-foreground">{docker.network_io}</strong></span>
-            <span>Block I/O: <strong className="text-foreground">{docker.block_io}</strong></span>
-            <span>PIDs: <strong className="text-foreground">{docker.pids}</strong></span>
+            <span>
+              Net I/O: <strong className="text-foreground">{docker.network_io}</strong>
+            </span>
+            <span>
+              Block I/O: <strong className="text-foreground">{docker.block_io}</strong>
+            </span>
+            <span>
+              PIDs: <strong className="text-foreground">{docker.pids}</strong>
+            </span>
           </div>
         </div>
       )}
@@ -92,7 +107,8 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <Cpu className="h-4 w-4 text-primary" /> {docker ? "Container CPU" : "CPU Utilization"}
+              <Cpu className="h-4 w-4 text-primary" />{" "}
+              {docker ? "Container CPU" : "CPU Utilization"}
             </span>
             <span className="font-mono text-xs text-primary font-semibold">
               {metrics.cpu.toFixed(2)}%
@@ -107,8 +123,16 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
             />
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>{docker ? `Container: ${docker.pids} PIDs` : sys?.cpu?.cores ? `${sys.cpu.cores} Physical Cores` : "Allocated: 2.0 vCPU"}</span>
-            <span className="truncate max-w-[120px]">{sys?.cpu?.model ? sys.cpu.model.split(" ")[0] : "Peak: 4.0 vCPU"}</span>
+            <span>
+              {docker
+                ? `Container: ${docker.pids} PIDs`
+                : sys?.cpu?.cores
+                  ? `${sys.cpu.cores} Physical Cores`
+                  : "Allocated: 2.0 vCPU"}
+            </span>
+            <span className="truncate max-w-[120px]">
+              {sys?.cpu?.model ? sys.cpu.model.split(" ")[0] : "Peak: 4.0 vCPU"}
+            </span>
           </div>
         </div>
 
@@ -116,7 +140,8 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <MemoryStick className="h-4 w-4 text-primary" /> {docker ? "Container Memory" : "Memory Usage"}
+              <MemoryStick className="h-4 w-4 text-primary" />{" "}
+              {docker ? "Container Memory" : "Memory Usage"}
             </span>
             <span className="font-mono text-xs text-primary font-semibold">
               {metrics.mem.toFixed(2)}%
@@ -139,7 +164,11 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
                   : "512 MB / 1024 MB"}
             </span>
             <span>
-              {docker ? "Isolated" : sys?.memory ? `${((sys.memory.total_mb - sys.memory.used_mb) / 1024).toFixed(1)} GB Free` : "Heap: 380 MB"}
+              {docker
+                ? "Isolated"
+                : sys?.memory
+                  ? `${((sys.memory.total_mb - sys.memory.used_mb) / 1024).toFixed(1)} GB Free`
+                  : "Heap: 380 MB"}
             </span>
           </div>
         </div>
@@ -148,7 +177,8 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <Network className="h-4 w-4 text-primary" /> {docker ? "Container Net I/O" : "Network Throughput"}
+              <Network className="h-4 w-4 text-primary" />{" "}
+              {docker ? "Container Net I/O" : "Network Throughput"}
             </span>
             <span className="font-mono text-xs text-primary font-semibold">
               {docker?.network_io ? docker.network_io : `${metrics.net} MB/s`}
@@ -158,7 +188,9 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
             <span className="text-xl font-bold tracking-tight text-foreground font-mono">
               {docker?.block_io ? `IO: ${docker.block_io}` : metrics.requestsPerMin}
             </span>
-            <span className="text-xs text-muted-foreground">{docker ? "Disk Block I/O" : "req / min"}</span>
+            <span className="text-xs text-muted-foreground">
+              {docker ? "Disk Block I/O" : "req / min"}
+            </span>
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
             <span>Avg Latency: {metrics.latency}ms</span>
@@ -172,7 +204,9 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
               <HardDrive className="h-4 w-4 text-primary" /> NVMe Storage
             </span>
-            <span className="font-mono text-xs text-primary font-semibold">{metrics.disk.toFixed(1)}%</span>
+            <span className="font-mono text-xs text-primary font-semibold">
+              {metrics.disk.toFixed(1)}%
+            </span>
           </div>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface-2">
             <div
@@ -186,7 +220,11 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
                 ? `${sys.disk.used_gb} GB / ${sys.disk.total_gb} GB`
                 : "4.2 GB / 20 GB"}
             </span>
-            <span className={metrics.disk > 90 ? "text-warning font-medium" : "text-success font-medium"}>
+            <span
+              className={
+                metrics.disk > 90 ? "text-warning font-medium" : "text-success font-medium"
+              }
+            >
               {metrics.disk > 90 ? "High Usage" : "Healthy"}
             </span>
           </div>
@@ -201,15 +239,21 @@ export function HealthMetrics({ projectId, projectName, status }: HealthMetricsP
           </div>
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold">
-              <span>{docker ? `Docker Container · ${docker.name}` : "System Status · Running Live"}</span>
+              <span>
+                {docker
+                  ? `Docker Container · ${docker.name}`
+                  : sys
+                    ? "System Status · Running Live"
+                    : "Simulated Preview · Engine Offline"}
+              </span>
               <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
             </div>
             <p className="text-xs text-muted-foreground">
-              {docker 
+              {docker
                 ? `Running in isolated container environment on node '${sys?.hostname || "Local"}'.`
-                : sys?.hostname 
-                  ? `Host node '${sys.hostname}' (${sys.platform}) reporting live metrics.` 
-                  : "All health probes reporting normal response times across edge routing."}
+                : sys?.hostname
+                  ? `Host node '${sys.hostname}' (${sys.platform}) reporting live metrics.`
+                  : "No engine connection — displaying simulated demo metrics. Start the engine (localhost:7777) for live data."}
             </p>
           </div>
         </div>

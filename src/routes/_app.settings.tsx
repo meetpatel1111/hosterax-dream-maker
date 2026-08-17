@@ -89,7 +89,10 @@ function SettingsPage() {
         <div className="text-sm font-medium">Account</div>
         <div className="mt-3 grid gap-3 text-sm">
           <Row k="Email" v={user?.email ?? "admin@hosterax.local"} />
-          <Row k="User ID" v={<span className="font-mono text-xs">{user?.id ?? "local-admin"}</span>} />
+          <Row
+            k="User ID"
+            v={<span className="font-mono text-xs">{user?.id ?? "local-admin"}</span>}
+          />
           <Row
             k="Signed in"
             v={user?.last_sign_in_at ? new Date(user.last_sign_in_at).toLocaleString() : "—"}

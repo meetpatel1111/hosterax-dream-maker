@@ -40,7 +40,8 @@ export const Route = createFileRoute("/_app/new")({
       { title: "New Project & Service — HosteraX" },
       {
         name: "description",
-        content: "Deploy from Git repository, local folder upload, public URL archive, CLI push, starter templates, or 2,550+ one-click Docker apps.",
+        content:
+          "Deploy from Git repository, local folder upload, public URL archive, CLI push, starter templates, or 2,550+ one-click Docker apps.",
       },
     ],
   }),
@@ -60,14 +61,62 @@ type Trigger = "git" | "upload" | "url" | "cli" | "template" | "one-click";
 
 // Popular quick-import open source repository presets
 const QUICK_GIT_PRESETS = [
-  { name: "Next.js App", repo: "https://github.com/vercel/next-learn", stack: "next", branch: "main", icon: "▲" },
-  { name: "Vite React", repo: "https://github.com/vitejs/vite", stack: "vite", branch: "main", icon: "⚡" },
-  { name: "Astro Blog", repo: "https://github.com/withastro/astro", stack: "astro", branch: "main", icon: "🚀" },
-  { name: "FastAPI Python", repo: "https://github.com/tiangolo/fastapi", stack: "fastapi", branch: "master", icon: "🐍" },
-  { name: "Go Fiber API", repo: "https://github.com/gofiber/fiber", stack: "go", branch: "master", icon: "🐹" },
-  { name: "Express REST", repo: "https://github.com/expressjs/express", stack: "express", branch: "master", icon: "⬢" },
-  { name: "Rust Axum", repo: "https://github.com/tokio-rs/axum", stack: "rust", branch: "main", icon: "🦀" },
-  { name: "NestJS Microservice", repo: "https://github.com/nestjs/nest", stack: "nest", branch: "master", icon: "🐱" },
+  {
+    name: "Next.js App",
+    repo: "https://github.com/vercel/next-learn",
+    stack: "next",
+    branch: "main",
+    icon: "▲",
+  },
+  {
+    name: "Vite React",
+    repo: "https://github.com/vitejs/vite",
+    stack: "vite",
+    branch: "main",
+    icon: "⚡",
+  },
+  {
+    name: "Astro Blog",
+    repo: "https://github.com/withastro/astro",
+    stack: "astro",
+    branch: "main",
+    icon: "🚀",
+  },
+  {
+    name: "FastAPI Python",
+    repo: "https://github.com/tiangolo/fastapi",
+    stack: "fastapi",
+    branch: "master",
+    icon: "🐍",
+  },
+  {
+    name: "Go Fiber API",
+    repo: "https://github.com/gofiber/fiber",
+    stack: "go",
+    branch: "master",
+    icon: "🐹",
+  },
+  {
+    name: "Express REST",
+    repo: "https://github.com/expressjs/express",
+    stack: "express",
+    branch: "master",
+    icon: "⬢",
+  },
+  {
+    name: "Rust Axum",
+    repo: "https://github.com/tokio-rs/axum",
+    stack: "rust",
+    branch: "main",
+    icon: "🦀",
+  },
+  {
+    name: "NestJS Microservice",
+    repo: "https://github.com/nestjs/nest",
+    stack: "nest",
+    branch: "master",
+    icon: "🐱",
+  },
 ];
 
 function NewProject() {
@@ -175,7 +224,11 @@ function NewProject() {
         } catch {}
       }
 
-      toast.success(source !== "./" ? "✨ Project created & deployment started!" : "✨ Project created successfully!");
+      toast.success(
+        source !== "./"
+          ? "✨ Project created & deployment started!"
+          : "✨ Project created successfully!",
+      );
       nav({ to: "/p/$slug", params: { slug } });
     } catch (err: any) {
       toast.error(err.message || "Failed to create project");
@@ -208,7 +261,8 @@ function NewProject() {
             </span>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Deploy from any source: Git repo, folder upload, remote archive, HosteraX CLI, or instant starter templates.
+            Deploy from any source: Git repo, folder upload, remote archive, HosteraX CLI, or
+            instant starter templates.
           </p>
         </div>
 
@@ -234,12 +288,16 @@ function NewProject() {
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               }`}
             >
-              <Icon className={`h-4 w-4 ${isActive ? "text-primary-foreground" : "text-muted-foreground"}`} />
+              <Icon
+                className={`h-4 w-4 ${isActive ? "text-primary-foreground" : "text-muted-foreground"}`}
+              />
               <span>{t.label}</span>
               {t.badge && (
                 <span
                   className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                    isActive ? "bg-primary-foreground/20 text-primary-foreground" : "bg-primary/10 text-primary"
+                    isActive
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-primary/10 text-primary"
                   }`}
                 >
                   {t.badge}
@@ -331,7 +389,11 @@ function NewProject() {
                           const val = e.target.value;
                           setRepo(val);
                           if (!name && val) {
-                            const derived = val.split("/").pop()?.replace(/\.git$/, "") || "";
+                            const derived =
+                              val
+                                .split("/")
+                                .pop()
+                                ?.replace(/\.git$/, "") || "";
                             if (derived) setName(derived);
                           }
                         }}
@@ -399,26 +461,32 @@ function NewProject() {
                     <div className="mx-auto w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-3">
                       <Upload className="h-6 w-6 text-primary animate-pulse" />
                     </div>
-                    <h3 className="text-sm font-semibold text-foreground">Drag and drop your project folder or archive</h3>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      Drag and drop your project folder or archive
+                    </h3>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Supports ZIP, TAR.GZ, or whole directories with package.json / requirements.txt / Go modules.
+                      Supports ZIP, TAR.GZ, or whole directories with package.json /
+                      requirements.txt / Go modules.
                     </p>
                     <div className="mt-4 flex items-center justify-center gap-3">
                       <label className="cursor-pointer inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold shadow hover:opacity-90">
                         <FolderOpen className="w-3.5 h-3.5" /> Select Local Folder
                         <input
                           type="file"
-                          // @ts-ignore
+                          // @ts-expect-error non-standard webkitdirectory attribute
                           webkitdirectory=""
                           directory=""
                           multiple
                           className="hidden"
                           onChange={(e) => {
                             if (e.target.files && e.target.files.length > 0) {
-                              const dir = e.target.files[0].webkitRelativePath?.split("/")[0] || "my-app";
+                              const dir =
+                                e.target.files[0].webkitRelativePath?.split("/")[0] || "my-app";
                               setName(dir);
                               setFolderPath(`./${dir}`);
-                              toast.success(`Selected directory: ${dir} (${e.target.files.length} files)`);
+                              toast.success(
+                                `Selected directory: ${dir} (${e.target.files.length} files)`,
+                              );
                             }
                           }}
                         />
@@ -473,7 +541,11 @@ function NewProject() {
                           const val = e.target.value;
                           setSourceUrl(val);
                           if (!name && val) {
-                            const derived = val.split("/").pop()?.replace(/\.(tar\.gz|zip|git)$/, "") || "";
+                            const derived =
+                              val
+                                .split("/")
+                                .pop()
+                                ?.replace(/\.(tar\.gz|zip|git)$/, "") || "";
                             if (derived) setName(derived);
                           }
                         }}
@@ -486,7 +558,10 @@ function NewProject() {
 
                   <div className="rounded-lg border border-border/80 bg-surface/50 p-3 text-xs text-muted-foreground flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-                    <span>HosteraX will stream the archive in real-time and execute the build pipeline automatically.</span>
+                    <span>
+                      HosteraX will stream the archive in real-time and execute the build pipeline
+                      automatically.
+                    </span>
                   </div>
                 </div>
               )}
@@ -498,17 +573,23 @@ function NewProject() {
                     <div className="flex items-center justify-between text-muted-foreground border-b border-border/40 pb-2.5 mb-3">
                       <div className="flex items-center gap-2">
                         <Terminal className="w-3.5 h-3.5 text-primary" />
-                        <span className="font-semibold text-foreground/80">Terminal Deployment Guide</span>
+                        <span className="font-semibold text-foreground/80">
+                          Terminal Deployment Guide
+                        </span>
                       </div>
                       <button
                         onClick={() =>
                           copyText(
-                            `hosterax create ${name || "my-service"} --source ./\nhosterax deploy ${name || "my-service"}`
+                            `hosterax create ${name || "my-service"} --source ./\nhosterax deploy ${name || "my-service"}`,
                           )
                         }
                         className="flex items-center gap-1 text-[11px] font-sans px-2 py-1 rounded bg-surface border border-border hover:bg-accent text-foreground transition-all"
                       >
-                        {copiedCli ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                        {copiedCli ? (
+                          <Check className="w-3 h-3 text-emerald-400" />
+                        ) : (
+                          <Copy className="w-3 h-3" />
+                        )}
                         {copiedCli ? "Copied" : "Copy commands"}
                       </button>
                     </div>
@@ -516,10 +597,16 @@ function NewProject() {
                     <div className="space-y-2 leading-relaxed">
                       <div className="text-muted-foreground/80"># 1. Install CLI globally</div>
                       <div className="text-emerald-400">$ npm install -g hosterax</div>
-                      <div className="text-muted-foreground/80 pt-1"># 2. From your project folder, create and deploy</div>
+                      <div className="text-muted-foreground/80 pt-1">
+                        # 2. From your project folder, create and deploy
+                      </div>
                       <div className="text-primary">$ hosterax login http://localhost:7777</div>
-                      <div className="text-foreground">$ hosterax create {name || "my-service"} --source ./</div>
-                      <div className="text-emerald-400 font-semibold">$ hosterax deploy {name || "my-service"}</div>
+                      <div className="text-foreground">
+                        $ hosterax create {name || "my-service"} --source ./
+                      </div>
+                      <div className="text-emerald-400 font-semibold">
+                        $ hosterax deploy {name || "my-service"}
+                      </div>
                     </div>
                   </div>
 
@@ -528,14 +615,18 @@ function NewProject() {
                       <ShieldCheck className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                       <div>
                         <div className="font-medium text-foreground">Zero Config CLI</div>
-                        <div className="text-muted-foreground text-[11px]">Auto-detects framework, dependencies, and entrypoints.</div>
+                        <div className="text-muted-foreground text-[11px]">
+                          Auto-detects framework, dependencies, and entrypoints.
+                        </div>
                       </div>
                     </div>
                     <div className="p-3 rounded-lg border border-border bg-surface flex items-start gap-2">
                       <Radio className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
                       <div>
                         <div className="font-medium text-foreground">Local Daemon Active</div>
-                        <div className="text-muted-foreground text-[11px]">Listening on port 7777 for instant push builds.</div>
+                        <div className="text-muted-foreground text-[11px]">
+                          Listening on port 7777 for instant push builds.
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -582,7 +673,9 @@ function NewProject() {
                   className="flex items-center gap-2 text-xs font-semibold text-primary hover:underline"
                 >
                   <Settings2 className="w-3.5 h-3.5" />
-                  {showAdvanced ? "Hide Advanced Build & Environment Settings" : "Show Advanced Build & Environment Settings"}
+                  {showAdvanced
+                    ? "Hide Advanced Build & Environment Settings"
+                    : "Show Advanced Build & Environment Settings"}
                 </button>
 
                 {showAdvanced && (
@@ -608,7 +701,9 @@ function NewProject() {
                         <input
                           type="number"
                           value={customPort}
-                          onChange={(e) => setCustomPort(e.target.value ? Number(e.target.value) : "")}
+                          onChange={(e) =>
+                            setCustomPort(e.target.value ? Number(e.target.value) : "")
+                          }
                           placeholder={String(activeStackDef.port || 3000)}
                           className={inputCls}
                         />
@@ -618,7 +713,9 @@ function NewProject() {
                     {/* Environment Variables Table */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
-                        <label className="text-xs font-semibold text-foreground">Environment Variables</label>
+                        <label className="text-xs font-semibold text-foreground">
+                          Environment Variables
+                        </label>
                         <button
                           type="button"
                           onClick={addEnvRow}
@@ -698,7 +795,9 @@ function NewProject() {
               <div className="space-y-3 text-xs">
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
                   <span className="text-muted-foreground">Service Name:</span>
-                  <span className="font-semibold text-foreground font-mono">{name || "my-service"}</span>
+                  <span className="font-semibold text-foreground font-mono">
+                    {name || "my-service"}
+                  </span>
                 </div>
 
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
@@ -765,7 +864,8 @@ function NewProject() {
                   Continuous Auto-Healing Active
                 </div>
                 <p>
-                  HosteraX continuously monitors your process or container, automatically restarting on crash or memory spikes.
+                  HosteraX continuously monitors your process or container, automatically restarting
+                  on crash or memory spikes.
                 </p>
               </div>
             </div>
@@ -779,7 +879,15 @@ function NewProject() {
 const inputCls =
   "w-full rounded-lg border border-border bg-surface/80 px-3.5 py-2.5 text-sm text-foreground outline-none transition-all focus:border-primary focus:ring-1 focus:ring-primary shadow-sm";
 
-function Field({ label, desc, children }: { label: string; desc?: string; children: React.ReactNode }) {
+function Field({
+  label,
+  desc,
+  children,
+}: {
+  label: string;
+  desc?: string;
+  children: React.ReactNode;
+}) {
   const id = useId();
   return (
     <div className="space-y-1.5">

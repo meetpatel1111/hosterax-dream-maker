@@ -42,6 +42,10 @@ hosterax/engine/*.db-wal
 # Lockfiles (use bun.lock)
 package-lock.json
 
+# Environment files (never commit secrets)
+.env
+.env.*
+
 # Catalog scratch/build artifacts
 awesome_sysadmin_full.md
 awesome_sysadmin_raw.md

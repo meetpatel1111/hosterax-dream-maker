@@ -1,6 +1,6 @@
 /**
  * HosteraX Control Plane — Complete Database & API Schema Definitions
- * 
+ *
  * Defines TypeScript interfaces for all 19 SQLite relational tables
  * and strongly-typed request/response payloads for every HosteraX Engine REST API.
  */
@@ -37,7 +37,8 @@ export interface DbDeployment {
   commit_message: string | null;
   branch: string;
   phase: "queued" | "building" | "deploying" | "ready" | "failed";
-  trigger: "git" | "manual" | "webhook" | "rollback" | "cli" | "template" | "upload" | "url" | "one-click";
+  trigger:
+    "git" | "manual" | "webhook" | "rollback" | "cli" | "template" | "upload" | "url" | "one-click";
   environment: "production" | "preview" | "development";
   workdir: string | null;
   log_path: string | null;
@@ -211,7 +212,13 @@ export interface DbServerLog {
 export interface DbSelfHealEvent {
   id: string;
   project: string;
-  action: "restart_container" | "switch_blue_green" | "rollback_deployment" | "circuit_breaker_opened" | "circuit_breaker_reset" | "heal_completed";
+  action:
+    | "restart_container"
+    | "switch_blue_green"
+    | "rollback_deployment"
+    | "circuit_breaker_opened"
+    | "circuit_breaker_reset"
+    | "heal_completed";
   reason: string;
   attempt: number;
   created_at: number;
@@ -284,7 +291,8 @@ export interface ProjectPatchRequest {
 
 // ── Deployments API ──
 export interface DeploymentTriggerRequest {
-  trigger?: "git" | "manual" | "webhook" | "rollback" | "cli" | "template" | "upload" | "url" | "one-click";
+  trigger?:
+    "git" | "manual" | "webhook" | "rollback" | "cli" | "template" | "upload" | "url" | "one-click";
   environment?: "production" | "preview" | "development";
 }
 

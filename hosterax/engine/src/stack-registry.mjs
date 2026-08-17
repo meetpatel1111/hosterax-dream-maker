@@ -871,9 +871,7 @@ export function detectStackDir(dir) {
         break;
       case "blazor":
       case "dotnet":
-        fileMatch = [...files].some(
-          (f) => f.endsWith(".csproj") || f.endsWith(".sln"),
-        );
+        fileMatch = [...files].some((f) => f.endsWith(".csproj") || f.endsWith(".sln"));
         break;
       case "static":
         fileMatch = has("index.html") && !has("package.json");

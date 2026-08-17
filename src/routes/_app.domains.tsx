@@ -160,7 +160,8 @@ function DomainsPage() {
     if (!dom?.verified) return toast.error("Verify domain ownership first");
 
     try {
-      const provName = edgeStatus?.provider === "caddy" ? "Caddy (Let's Encrypt / ZeroSSL)" : "OpenResty ACME";
+      const provName =
+        edgeStatus?.provider === "caddy" ? "Caddy (Let's Encrypt / ZeroSSL)" : "OpenResty ACME";
       toast.info(`Requesting automatic TLS certificate via ${provName}...`);
       await engine.call("POST", `/api/domains/${id}/ssl`);
       qc.invalidateQueries({ queryKey: ["all-domains"] });
@@ -199,11 +200,17 @@ function DomainsPage() {
 
     try {
       toast.info("Validating and applying custom certificate...");
-      const res = await engine.call<any>("POST", `/api/domains/${customSslModalDomain.id}/custom-ssl`, {
-        cert_pem: certPem.trim(),
-        key_pem: keyPem.trim(),
-      });
-      toast.success(`Custom SSL active! Issued by ${res.issuer}, valid for ${res.daysRemaining} days.`);
+      const res = await engine.call<any>(
+        "POST",
+        `/api/domains/${customSslModalDomain.id}/custom-ssl`,
+        {
+          cert_pem: certPem.trim(),
+          key_pem: keyPem.trim(),
+        },
+      );
+      toast.success(
+        `Custom SSL active! Issued by ${res.issuer}, valid for ${res.daysRemaining} days.`,
+      );
       setCustomSslModalDomain(null);
       setCertPem("");
       setKeyPem("");
@@ -249,7 +256,7 @@ function DomainsPage() {
   const filtered = domains.filter(
     (d) =>
       d.hostname.toLowerCase().includes(q.toLowerCase()) ||
-      d.projects?.name?.toLowerCase().includes(q.toLowerCase())
+      d.projects?.name?.toLowerCase().includes(q.toLowerCase()),
   );
 
   const sslStatusIcon = (status: string) => {
@@ -276,7 +283,8 @@ function DomainsPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Domains & Automatic TLS/SSL</h1>
           <p className="text-sm text-muted-foreground">
-            Universal edge routing, automated Let's Encrypt / ZeroSSL certificate lifecycle, and custom TLS upload.
+            Universal edge routing, automated Let's Encrypt / ZeroSSL certificate lifecycle, and
+            custom TLS upload.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -299,11 +307,22 @@ function DomainsPage() {
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-primary/20 bg-primary/5 p-4 text-xs">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            {edgeProvider === "caddy" ? <Zap className="h-5 w-5" /> : edgeProvider === "openresty" ? <Flame className="h-5 w-5" /> : <Globe className="h-5 w-5" />}
+            {edgeProvider === "caddy" ? (
+              <Zap className="h-5 w-5" />
+            ) : edgeProvider === "openresty" ? (
+              <Flame className="h-5 w-5" />
+            ) : (
+              <Globe className="h-5 w-5" />
+            )}
           </div>
           <div>
             <div className="font-semibold text-foreground flex items-center gap-2">
-              Active Edge Gateway: {edgeProvider === "caddy" ? "Caddy 2 Engine" : edgeProvider === "openresty" ? "OpenResty (Nginx + Lua)" : "External Proxy"}
+              Active Edge Gateway:{" "}
+              {edgeProvider === "caddy"
+                ? "Caddy 2 Engine"
+                : edgeProvider === "openresty"
+                  ? "OpenResty (Nginx + Lua)"
+                  : "External Proxy"}
               <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-500">
                 Port :80 & :443 Live
               </span>
@@ -312,8 +331,8 @@ function DomainsPage() {
               {edgeProvider === "caddy"
                 ? "Automatic Multi-CA HTTPS (Let's Encrypt + ZeroSSL) with On-Demand TLS and zero-downtime hot reloads."
                 : edgeProvider === "openresty"
-                ? "Nginx + Lua reverse proxy with ACME HTTP-01 webroot challenge and modular /etc/letsencrypt vhosts."
-                : "Bypassing local container. Configuration exports generated in ~/.hosterax/edge."}
+                  ? "Nginx + Lua reverse proxy with ACME HTTP-01 webroot challenge and modular /etc/letsencrypt vhosts."
+                  : "Bypassing local container. Configuration exports generated in ~/.hosterax/edge."}
             </p>
           </div>
         </div>
@@ -334,7 +353,8 @@ function DomainsPage() {
           <Globe className="h-4 w-4 text-primary" /> Register Custom Domain
         </div>
         <p className="text-xs text-muted-foreground">
-          Attach a public domain or subdomain to any deployed service. HosteraX will automatically manage DNS verification and SSL certificates.
+          Attach a public domain or subdomain to any deployed service. HosteraX will automatically
+          manage DNS verification and SSL certificates.
         </p>
         <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
           <input
@@ -398,7 +418,9 @@ function DomainsPage() {
                   <div className="mt-0.5">{sslStatusIcon(d.ssl_status)}</div>
                   <div className="min-w-0 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-semibold text-foreground">{d.hostname}</span>
+                      <span className="font-mono text-sm font-semibold text-foreground">
+                        {d.hostname}
+                      </span>
                       {d.is_primary && (
                         <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary font-semibold">
                           PRIMARY
@@ -459,11 +481,13 @@ function DomainsPage() {
                     {!d.verified && (
                       <div className="mt-2 rounded-lg border border-border/70 bg-muted/30 p-2.5 text-xs space-y-1">
                         <div className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5">
-                          <Info className="h-3.5 w-3.5 text-primary" /> Required DNS Verification Record:
+                          <Info className="h-3.5 w-3.5 text-primary" /> Required DNS Verification
+                          Record:
                         </div>
                         <div className="flex items-center justify-between gap-2 font-mono text-[11px] bg-card p-1.5 rounded border border-border">
                           <span>
-                            Type: <strong>TXT</strong> | Name: <strong>_hosterax-challenge.{d.hostname}</strong> | Value:{" "}
+                            Type: <strong>TXT</strong> | Name:{" "}
+                            <strong>_hosterax-challenge.{d.hostname}</strong> | Value:{" "}
                             <strong>{d.challenge_token}</strong>
                           </span>
                           <button
@@ -563,8 +587,8 @@ function DomainsPage() {
             </div>
 
             <p className="text-xs text-muted-foreground">
-              Provide your own custom X.509 certificate chain (.pem / .crt) and private key (.key) for{" "}
-              <strong className="text-foreground">{customSslModalDomain.hostname}</strong>.
+              Provide your own custom X.509 certificate chain (.pem / .crt) and private key (.key)
+              for <strong className="text-foreground">{customSslModalDomain.hostname}</strong>.
             </p>
 
             <div className="space-y-3">
@@ -631,7 +655,8 @@ function DomainsPage() {
             </div>
 
             <div className="text-xs text-muted-foreground">
-              Configure edge security policies for <strong className="text-foreground">{securityModalDomain.hostname}</strong>.
+              Configure edge security policies for{" "}
+              <strong className="text-foreground">{securityModalDomain.hostname}</strong>.
             </div>
 
             <div className="space-y-3 pt-2">

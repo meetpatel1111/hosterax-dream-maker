@@ -2,15 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { StatusBadge } from "@/components/hx/status-badge";
 import { formatDistanceToNow } from "date-fns";
-import {
-  Search,
-  Shield,
-  Trash2,
-  Activity,
-  HeartPulse,
-  Rocket,
-  PlusCircle,
-} from "lucide-react";
+import { Search, Shield, Trash2, Activity, HeartPulse, Rocket, PlusCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useEngine, useEngineProjects } from "@/lib/engine";
@@ -50,7 +42,12 @@ function ActivityPage() {
           for (const d of deps) {
             events.push({
               id: `dep-${d.id}`,
-              kind: d.phase === "ready" ? "deploy.success" : d.phase === "failed" ? "deploy.failed" : "deploy.building",
+              kind:
+                d.phase === "ready"
+                  ? "deploy.success"
+                  : d.phase === "failed"
+                    ? "deploy.failed"
+                    : "deploy.building",
               label: `Deployment ${d.version || d.id.slice(0, 8)} (${d.project})`,
               user: d.trigger === "git" ? "Git Webhook" : "Local Admin",
               ip: "127.0.0.1",
@@ -69,7 +66,8 @@ function ActivityPage() {
           for (const h of healEvents) {
             events.push({
               id: `heal-${h.id}`,
-              kind: h.action === "circuit_breaker_opened" ? "guard.circuit_breaker" : "heal.remediated",
+              kind:
+                h.action === "circuit_breaker_opened" ? "guard.circuit_breaker" : "heal.remediated",
               label: `AutoHeal: ${h.action} on ${h.project} (${h.reason})`,
               user: "AutoHeal v7 Watchdog",
               ip: "127.0.0.1",
@@ -112,7 +110,8 @@ function ActivityPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Audit Log & Activity</h1>
           <p className="text-sm text-muted-foreground">
-            Complete immutable audit trail of deployments, self-healing events, and configuration changes from SQLite.
+            Complete immutable audit trail of deployments, self-healing events, and configuration
+            changes from SQLite.
           </p>
         </div>
       </div>

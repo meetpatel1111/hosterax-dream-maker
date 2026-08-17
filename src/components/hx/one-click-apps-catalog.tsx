@@ -123,7 +123,7 @@ export function OneClickAppsCatalog({
       try {
         const r = await fetch("/catalog.json");
         const data = await r.json();
-        let apps = data.apps || [];
+        const apps = data.apps || [];
         return { total: apps.length, apps };
       } catch {}
 
@@ -207,9 +207,12 @@ export function OneClickAppsCatalog({
       const matchesSource =
         selectedSource === "all" ||
         (selectedSource === "verified" && item.source === "verified") ||
-        (selectedSource === "selfhst" && (item.source === "selfhst" || item.tags?.includes("selfhst"))) ||
-        (selectedSource === "awesome_sysadmin" && (item.source === "awesome_sysadmin" || item.tags?.includes("sysadmin"))) ||
-        (selectedSource === "awesome_selfhosted" && (item.source === "awesome_selfhosted" || item.source === "verified")) ||
+        (selectedSource === "selfhst" &&
+          (item.source === "selfhst" || item.tags?.includes("selfhst"))) ||
+        (selectedSource === "awesome_sysadmin" &&
+          (item.source === "awesome_sysadmin" || item.tags?.includes("sysadmin"))) ||
+        (selectedSource === "awesome_selfhosted" &&
+          (item.source === "awesome_selfhosted" || item.source === "verified")) ||
         item.source === selectedSource;
 
       // Tag / Category filter
@@ -303,7 +306,10 @@ export function OneClickAppsCatalog({
         "it-tools": "corentinth/it-tools:latest",
       };
       const cleanInputKey = tag.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-      const baseInputKey = tag.split(":")[0].toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      const baseInputKey = tag
+        .split(":")[0]
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "");
       let resolvedSource = WELL_KNOWN_MAP[cleanInputKey] || WELL_KNOWN_MAP[baseInputKey] || tag;
       if (!resolvedSource.includes(":") && !resolvedSource.includes("/")) {
         resolvedSource = `${resolvedSource}:latest`;
@@ -318,7 +324,8 @@ export function OneClickAppsCatalog({
           .toLowerCase() || "custom-app";
 
       const projName = `${cleanName}-${Math.random().toString(36).substring(2, 6)}`;
-      const targetPort = customInspectResult?.detectedPort || (cleanInputKey === "ollama" ? 11434 : 3000);
+      const targetPort =
+        customInspectResult?.detectedPort || (cleanInputKey === "ollama" ? 11434 : 3000);
 
       // 1. Create project
       await eng.call("POST", "/api/projects", {
@@ -403,7 +410,10 @@ export function OneClickAppsCatalog({
                 One-Click Self-Hosted Software Catalog
               </h2>
               <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-                Browse 112+ tags and categories from <strong>awesome-selfhosted.net</strong>, <strong>sysadmin.awesome-selfhosted.net</strong>, and <strong>selfh.st/apps</strong>. Launch any application instantly with smart zero-config port discovery, persistent volumes, and custom domains.
+                Browse 112+ tags and categories from <strong>awesome-selfhosted.net</strong>,{" "}
+                <strong>sysadmin.awesome-selfhosted.net</strong>, and <strong>selfh.st/apps</strong>
+                . Launch any application instantly with smart zero-config port discovery, persistent
+                volumes, and custom domains.
               </p>
             </div>
 
@@ -594,7 +604,9 @@ export function OneClickAppsCatalog({
               <button
                 onClick={() => setViewMode("scroll")}
                 className={`px-2 py-0.5 rounded font-medium transition-colors ${
-                  viewMode === "scroll" ? "bg-primary text-primary-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
+                  viewMode === "scroll"
+                    ? "bg-primary text-primary-foreground font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Infinite / Load More
@@ -602,7 +614,9 @@ export function OneClickAppsCatalog({
               <button
                 onClick={() => setViewMode("page")}
                 className={`px-2 py-0.5 rounded font-medium transition-colors ${
-                  viewMode === "page" ? "bg-primary text-primary-foreground font-semibold" : "text-muted-foreground hover:text-foreground"
+                  viewMode === "page"
+                    ? "bg-primary text-primary-foreground font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 Page Numbers
@@ -719,7 +733,8 @@ export function OneClickAppsCatalog({
                               <ExternalLink className="w-2.5 h-2.5 opacity-0 group-hover/title:opacity-100 transition-opacity text-primary" />
                             </a>
                             {(() => {
-                              const sNum = typeof item.stars === "number" ? item.stars : Number(item.stars);
+                              const sNum =
+                                typeof item.stars === "number" ? item.stars : Number(item.stars);
                               if (isNaN(sNum) || sNum <= 0) return null;
                               const formatted =
                                 sNum >= 1000000
@@ -893,8 +908,10 @@ export function OneClickAppsCatalog({
               <div className="mt-8 rounded-xl border border-border/80 bg-card p-6 shadow-sm text-center space-y-4">
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 max-w-xl mx-auto text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">
-                    Showing <span className="font-mono text-primary font-bold">{visibleItems.length}</span> of{" "}
-                    <span className="font-mono font-bold">{filteredItems.length}</span> applications
+                    Showing{" "}
+                    <span className="font-mono text-primary font-bold">{visibleItems.length}</span>{" "}
+                    of <span className="font-mono font-bold">{filteredItems.length}</span>{" "}
+                    applications
                   </span>
                   <span className="font-mono text-[11px]">
                     {filteredItems.length - visibleCount} apps remaining
@@ -905,7 +922,9 @@ export function OneClickAppsCatalog({
                 <div className="max-w-xl mx-auto h-2 bg-surface-2 rounded-full overflow-hidden border border-border/40">
                   <div
                     className="h-full bg-primary rounded-full transition-all duration-300"
-                    style={{ width: `${Math.min(100, Math.round((visibleItems.length / filteredItems.length) * 100))}%` }}
+                    style={{
+                      width: `${Math.min(100, Math.round((visibleItems.length / filteredItems.length) * 100))}%`,
+                    }}
                   />
                 </div>
 
@@ -949,7 +968,8 @@ export function OneClickAppsCatalog({
             <div className="mt-8 rounded-xl border border-border/80 bg-card p-5 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
               <div className="text-xs text-muted-foreground">
                 Page <span className="font-mono font-bold text-foreground">{currentPage}</span> of{" "}
-                <span className="font-mono font-bold text-foreground">{totalPages}</span> ({filteredItems.length} total apps)
+                <span className="font-mono font-bold text-foreground">{totalPages}</span> (
+                {filteredItems.length} total apps)
               </div>
 
               <div className="flex flex-wrap items-center justify-center gap-1.5">

@@ -43,7 +43,9 @@ export class TLSManager {
         this.db.prepare("ALTER TABLE domains ADD COLUMN hsts_enabled INTEGER DEFAULT 1").run();
       }
       if (!colNames.has("challenge_type")) {
-        this.db.prepare("ALTER TABLE domains ADD COLUMN challenge_type TEXT DEFAULT 'http-01'").run();
+        this.db
+          .prepare("ALTER TABLE domains ADD COLUMN challenge_type TEXT DEFAULT 'http-01'")
+          .run();
       }
     } catch (e) {
       console.error("[tls-manager] Schema upgrade check:", e.message);
@@ -92,7 +94,9 @@ export class TLSManager {
       const flattened = txtRecords.map((chunks) => chunks.join(""));
       detectedRecords = flattened;
 
-      if (flattened.some((rec) => rec.includes(challengeToken) || rec.includes("hosterax-verify"))) {
+      if (
+        flattened.some((rec) => rec.includes(challengeToken) || rec.includes("hosterax-verify"))
+      ) {
         isVerified = true;
         verifyMethod = "dns-txt";
       }
@@ -155,7 +159,9 @@ export class TLSManager {
         daysRemaining,
         isExpired: now > validTo,
         fingerprint256: x509.fingerprint256,
-        subjectAltNames: x509.subjectAltName ? x509.subjectAltName.split(", ").map((s) => s.replace(/^DNS:/, "")) : [],
+        subjectAltNames: x509.subjectAltName
+          ? x509.subjectAltName.split(", ").map((s) => s.replace(/^DNS:/, ""))
+          : [],
       };
     } catch (e) {
       if (certPem && certPem.includes("BEGIN CERTIFICATE")) {
@@ -207,7 +213,7 @@ export class TLSManager {
         ssl_fingerprint=?, 
         ssl_cert_pem=?, 
         ssl_key_pem=? 
-       WHERE id=?`
+       WHERE id=?`,
       )
       .run(
         inspect.issuer || "Custom SSL",
@@ -215,7 +221,7 @@ export class TLSManager {
         inspect.fingerprint256,
         certPem,
         keyPem,
-        domainId
+        domainId,
       );
 
     return {
@@ -252,7 +258,11 @@ export class TLSManager {
       issuer = "Let's Encrypt / ZeroSSL (Auto-Managed by Caddy)";
     }
 
-    const mockFingerprint = crypto.createHash("sha256").update(hostname + now).digest("hex").slice(0, 48);
+    const mockFingerprint = crypto
+      .createHash("sha256")
+      .update(hostname + now)
+      .digest("hex")
+      .slice(0, 48);
 
     this.db
       .prepare(
@@ -262,7 +272,7 @@ export class TLSManager {
         ssl_expires_at=?, 
         ssl_fingerprint=?,
         verified=1
-       WHERE id=?`
+       WHERE id=?`,
       )
       .run(issuer, ninetyDays, mockFingerprint, domainId);
 

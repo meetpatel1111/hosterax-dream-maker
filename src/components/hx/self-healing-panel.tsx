@@ -178,19 +178,25 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
     queryKey: ["health-config", projectName, engine.url],
     queryFn: async () => {
       if (!projectName) return null;
-      return engine.call<HealthConfig>("GET", `/api/projects/${encodeURIComponent(projectName)}/health-config`);
+      return engine.call<HealthConfig>(
+        "GET",
+        `/api/projects/${encodeURIComponent(projectName)}/health-config`,
+      );
     },
     enabled: !!projectName,
   });
 
   // Query live Docker Hub search API
-  const { data: hubData, isLoading: hubLoading } = useQuery<{ total: number; results: DockerHubResult[] }>({
+  const { data: hubData, isLoading: hubLoading } = useQuery<{
+    total: number;
+    results: DockerHubResult[];
+  }>({
     queryKey: ["dockerhub-live-search", hubSearchQuery, engine.url],
     queryFn: async () => {
       if (!hubSearchQuery.trim()) return { total: 0, results: [] };
       return engine.call<{ total: number; results: DockerHubResult[] }>(
         "GET",
-        `/api/catalog/dockerhub-search?q=${encodeURIComponent(hubSearchQuery.trim())}`
+        `/api/catalog/dockerhub-search?q=${encodeURIComponent(hubSearchQuery.trim())}`,
       );
     },
     enabled: showDockerHubModal && !!hubSearchQuery.trim(),
@@ -203,7 +209,7 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
       if (!selectedRepoForTags) return null;
       return engine.call<DockerHubTagsResponse>(
         "GET",
-        `/api/catalog/dockerhub-tags?repo=${encodeURIComponent(selectedRepoForTags)}`
+        `/api/catalog/dockerhub-tags?repo=${encodeURIComponent(selectedRepoForTags)}`,
       );
     },
     enabled: !!selectedRepoForTags,
@@ -225,7 +231,11 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   // Update health config mutation
   const updateConfigMutation = useMutation({
     mutationFn: async (updated: HealthConfig) => {
-      return engine.call("POST", `/api/projects/${encodeURIComponent(projectName!)}/health-config`, updated);
+      return engine.call(
+        "POST",
+        `/api/projects/${encodeURIComponent(projectName!)}/health-config`,
+        updated,
+      );
     },
     onSuccess: () => {
       toast.success("Health probe policy saved");
@@ -241,10 +251,15 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   // Autonomous CrashLoop Auto-Remediation Mutation
   const autoRemediateMutation = useMutation({
     mutationFn: async () => {
-      return engine.call("POST", `/api/projects/${encodeURIComponent(projectName!)}/auto-remediate-image`);
+      return engine.call(
+        "POST",
+        `/api/projects/${encodeURIComponent(projectName!)}/auto-remediate-image`,
+      );
     },
     onSuccess: (data: any) => {
-      toast.success(`🪄 ${data.message || "Auto-Remediation complete: Switched to verified image."}`);
+      toast.success(
+        `🪄 ${data.message || "Auto-Remediation complete: Switched to verified image."}`,
+      );
       qc.invalidateQueries({ queryKey: ["self-heal-status"] });
       qc.invalidateQueries({ queryKey: ["self-heal-events"] });
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -285,7 +300,10 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   const [auditData, setAuditData] = useState<AuditResult | null>(null);
   const auditMutation = useMutation({
     mutationFn: async () => {
-      return engine.call<AuditResult>("POST", `/api/projects/${encodeURIComponent(projectName!)}/pipeline-audit`);
+      return engine.call<AuditResult>(
+        "POST",
+        `/api/projects/${encodeURIComponent(projectName!)}/pipeline-audit`,
+      );
     },
     onSuccess: (data) => {
       setAuditData(data);
@@ -300,7 +318,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   // Trigger Chaos Drill
   const chaosMutation = useMutation({
     mutationFn: async (type: "kill" | "memory_spike" | "flapping") => {
-      return engine.call("POST", `/api/projects/${encodeURIComponent(projectName!)}/chaos-test`, { type });
+      return engine.call("POST", `/api/projects/${encodeURIComponent(projectName!)}/chaos-test`, {
+        type,
+      });
     },
     onSuccess: (data: any) => {
       toast.warning(`Chaos drill initiated: ${data.message}`);
@@ -347,15 +367,60 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   const projectHealth = projectName && status?.projects ? status.projects[projectName] : null;
 
   const defaultStages: PipelineStage[] = [
-    { stage: "build", name: "1. Build Healer", status: "passed", detail: "Multi-stage builder & amd64 emulation ready" },
-    { stage: "registry", name: "2. Registry Resolver", status: "passed", detail: "Multi-registry fallback active (ghcr, quay, docker)" },
-    { stage: "pull", name: "3. Pull Engine", status: "passed", detail: "Universal Image Resolver with live Docker Hub & DHI discovery" },
-    { stage: "startup", name: "4. Startup Guard", status: "passed", detail: "--init (Tini PID 1) active, env injection ready" },
-    { stage: "network", name: "5. Network Healer", status: "passed", detail: "Dynamic port rebind & bridge cleanup active" },
-    { stage: "health", name: "6. Health Probes", status: projectHealth?.status === "healthy" ? "passed" : "warning", detail: "3-tier probes (Startup, Readiness, Liveness)" },
-    { stage: "storage", name: "7. Storage Sentinel", status: "passed", detail: "Named volume persistence (hx_vol_*) active" },
-    { stage: "resources", name: "8. Resource Sentinel", status: "passed", detail: "Predictive 90% OOM guard & AutoPrune active" },
-    { stage: "orchestration", name: "9. Orchestration", status: "passed", detail: "CrashLoop auto-remediation & zero downtime active" },
+    {
+      stage: "build",
+      name: "1. Build Healer",
+      status: "passed",
+      detail: "Multi-stage builder & amd64 emulation ready",
+    },
+    {
+      stage: "registry",
+      name: "2. Registry Resolver",
+      status: "passed",
+      detail: "Multi-registry fallback active (ghcr, quay, docker)",
+    },
+    {
+      stage: "pull",
+      name: "3. Pull Engine",
+      status: "passed",
+      detail: "Universal Image Resolver with live Docker Hub & DHI discovery",
+    },
+    {
+      stage: "startup",
+      name: "4. Startup Guard",
+      status: "passed",
+      detail: "--init (Tini PID 1) active, env injection ready",
+    },
+    {
+      stage: "network",
+      name: "5. Network Healer",
+      status: "passed",
+      detail: "Dynamic port rebind & bridge cleanup active",
+    },
+    {
+      stage: "health",
+      name: "6. Health Probes",
+      status: projectHealth?.status === "healthy" ? "passed" : "warning",
+      detail: "3-tier probes (Startup, Readiness, Liveness)",
+    },
+    {
+      stage: "storage",
+      name: "7. Storage Sentinel",
+      status: "passed",
+      detail: "Named volume persistence (hx_vol_*) active",
+    },
+    {
+      stage: "resources",
+      name: "8. Resource Sentinel",
+      status: "passed",
+      detail: "Predictive 90% OOM guard & AutoPrune active",
+    },
+    {
+      stage: "orchestration",
+      name: "9. Orchestration",
+      status: "passed",
+      detail: "CrashLoop auto-remediation & zero downtime active",
+    },
   ];
 
   const displayStages = auditData?.stages || defaultStages;
@@ -379,14 +444,17 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-lg font-semibold tracking-tight">AutoHeal v7 Autonomous Resilience & Docker Hub Tags Explorer</h3>
+                <h3 className="text-lg font-semibold tracking-tight">
+                  AutoHeal v7 Autonomous Resilience & Docker Hub Tags Explorer
+                </h3>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-0.5 text-[11px] font-medium text-success">
                   <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
                   Docker Hub Tags & Hardened DHI Mesh Active
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Universal tag explorer, Docker Hardened Images (DHI), CrashLoopBackOff autonomous auto-remediation, and circuit breakers.
+                Universal tag explorer, Docker Hardened Images (DHI), CrashLoopBackOff autonomous
+                auto-remediation, and circuit breakers.
               </p>
             </div>
           </div>
@@ -413,7 +481,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   disabled={auditMutation.isPending}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-primary/15 border border-primary/30 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/25 transition-colors disabled:opacity-50"
                 >
-                  <Play className={`h-3.5 w-3.5 ${auditMutation.isPending ? "animate-spin" : ""}`} />
+                  <Play
+                    className={`h-3.5 w-3.5 ${auditMutation.isPending ? "animate-spin" : ""}`}
+                  />
                   Run 9-Stage Audit
                 </button>
                 <button
@@ -430,7 +500,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
               disabled={probeMutation.isPending}
               className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-foreground hover:bg-surface-2 transition-colors disabled:opacity-50"
             >
-              <RefreshCw className={`h-3.5 w-3.5 ${probeMutation.isPending ? "animate-spin" : ""}`} />
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${probeMutation.isPending ? "animate-spin" : ""}`}
+              />
               Probe Now
             </button>
             <button
@@ -460,7 +532,8 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                     </span>
                   </div>
                   <p className="mt-0.5 text-xs text-muted-foreground font-mono">
-                    {projectHealth?.message || "Container failed to initialize or unresponsive on port."}
+                    {projectHealth?.message ||
+                      "Container failed to initialize or unresponsive on port."}
                   </p>
                 </div>
               </div>
@@ -471,7 +544,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   disabled={autoRemediateMutation.isPending}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-primary hover:bg-primary/90 px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition-all disabled:opacity-50"
                 >
-                  <Wand2 className={`h-3.5 w-3.5 ${autoRemediateMutation.isPending ? "animate-spin" : ""}`} />
+                  <Wand2
+                    className={`h-3.5 w-3.5 ${autoRemediateMutation.isPending ? "animate-spin" : ""}`}
+                  />
                   <span>🪄 Auto-Remediate with Docker Hub</span>
                 </button>
                 <button
@@ -516,7 +591,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   </>
                 )}
               </div>
-              <div className="mt-1 text-xs text-muted-foreground truncate">{projectHealth.message}</div>
+              <div className="mt-1 text-xs text-muted-foreground truncate">
+                {projectHealth.message}
+              </div>
             </div>
 
             <div className="rounded-lg border border-border/80 bg-surface/50 p-3">
@@ -525,8 +602,12 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
               </div>
               <div className="mt-1 flex items-center gap-2 font-mono text-lg font-semibold text-foreground">
                 <Activity className="h-4 w-4 text-primary" />
-                <span>{projectHealth.latencyMs > 0 ? `${projectHealth.latencyMs} ms` : "< 1 ms"}</span>
-                <span className="text-xs font-normal text-muted-foreground">({projectHealth.memoryPercent || "0.4"}% RAM)</span>
+                <span>
+                  {projectHealth.latencyMs > 0 ? `${projectHealth.latencyMs} ms` : "< 1 ms"}
+                </span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  ({projectHealth.memoryPercent || "0.4"}% RAM)
+                </span>
               </div>
               <div className="mt-1 text-xs text-muted-foreground font-mono">
                 {config?.probePath || "/"} (HTTP {config?.expectedStatus || 200})
@@ -555,7 +636,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   </span>
                 )}
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">Flapping & cascading failure guard</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Flapping & cascading failure guard
+              </div>
             </div>
 
             <div className="rounded-lg border border-border/80 bg-surface/50 p-3">
@@ -566,7 +649,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                 <ArrowRightLeft className="h-4 w-4 text-primary" />
                 {config?.blueGreen !== false ? "Blue-Green Zero Downtime" : "Direct Fast Replace"}
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">Atomic route cutover upon 200 OK</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Atomic route cutover upon 200 OK
+              </div>
             </div>
           </div>
         )}
@@ -581,7 +666,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
               </span>
             </div>
             <span className="text-[11px] font-mono text-muted-foreground">
-              {auditData ? `Last audited: ${new Date(auditData.auditTimestamp).toLocaleTimeString()} (${auditData.durationMs}ms)` : "Continuous watchdog monitoring"}
+              {auditData
+                ? `Last audited: ${new Date(auditData.auditTimestamp).toLocaleTimeString()} (${auditData.durationMs}ms)`
+                : "Continuous watchdog monitoring"}
             </span>
           </div>
 
@@ -604,8 +691,12 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                     <AlertTriangle className="h-3.5 w-3.5 text-warning" />
                   )}
                 </div>
-                <span className="text-[10px] font-medium text-foreground truncate w-full">{st.name.split(". ")[1]}</span>
-                <span className="text-[9px] font-mono text-success uppercase mt-0.5">{st.status}</span>
+                <span className="text-[10px] font-medium text-foreground truncate w-full">
+                  {st.name.split(". ")[1]}
+                </span>
+                <span className="text-[9px] font-mono text-success uppercase mt-0.5">
+                  {st.status}
+                </span>
               </button>
             ))}
           </div>
@@ -615,7 +706,12 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
             <div className="mt-3 rounded-lg border border-primary/30 bg-primary/5 p-3 text-xs font-mono">
               <div className="flex items-center justify-between text-foreground font-semibold">
                 <span>{displayStages.find((s) => s.stage === activeStageTab)?.name}</span>
-                <button onClick={() => setActiveStageTab(null)} className="text-muted-foreground hover:text-foreground">✕</button>
+                <button
+                  onClick={() => setActiveStageTab(null)}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  ✕
+                </button>
               </div>
               <p className="mt-1 text-muted-foreground">
                 {displayStages.find((s) => s.stage === activeStageTab)?.detail}
@@ -638,7 +734,8 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   Docker Hub Live Search, Tags & Hardened DHI Explorer
                 </h4>
                 <p className="text-[11px] text-muted-foreground">
-                  Live repository search, tag version inspector, and Docker Hardened Images (DHI) catalog.
+                  Live repository search, tag version inspector, and Docker Hardened Images (DHI)
+                  catalog.
                 </p>
               </div>
             </div>
@@ -670,8 +767,20 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
 
           {/* Quick Suggestions */}
           <div className="flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-[11px] text-muted-foreground font-medium">Quick suggestions:</span>
-            {["mcp/playwright", "apache/airflow", "dhi/airflow", "postgres", "redis", "n8n", "vaultwarden", "immich", "ollama"].map((sug) => (
+            <span className="text-[11px] text-muted-foreground font-medium">
+              Quick suggestions:
+            </span>
+            {[
+              "mcp/playwright",
+              "apache/airflow",
+              "dhi/airflow",
+              "postgres",
+              "redis",
+              "n8n",
+              "vaultwarden",
+              "immich",
+              "ollama",
+            ].map((sug) => (
               <button
                 key={sug}
                 onClick={() => setHubSearchQuery(sug)}
@@ -706,7 +815,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="text-base">{r.icon}</span>
-                          <span className="font-mono text-xs font-bold text-foreground truncate">{r.repoName}</span>
+                          <span className="font-mono text-xs font-bold text-foreground truncate">
+                            {r.repoName}
+                          </span>
                           {r.isOfficial && (
                             <span className="rounded bg-primary/20 text-primary px-1.5 py-0.2 text-[9px] font-bold uppercase tracking-wider">
                               Official
@@ -746,7 +857,11 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                         >
                           <Tag className="h-3 w-3 text-primary" />
                           <span>Tags</span>
-                          {isTagsExpanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                          {isTagsExpanded ? (
+                            <ChevronUp className="h-3 w-3" />
+                          ) : (
+                            <ChevronDown className="h-3 w-3" />
+                          )}
                         </button>
                         <button
                           onClick={() => switchImageMutation.mutate(r.image)}
@@ -786,7 +901,11 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                                   </div>
                                 </div>
                                 <button
-                                  onClick={() => switchImageMutation.mutate(`${tagsData.hardenedAlternative}:latest`)}
+                                  onClick={() =>
+                                    switchImageMutation.mutate(
+                                      `${tagsData.hardenedAlternative}:latest`,
+                                    )
+                                  }
                                   className="shrink-0 px-2.5 py-1 rounded bg-success text-success-foreground text-[10px] font-semibold hover:opacity-90 transition-opacity"
                                 >
                                   Deploy DHI
@@ -843,7 +962,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
           <div className="flex items-center justify-between border-b border-border pb-3">
             <div className="flex items-center gap-2 text-destructive">
               <Flame className="h-5 w-5" />
-              <h4 className="text-sm font-semibold tracking-tight text-foreground">Chaos Engineering & Self-Healing Lab</h4>
+              <h4 className="text-sm font-semibold tracking-tight text-foreground">
+                Chaos Engineering & Self-Healing Lab
+              </h4>
             </div>
             <button
               onClick={() => setShowChaosModal(false)}
@@ -854,7 +975,8 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Safely inject simulated failure scenarios to verify HosteraX's autonomous detection, circuit breaking, and resurrection capabilities in real time.
+            Safely inject simulated failure scenarios to verify HosteraX's autonomous detection,
+            circuit breaking, and resurrection capabilities in real time.
           </p>
 
           <div className="grid gap-3 sm:grid-cols-3">
@@ -865,7 +987,8 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   Simulate Sudden Crash (kill -9)
                 </div>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Kills the container process instantly to test Watchdog detection and resurrection (&lt;4s).
+                  Kills the container process instantly to test Watchdog detection and resurrection
+                  (&lt;4s).
                 </p>
               </div>
               <button
@@ -884,7 +1007,8 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   Simulate 92% RAM Saturation
                 </div>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Simulates near-OOM memory spike to test Predictive OOM Sentinel warnings and buffer recycling.
+                  Simulates near-OOM memory spike to test Predictive OOM Sentinel warnings and
+                  buffer recycling.
                 </p>
               </div>
               <button
@@ -903,7 +1027,8 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   Simulate Flapping Oscillation
                 </div>
                 <p className="mt-1 text-[11px] text-muted-foreground">
-                  Triggers consecutive failures to verify Circuit Breaker tripping to OPEN and canary recovery.
+                  Triggers consecutive failures to verify Circuit Breaker tripping to OPEN and
+                  canary recovery.
                 </p>
               </div>
               <button
@@ -924,7 +1049,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
           <div className="flex items-center justify-between border-b border-border pb-3">
             <div className="flex items-center gap-2">
               <Sliders className="h-4 w-4 text-primary" />
-              <h4 className="text-sm font-semibold tracking-tight">Configure Health Probes & Blue-Green Policy</h4>
+              <h4 className="text-sm font-semibold tracking-tight">
+                Configure Health Probes & Blue-Green Policy
+              </h4>
             </div>
             <button
               onClick={() => setShowConfigModal(false)}
@@ -936,22 +1063,30 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
 
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <div>
-              <label className="text-xs font-medium text-muted-foreground">HTTP Probe Endpoint Path</label>
+              <label className="text-xs font-medium text-muted-foreground">
+                HTTP Probe Endpoint Path
+              </label>
               <input
                 value={formData.probePath}
                 onChange={(e) => setFormData({ ...formData, probePath: e.target.value })}
                 placeholder="/"
                 className="mt-1 w-full rounded-md border border-input bg-input/40 px-3 py-1.5 text-xs font-mono"
               />
-              <span className="text-[10px] text-muted-foreground">e.g. /health, /api/health, /</span>
+              <span className="text-[10px] text-muted-foreground">
+                e.g. /health, /api/health, /
+              </span>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Expected HTTP Status Code</label>
+              <label className="text-xs font-medium text-muted-foreground">
+                Expected HTTP Status Code
+              </label>
               <input
                 type="number"
                 value={formData.expectedStatus}
-                onChange={(e) => setFormData({ ...formData, expectedStatus: parseInt(e.target.value) || 200 })}
+                onChange={(e) =>
+                  setFormData({ ...formData, expectedStatus: parseInt(e.target.value) || 200 })
+                }
                 placeholder="200"
                 className="mt-1 w-full rounded-md border border-input bg-input/40 px-3 py-1.5 text-xs font-mono"
               />
@@ -959,39 +1094,57 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Startup Warmup Delay (Seconds)</label>
+              <label className="text-xs font-medium text-muted-foreground">
+                Startup Warmup Delay (Seconds)
+              </label>
               <input
                 type="number"
                 value={formData.startupDelaySeconds}
-                onChange={(e) => setFormData({ ...formData, startupDelaySeconds: parseInt(e.target.value) || 5 })}
+                onChange={(e) =>
+                  setFormData({ ...formData, startupDelaySeconds: parseInt(e.target.value) || 5 })
+                }
                 placeholder="5"
                 className="mt-1 w-full rounded-md border border-input bg-input/40 px-3 py-1.5 text-xs font-mono"
               />
-              <span className="text-[10px] text-muted-foreground">Grace period before killing cold boots</span>
+              <span className="text-[10px] text-muted-foreground">
+                Grace period before killing cold boots
+              </span>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground">Probe Timeout (Seconds)</label>
+              <label className="text-xs font-medium text-muted-foreground">
+                Probe Timeout (Seconds)
+              </label>
               <input
                 type="number"
                 value={formData.timeoutSeconds}
-                onChange={(e) => setFormData({ ...formData, timeoutSeconds: parseInt(e.target.value) || 3 })}
+                onChange={(e) =>
+                  setFormData({ ...formData, timeoutSeconds: parseInt(e.target.value) || 3 })
+                }
                 placeholder="3"
                 className="mt-1 w-full rounded-md border border-input bg-input/40 px-3 py-1.5 text-xs font-mono"
               />
-              <span className="text-[10px] text-muted-foreground">Max seconds before probe is marked failed</span>
+              <span className="text-[10px] text-muted-foreground">
+                Max seconds before probe is marked failed
+              </span>
             </div>
 
             <div>
-              <label className="text-xs font-medium text-muted-foreground">CrashLoop Failure Threshold</label>
+              <label className="text-xs font-medium text-muted-foreground">
+                CrashLoop Failure Threshold
+              </label>
               <input
                 type="number"
                 value={formData.maxRetries}
-                onChange={(e) => setFormData({ ...formData, maxRetries: parseInt(e.target.value) || 4 })}
+                onChange={(e) =>
+                  setFormData({ ...formData, maxRetries: parseInt(e.target.value) || 4 })
+                }
                 placeholder="4"
                 className="mt-1 w-full rounded-md border border-input bg-input/40 px-3 py-1.5 text-xs font-mono"
               />
-              <span className="text-[10px] text-muted-foreground">Retries before automated instant rollback</span>
+              <span className="text-[10px] text-muted-foreground">
+                Retries before automated instant rollback
+              </span>
             </div>
 
             <div className="flex flex-col justify-end">
@@ -1004,7 +1157,9 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                 />
                 <span>Enable Zero-Downtime Blue-Green</span>
               </label>
-              <span className="text-[10px] text-muted-foreground">Keeps old version live until new version passes 200 OK</span>
+              <span className="text-[10px] text-muted-foreground">
+                Keeps old version live until new version passes 200 OK
+              </span>
             </div>
           </div>
 
@@ -1057,14 +1212,19 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
 
         <div className="divide-y divide-border/60">
           {eventsLoading ? (
-            <div className="p-8 text-center text-xs text-muted-foreground">Loading event stream...</div>
+            <div className="p-8 text-center text-xs text-muted-foreground">
+              Loading event stream...
+            </div>
           ) : filteredEvents.length === 0 ? (
             <div className="p-8 text-center text-xs text-muted-foreground">
               No self-healing events recorded yet. Services are running normally.
             </div>
           ) : (
             filteredEvents.map((evt) => (
-              <div key={evt.id} className="flex items-start justify-between gap-4 p-4 hover:bg-surface/30 transition-colors">
+              <div
+                key={evt.id}
+                className="flex items-start justify-between gap-4 p-4 hover:bg-surface/30 transition-colors"
+              >
                 <div className="flex items-start gap-3">
                   <div className="mt-0.5">
                     {evt.status === "success" ? (

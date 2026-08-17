@@ -1,25 +1,29 @@
-import fs from 'node:fs';
+import fs from "node:fs";
 
-function parseSection(content, defaultCategory = '') {
+function parseSection(content, defaultCategory = "") {
   const h3Match = content.match(/<h3>([^<]+)/i);
   if (!h3Match) return null;
   const name = h3Match[1].trim();
 
   // First <p> after <h3> is the description
   const pMatch = content.match(/<\/h3>\s*<p>([\s\S]*?)<\/p>/i);
-  let desc = '';
+  let desc = "";
   if (pMatch) {
-    desc = pMatch[1].replace(/<[^>]+>/g, '').trim();
+    desc = pMatch[1].replace(/<[^>]+>/g, "").trim();
   }
 
   // Links
   let website = null;
   let sourceCode = null;
 
-  const webMatch = content.match(/<a\s+class="external-link"\s+href="([^"]+)"[^>]*>[\s\S]*?Website<\/a>/i);
+  const webMatch = content.match(
+    /<a\s+class="external-link"\s+href="([^"]+)"[^>]*>[\s\S]*?Website<\/a>/i,
+  );
   if (webMatch) website = webMatch[1];
 
-  const srcMatch = content.match(/<a\s+class="external-link"\s+href="([^"]+)"[^>]*>[\s\S]*?Source\s*Code<\/a>/i);
+  const srcMatch = content.match(
+    /<a\s+class="external-link"\s+href="([^"]+)"[^>]*>[\s\S]*?Source\s*Code<\/a>/i,
+  );
   if (srcMatch) sourceCode = srcMatch[1];
 
   // Stars
@@ -37,16 +41,18 @@ function parseSection(content, defaultCategory = '') {
   const platRegex = /class="platform">\s*<a[^>]*>[\s\S]*?([A-Za-z0-9_+#. -]+)<\/a>/gi;
   let plMatch;
   while ((plMatch = platRegex.exec(content)) !== null) {
-    const plName = plMatch[1].replace(/<[^>]+>/g, '').trim();
+    const plName = plMatch[1].replace(/<[^>]+>/g, "").trim();
     if (plName && !platforms.includes(plName)) platforms.push(plName);
   }
 
   // License
   let license = null;
-  const licMatch = content.match(/class="license-(?:box|link|item)"[^>]*>\s*<a[^>]*>[\s\S]*?([A-Za-z0-9_+#. -]+)<\/a>/i) ||
-                    content.match(/<a\s+class="license-link"[^>]*>[\s\S]*?([A-Za-z0-9_+#. -]+)<\/a>/i);
+  const licMatch =
+    content.match(
+      /class="license-(?:box|link|item)"[^>]*>\s*<a[^>]*>[\s\S]*?([A-Za-z0-9_+#. -]+)<\/a>/i,
+    ) || content.match(/<a\s+class="license-link"[^>]*>[\s\S]*?([A-Za-z0-9_+#. -]+)<\/a>/i);
   if (licMatch) {
-    license = licMatch[1].replace(/<[^>]+>/g, '').trim();
+    license = licMatch[1].replace(/<[^>]+>/g, "").trim();
   }
 
   return {
@@ -58,22 +64,24 @@ function parseSection(content, defaultCategory = '') {
     updatedAt,
     platforms,
     license,
-    category: defaultCategory
+    category: defaultCategory,
   };
 }
 
 async function main() {
-  const mainDb = JSON.parse(fs.readFileSync('src/lib/awesome-selfhosted-db.json', 'utf8'));
+  const mainDb = JSON.parse(fs.readFileSync("src/lib/awesome-selfhosted-db.json", "utf8"));
 
   const tagUrls = new Set();
   for (const app of mainDb.apps) {
-    if (app.tagUrl && app.tagUrl.includes('awesome-selfhosted.net')) {
+    if (app.tagUrl && app.tagUrl.includes("awesome-selfhosted.net")) {
       tagUrls.add(app.tagUrl);
     }
   }
 
   const urlList = Array.from(tagUrls);
-  console.log(`Crawling ${urlList.length} category pages across awesome-selfhosted.net & sysadmin...`);
+  console.log(
+    `Crawling ${urlList.length} category pages across awesome-selfhosted.net & sysadmin...`,
+  );
 
   const appMap = new Map();
   for (const app of mainDb.apps) {
@@ -102,7 +110,7 @@ async function main() {
             const parsed = parseSection(match[2]);
             if (parsed) {
               totalParsed++;
-              const cleanId = slug.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+              const cleanId = slug.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
               const app = appMap.get(cleanId) || appMap.get(parsed.name.toLowerCase());
 
               if (app) {
@@ -116,13 +124,19 @@ async function main() {
                   app.license = parsed.license;
                 }
                 if (parsed.platforms && parsed.platforms.length > 0 && !app.language) {
-                  const langPlat = parsed.platforms.find(p => !['Docker', 'Kubernetes', 'Linux', 'BSD', 'Self-hosted'].includes(p)) || parsed.platforms[0];
+                  const langPlat =
+                    parsed.platforms.find(
+                      (p) => !["Docker", "Kubernetes", "Linux", "BSD", "Self-hosted"].includes(p),
+                    ) || parsed.platforms[0];
                   if (langPlat) app.language = langPlat;
                 }
-                if (parsed.website && (!app.website || app.website.includes('awesome-selfhosted.net'))) {
+                if (
+                  parsed.website &&
+                  (!app.website || app.website.includes("awesome-selfhosted.net"))
+                ) {
                   app.website = parsed.website;
                 }
-                if (parsed.url && (!app.url || !app.url.includes('github.com'))) {
+                if (parsed.url && (!app.url || !app.url.includes("github.com"))) {
                   app.url = parsed.url;
                 }
                 if (parsed.desc && (!app.desc || app.desc.length < 15)) {
@@ -135,19 +149,26 @@ async function main() {
         } catch (err) {
           console.error(`Error scraping ${url}:`, err.message);
         }
-      })
+      }),
     );
 
-    console.log(`Progress: ${Math.min(i + BATCH_SIZE, urlList.length)} / ${urlList.length} pages processed.`);
+    console.log(
+      `Progress: ${Math.min(i + BATCH_SIZE, urlList.length)} / ${urlList.length} pages processed.`,
+    );
   }
 
   console.log(`\n=== Crawling Complete ===`);
   console.log(`- Total apps parsed from HTML: ${totalParsed}`);
   console.log(`- Total app records enriched: ${enrichedCount}`);
 
-  fs.writeFileSync('src/lib/awesome-selfhosted-db.json', JSON.stringify(mainDb, null, 2), 'utf8');
-  fs.writeFileSync('hosterax/engine/src/awesome-selfhosted-db.json', JSON.stringify(mainDb, null, 2), 'utf8');
-  console.log('Saved synchronized database files with complete metadata!');
+  fs.writeFileSync("src/lib/awesome-selfhosted-db.json", JSON.stringify(mainDb, null, 2), "utf8");
+  fs.writeFileSync(
+    "hosterax/engine/src/awesome-selfhosted-db.json",
+    JSON.stringify(mainDb, null, 2),
+    "utf8",
+  );
+  fs.writeFileSync("public/catalog.json", JSON.stringify(mainDb, null, 2), "utf8");
+  console.log("Saved synchronized database files with complete metadata!");
 }
 
-main().catch(err => console.error(err));
+main().catch((err) => console.error(err));

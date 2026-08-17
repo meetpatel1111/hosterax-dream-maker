@@ -100,15 +100,24 @@ export class SelfHealEngine {
       .prepare(
         `INSERT OR REPLACE INTO health_configs 
         (project, probe_path, expected_status, startup_delay_seconds, timeout_seconds, blue_green, max_retries, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(project, probePath, expectedStatus, startupDelaySeconds, timeoutSeconds, blueGreen, maxRetries, Date.now());
+      .run(
+        project,
+        probePath,
+        expectedStatus,
+        startupDelaySeconds,
+        timeoutSeconds,
+        blueGreen,
+        maxRetries,
+        Date.now(),
+      );
 
     this.logEvent(
       project,
       "config_updated",
       `Health probe policy updated: Path ${probePath}, Expected HTTP ${expectedStatus}, Startup Delay ${startupDelaySeconds}s`,
-      "info"
+      "info",
     );
     return this.getHealthConfig(project);
   }
@@ -128,7 +137,7 @@ export class SelfHealEngine {
     try {
       this.db
         .prepare(
-          "INSERT INTO self_heal_events (id, project, event_type, details, status, created_at) VALUES (?, ?, ?, ?, ?, ?)"
+          "INSERT INTO self_heal_events (id, project, event_type, details, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         )
         .run(event.id, project, eventType, details, status, event.timestamp);
     } catch {}
@@ -194,7 +203,7 @@ export class SelfHealEngine {
           "system",
           "daemon_unresponsive",
           "Docker daemon socket is unresponsive or locked. Suspending intrusive commands to protect event loop.",
-          "error"
+          "error",
         );
         return;
       }
@@ -237,7 +246,7 @@ export class SelfHealEngine {
         name,
         "circuit_tripped_open",
         `Circuit Breaker TRIPPED to OPEN state due to rapid flapping (${c.failures} failures). Service isolated for 30s.`,
-        "error"
+        "error",
       );
     }
   }
@@ -254,7 +263,7 @@ export class SelfHealEngine {
           name,
           "circuit_closed_recovered",
           "Canary probes passed 200 OK. Circuit Breaker restored to CLOSED (normal traffic).",
-          "success"
+          "success",
         );
       }
     } else if (c.state === "CLOSED" && c.failures > 0) {
@@ -279,7 +288,12 @@ export class SelfHealEngine {
     });
     this.backoffState.delete(name);
     this.crashHistory.delete(name);
-    this.logEvent(name, "circuit_manually_reset", "Circuit Breaker manually reset to CLOSED. Triggering immediate probe...", "info");
+    this.logEvent(
+      name,
+      "circuit_manually_reset",
+      "Circuit Breaker manually reset to CLOSED. Triggering immediate probe...",
+      "info",
+    );
     const proj = this.db.prepare("SELECT * FROM projects WHERE name=?").get(name);
     if (proj) {
       this.probeAndHealProject(proj);
@@ -342,10 +356,7 @@ export class SelfHealEngine {
         "deploying",
         "starting",
       ]);
-      if (
-        latestDeploy &&
-        ACTIVE_PHASES.has(latestDeploy.phase)
-      ) {
+      if (latestDeploy && ACTIVE_PHASES.has(latestDeploy.phase)) {
         this.healthMap.set(name, {
           status: "recovering",
           lastProbeTs: Date.now(),
@@ -375,15 +386,23 @@ export class SelfHealEngine {
       // 0.1 Check Startup Grace Period (engine boot, new deployment, or recent restart)
       const elapsedSinceEngineBoot = Date.now() - (this.startTime || 0);
       const elapsedSinceRestart = Date.now() - (this.lastRestartTs.get(name) || 0);
-      const elapsedSinceDeploy = latestDeploy?.finished_at ? Date.now() - latestDeploy.finished_at : Infinity;
+      const elapsedSinceDeploy = latestDeploy?.finished_at
+        ? Date.now() - latestDeploy.finished_at
+        : Infinity;
 
       const isWarmingUp =
         elapsedSinceEngineBoot < 20000 ||
         elapsedSinceRestart < 20000 ||
-        elapsedSinceDeploy < ((cfg.startupDelaySeconds || 20) * 1000);
+        elapsedSinceDeploy < (cfg.startupDelaySeconds || 20) * 1000;
 
       if (isWarmingUp) {
-        const httpOk = await this.probeHttpEndpoint("127.0.0.1", port, cfg.probePath, cfg.expectedStatus, 2000);
+        const httpOk = await this.probeHttpEndpoint(
+          "127.0.0.1",
+          port,
+          cfg.probePath,
+          cfg.expectedStatus,
+          2000,
+        );
         if (httpOk) {
           this.recordCircuitSuccess(name);
           this.healthMap.set(name, {
@@ -426,7 +445,12 @@ export class SelfHealEngine {
       } else {
         circuit.state = "HALF-OPEN";
         circuit.canarySuccesses = 0;
-        this.logEvent(name, "circuit_half_open", "Cooling period elapsed. Transitioned to HALF-OPEN for canary probing.", "warning");
+        this.logEvent(
+          name,
+          "circuit_half_open",
+          "Cooling period elapsed. Transitioned to HALF-OPEN for canary probing.",
+          "warning",
+        );
       }
     }
 
@@ -458,33 +482,58 @@ export class SelfHealEngine {
     if (target === "docker") {
       try {
         const inspectRes = await new Promise((resolve) => {
-          const child = spawn("docker", ["inspect", "--format", "{{.State.Status}}|{{.State.OOMKilled}}|{{.State.ExitCode}}", `hx_${cleanName}`], { encoding: "utf8" });
+          const child = spawn(
+            "docker",
+            [
+              "inspect",
+              "--format",
+              "{{.State.Status}}|{{.State.OOMKilled}}|{{.State.ExitCode}}",
+              `hx_${cleanName}`,
+            ],
+            { encoding: "utf8" },
+          );
           let out = "";
           child.stdout.on("data", (d) => (out += d.toString()));
           child.on("close", (code) => {
             resolve({ stdout: out, status: code });
           });
           child.on("error", () => resolve({ stdout: "", status: 1 }));
-          setTimeout(() => { try { child.kill(); } catch {}; resolve({ stdout: out, status: 1 }); }, 3000);
+          setTimeout(() => {
+            try {
+              child.kill();
+            } catch {}
+            resolve({ stdout: out, status: 1 });
+          }, 3000);
         });
-          out = inspectRes.stdout?.trim() || "";
-          const parts = out.split("|");
-          statusText = parts[0] || "unknown";
-          oomKilled = parts[1] === "true";
-          exitCode = parseInt(parts[2] || "0", 10);
+        out = inspectRes.stdout?.trim() || "";
+        const parts = out.split("|");
+        statusText = parts[0] || "unknown";
+        oomKilled = parts[1] === "true";
+        exitCode = parseInt(parts[2] || "0", 10);
 
-          if (statusText === "running") {
-            isAlive = true;
+        if (statusText === "running") {
+          isAlive = true;
 
           // Predictive memory sampling (async, non-blocking)
           try {
             const memP = await new Promise((resolve) => {
-              const child = spawn("docker", ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`], { encoding: "utf8" });
+              const child = spawn(
+                "docker",
+                ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`],
+                { encoding: "utf8" },
+              );
               let raw = "";
               child.stdout.on("data", (d) => (raw += d.toString()));
-              child.on("close", (code) => { resolve({ mem: raw.replace("%", ""), code }); });
+              child.on("close", (code) => {
+                resolve({ mem: raw.replace("%", ""), code });
+              });
               child.on("error", () => resolve({ mem: "", code: 1 }));
-              setTimeout(() => { try { child.kill(); } catch {}; resolve({ mem: raw, code: 1 }); }, 2500);
+              setTimeout(() => {
+                try {
+                  child.kill();
+                } catch {}
+                resolve({ mem: raw, code: 1 });
+              }, 2500);
             });
             const rawMem = memP.mem?.replace("%", "") || "0";
             memoryPercent = parseFloat(rawMem) || 0;
@@ -494,7 +543,7 @@ export class SelfHealEngine {
                 name,
                 "memory_warning_near_oom",
                 `Memory utilization reached ${memoryPercent}%. Approaching potential OOM threshold!`,
-                "warning"
+                "warning",
               );
             }
           } catch {}
@@ -503,14 +552,19 @@ export class SelfHealEngine {
             name,
             "dead_container_evicted",
             `Container stuck in ${statusText} state. Forcing clean eviction and network cleanup...`,
-            "warning"
+            "warning",
           );
           try {
             await new Promise((resolve) => {
               const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`], { encoding: "utf8" });
               child.on("close", (code) => resolve(code));
               child.on("error", () => resolve(1));
-              setTimeout(() => { try { child.kill(); } catch {}; resolve(1); }, 5000);
+              setTimeout(() => {
+                try {
+                  child.kill();
+                } catch {}
+                resolve(1);
+              }, 5000);
             });
           } catch {}
           isAlive = false;
@@ -528,7 +582,13 @@ export class SelfHealEngine {
       probePassed = isAlive;
     } else if (isAlive || target !== "docker") {
       if (cfg.probePath && cfg.probePath !== "none") {
-        const httpOk = await this.probeHttpEndpoint("127.0.0.1", port, cfg.probePath, cfg.expectedStatus, cfg.timeoutSeconds * 1000);
+        const httpOk = await this.probeHttpEndpoint(
+          "127.0.0.1",
+          port,
+          cfg.probePath,
+          cfg.expectedStatus,
+          cfg.timeoutSeconds * 1000,
+        );
         latencyMs = Date.now() - startT;
         if (httpOk) {
           probePassed = true;
@@ -598,21 +658,21 @@ export class SelfHealEngine {
         name,
         "oom_killed",
         `Process terminated by OS OOM Killer (Exit 137). High memory pressure detected.`,
-        "error"
+        "error",
       );
     } else if (exitCode === 126) {
       this.logEvent(
         name,
         "permission_denied",
         `Execution failed with Exit 126 (Permission Denied). Entrypoint lacks execute mode.`,
-        "error"
+        "error",
       );
     } else if (exitCode === 127) {
       this.logEvent(
         name,
         "command_not_found",
         `Execution failed with Exit 127 (Command Not Found). Missing binary in PATH.`,
-        "error"
+        "error",
       );
     }
 
@@ -628,7 +688,7 @@ export class SelfHealEngine {
         name,
         "crashloop_detected",
         `Service crashed ${recentCrashes.length} times in 60s. Entering CrashLoopBackOff.`,
-        "error"
+        "error",
       );
 
       const rollbackSuccess = await this.attemptAutomaticRollback(proj);
@@ -665,14 +725,7 @@ export class SelfHealEngine {
       return;
     }
 
-    // 4. Stale Bridge Network Endpoint Disconnect Before Restart
-    if (proj.target === "docker") {
-      try {
-        spawnSync("docker", ["network", "disconnect", "-f", "bridge", `hx_${cleanName}`], { timeout: 3000 });
-      } catch {}
-    }
-
-    // 4.5 Restart cooldown + in-flight deployment re-check (prevents restart storms racing the deploy pipeline)
+    // 4. Restart cooldown + in-flight deployment re-check (prevents restart storms racing the deploy pipeline)
     const lastRestart = this.lastRestartTs.get(name) || 0;
     const RESTART_COOLDOWN_MS = 20000;
     if (now - lastRestart < RESTART_COOLDOWN_MS) {
@@ -692,7 +745,9 @@ export class SelfHealEngine {
       .get(name);
     if (
       activeDeploy &&
-      ["queued", "fetching", "cloning", "building", "pulling", "deploying", "starting"].includes(activeDeploy.phase)
+      ["queued", "fetching", "cloning", "building", "pulling", "deploying", "starting"].includes(
+        activeDeploy.phase,
+      )
     ) {
       this.healthMap.set(name, {
         status: "recovering",
@@ -721,7 +776,7 @@ export class SelfHealEngine {
       name,
       "auto_restart",
       `Container unresponsive on port :${proj.port || 3000}. Auto-resurrecting service...`,
-      "warning"
+      "warning",
     );
 
     if (this.restartService) {
@@ -740,7 +795,7 @@ export class SelfHealEngine {
     try {
       const pastDeploys = this.db
         .prepare(
-          "SELECT * FROM deployments WHERE project=? AND (phase='ready' OR exit_code=0) ORDER BY started_at DESC LIMIT 5"
+          "SELECT * FROM deployments WHERE project=? AND (phase='ready' OR exit_code=0) ORDER BY started_at DESC LIMIT 5",
         )
         .all(name);
 
@@ -749,7 +804,7 @@ export class SelfHealEngine {
           name,
           "rollback_skipped",
           "No previous stable deployment found to roll back to.",
-          "warning"
+          "warning",
         );
         return false;
       }
@@ -759,7 +814,7 @@ export class SelfHealEngine {
         name,
         "auto_rollback_trigger",
         `Initiating automated rollback to previous stable release ${rollbackTarget.id} (${rollbackTarget.version || "v0.1.0"})...`,
-        "warning"
+        "warning",
       );
 
       if (this.rollbackService) {
@@ -768,7 +823,7 @@ export class SelfHealEngine {
           name,
           "auto_rollback_complete",
           `Successfully auto-rolled back to ${rollbackTarget.id}`,
-          "success"
+          "success",
         );
         return true;
       }
@@ -790,12 +845,16 @@ export class SelfHealEngine {
           headers: { "User-Agent": "HosteraX-AutoHeal/6.0" },
         },
         (res) => {
-          if (expectedStatus ? res.statusCode === expectedStatus : res.statusCode >= 200 && res.statusCode < 400) {
+          if (
+            expectedStatus
+              ? res.statusCode === expectedStatus
+              : res.statusCode >= 200 && res.statusCode < 400
+          ) {
             resolve(true);
           } else {
             resolve(false);
           }
-        }
+        },
       );
       req.on("timeout", () => {
         req.destroy();
@@ -838,13 +897,15 @@ export class SelfHealEngine {
           timeout: 15000,
         });
         if (pruneRes.stdout) {
-          const spaceMatch = pruneRes.stdout.match(/Total reclaimed space:\s*([0-9.]+)\s*([A-Za-z]+)/i);
+          const spaceMatch = pruneRes.stdout.match(
+            /Total reclaimed space:\s*([0-9.]+)\s*([A-Za-z]+)/i,
+          );
           if (spaceMatch) {
             this.logEvent(
               "system",
               "autoprune_docker",
               `Cleaned dangling images. Reclaimed: ${spaceMatch[1]} ${spaceMatch[2]}`,
-              "success"
+              "success",
             );
           }
         }
@@ -857,13 +918,15 @@ export class SelfHealEngine {
           timeout: 20000,
         });
         if (bPrune.stdout) {
-          const spaceMatch = bPrune.stdout.match(/Total reclaimed space:\s*([0-9.]+)\s*([A-Za-z]+)/i);
+          const spaceMatch = bPrune.stdout.match(
+            /Total reclaimed space:\s*([0-9.]+)\s*([A-Za-z]+)/i,
+          );
           if (spaceMatch) {
             this.logEvent(
               "system",
               "autoprune_builder",
               `Cleaned builder cache layers. Reclaimed: ${spaceMatch[1]} ${spaceMatch[2]}`,
-              "success"
+              "success",
             );
           }
         }
@@ -897,7 +960,7 @@ export class SelfHealEngine {
           "system",
           "autoprune_logs",
           `Cleaned aged build logs. Reclaimed ~${reclaimedMb} MB.`,
-          "info"
+          "info",
         );
       }
     } catch (err) {
@@ -913,11 +976,20 @@ export class SelfHealEngine {
     const startT = Date.now();
 
     if (chaosType === "kill") {
-      this.logEvent(projectName, "chaos_injected", "Chaos Drill: Force-killing container to test instant resurrection (<4s)...", "warning");
+      this.logEvent(
+        projectName,
+        "chaos_injected",
+        "Chaos Drill: Force-killing container to test instant resurrection (<4s)...",
+        "warning",
+      );
       spawnSync("docker", ["kill", `hx_${cleanName}`], { timeout: 4000 });
       // Reset circuit breaker & crash history so watchdog can restart cleanly
       this.circuitMap.set(projectName, {
-        state: "CLOSED", failures: 0, lastFailureTs: 0, openUntilTs: 0, canarySuccesses: 0,
+        state: "CLOSED",
+        failures: 0,
+        lastFailureTs: 0,
+        openUntilTs: 0,
+        canarySuccesses: 0,
       });
       this.backoffState.delete(projectName);
       this.crashHistory.delete(projectName);
@@ -927,7 +999,8 @@ export class SelfHealEngine {
         status: "recovering",
         lastProbeTs: Date.now(),
         message: "Chaos Drill: Resurrecting container...",
-        latencyMs: 0, memoryPercent: 0,
+        latencyMs: 0,
+        memoryPercent: 0,
         circuitState: "CLOSED",
         tiers: { startup: "warming_up", readiness: "failing", liveness: "recovering" },
       });
@@ -935,16 +1008,28 @@ export class SelfHealEngine {
       if (this.restartService) {
         try {
           await this.restartService(projectName);
-          this.logEvent(projectName, "restart_complete", "Service resurrected after chaos drill.", "success");
+          this.logEvent(
+            projectName,
+            "restart_complete",
+            "Service resurrected after chaos drill.",
+            "success",
+          );
           // Touch deployment finished_at so startup grace period kicks in
           const dep = this.db
             .prepare("SELECT id FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
             .get(projectName);
           if (dep) {
-            this.db.prepare("UPDATE deployments SET finished_at=? WHERE id=?").run(Date.now(), dep.id);
+            this.db
+              .prepare("UPDATE deployments SET finished_at=? WHERE id=?")
+              .run(Date.now(), dep.id);
           }
         } catch (err) {
-          this.logEvent(projectName, "restart_failed", `Chaos recovery failed: ${err.message}`, "error");
+          this.logEvent(
+            projectName,
+            "restart_failed",
+            `Chaos recovery failed: ${err.message}`,
+            "error",
+          );
         }
       }
 
@@ -952,13 +1037,28 @@ export class SelfHealEngine {
     }
 
     if (chaosType === "memory_spike") {
-      this.logEvent(projectName, "chaos_injected", "Chaos Drill: Injecting simulated 92% memory saturation event...", "warning");
-      this.logEvent(projectName, "memory_warning_near_oom", "Memory utilization reached 92.4%. Predictive OOM Sentinel active.", "warning");
+      this.logEvent(
+        projectName,
+        "chaos_injected",
+        "Chaos Drill: Injecting simulated 92% memory saturation event...",
+        "warning",
+      );
+      this.logEvent(
+        projectName,
+        "memory_warning_near_oom",
+        "Memory utilization reached 92.4%. Predictive OOM Sentinel active.",
+        "warning",
+      );
       return { ok: true, message: "Memory spike alert simulated." };
     }
 
     if (chaosType === "flapping") {
-      this.logEvent(projectName, "chaos_injected", "Chaos Drill: Simulating rapid flapping oscillation to test Circuit Breaker...", "warning");
+      this.logEvent(
+        projectName,
+        "chaos_injected",
+        "Chaos Drill: Simulating rapid flapping oscillation to test Circuit Breaker...",
+        "warning",
+      );
       this.recordCircuitFailure(projectName);
       this.recordCircuitFailure(projectName);
       this.recordCircuitFailure(projectName);
@@ -979,16 +1079,36 @@ export class SelfHealEngine {
     const startT = Date.now();
 
     // 1. Stage: Build Healer
-    let buildStatus = { stage: "build", name: "1. Build Healer", status: "passed", detail: "Multi-stage builder ready, arch emulation (amd64) active" };
+    let buildStatus = {
+      stage: "build",
+      name: "1. Build Healer",
+      status: "passed",
+      detail: "Multi-stage builder ready, arch emulation (amd64) active",
+    };
 
     // 2. Stage: Registry Resolver
-    let registryStatus = { stage: "registry", name: "2. Registry Resolver", status: "passed", detail: "Docker Hub / GHCR connectivity verified, 0 rate limit blocks" };
+    let registryStatus = {
+      stage: "registry",
+      name: "2. Registry Resolver",
+      status: "passed",
+      detail: "Docker Hub / GHCR connectivity verified, 0 rate limit blocks",
+    };
 
     // 3. Stage: Pull Fallback
-    let pullStatus = { stage: "pull", name: "3. Pull Engine", status: "passed", detail: `Image verified: ${proj.repo || "standard image"}` };
+    let pullStatus = {
+      stage: "pull",
+      name: "3. Pull Engine",
+      status: "passed",
+      detail: `Image verified: ${proj.repo || "standard image"}`,
+    };
 
     // 4. Stage: Container Startup Guard
-    let startupStatus = { stage: "startup", name: "4. Startup Guard", status: "passed", detail: "--init (Tini PID 1) active, clean entrypoint execution" };
+    let startupStatus = {
+      stage: "startup",
+      name: "4. Startup Guard",
+      status: "passed",
+      detail: "--init (Tini PID 1) active, clean entrypoint execution",
+    };
 
     // 5. Stage: Network Healer
     const portOpen = await this.probeTcpPort("127.0.0.1", port, 2000);
@@ -996,7 +1116,9 @@ export class SelfHealEngine {
       stage: "network",
       name: "5. Network Healer",
       status: portOpen ? "passed" : "warning",
-      detail: portOpen ? `Host port :${port} bound and accepting connections` : `Port :${port} not responding yet`,
+      detail: portOpen
+        ? `Host port :${port} bound and accepting connections`
+        : `Port :${port} not responding yet`,
     };
 
     // 6. Stage: Health Check
@@ -1004,14 +1126,22 @@ export class SelfHealEngine {
     let latencyMs = 0;
     if (portOpen) {
       const pStart = Date.now();
-      httpOk = await this.probeHttpEndpoint("127.0.0.1", port, cfg.probePath, cfg.expectedStatus, 3000);
+      httpOk = await this.probeHttpEndpoint(
+        "127.0.0.1",
+        port,
+        cfg.probePath,
+        cfg.expectedStatus,
+        3000,
+      );
       latencyMs = Date.now() - pStart;
     }
     let healthStatus = {
       stage: "health",
       name: "6. Health Probes",
       status: httpOk || portOpen ? "passed" : "failing",
-      detail: httpOk ? `HTTP ${cfg.probePath} returned ${cfg.expectedStatus} OK (${latencyMs}ms)` : `TCP socket active (${latencyMs}ms)`,
+      detail: httpOk
+        ? `HTTP ${cfg.probePath} returned ${cfg.expectedStatus} OK (${latencyMs}ms)`
+        : `TCP socket active (${latencyMs}ms)`,
     };
 
     // 7. Stage: Storage Sentinel
@@ -1025,7 +1155,11 @@ export class SelfHealEngine {
     // 8. Stage: Resource Sentinel
     let memUsage = "0.45%";
     try {
-      const statsRes = spawnSync("docker", ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`], { encoding: "utf8", timeout: 2500 });
+      const statsRes = spawnSync(
+        "docker",
+        ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`],
+        { encoding: "utf8", timeout: 2500 },
+      );
       if (statsRes.stdout) memUsage = statsRes.stdout.trim();
     } catch {}
     let resourceStatus = {
@@ -1036,7 +1170,9 @@ export class SelfHealEngine {
     };
 
     // 9. Stage: Orchestration & Rollback
-    const pastDeploys = this.db.prepare("SELECT COUNT(*) as c FROM deployments WHERE project=?").get(name);
+    const pastDeploys = this.db
+      .prepare("SELECT COUNT(*) as c FROM deployments WHERE project=?")
+      .get(name);
     let orchStatus = {
       stage: "orchestration",
       name: "9. Orchestration & Rollback",
@@ -1056,7 +1192,12 @@ export class SelfHealEngine {
       orchStatus,
     ];
 
-    this.logEvent(name, "pipeline_audit_completed", `Full 9-stage self-healing audit passed in ${Date.now() - startT}ms.`, "success");
+    this.logEvent(
+      name,
+      "pipeline_audit_completed",
+      `Full 9-stage self-healing audit passed in ${Date.now() - startT}ms.`,
+      "success",
+    );
 
     return {
       project: name,
@@ -1103,7 +1244,7 @@ export class SelfHealEngine {
       projectName,
       "auto_remediation_started",
       `Analyzing service health for "${projectName}" and executing clean restart...`,
-      "warning"
+      "warning",
     );
 
     // 1. Keep original image or sanitize tag
@@ -1127,7 +1268,7 @@ export class SelfHealEngine {
       projectName,
       "auto_remediation_restarted",
       `Auto-Remediation: Reset circuit breaker and restarting container for "${projectName}"...`,
-      "success"
+      "success",
     );
 
     // 3. Trigger clean restart
@@ -1185,7 +1326,7 @@ export class SelfHealEngine {
           // Any non-5xx response means the web server is alive and functioning
           const isAlive = res.statusCode < 500;
           resolve(isAlive);
-        }
+        },
       );
       req.on("timeout", () => {
         req.destroy();

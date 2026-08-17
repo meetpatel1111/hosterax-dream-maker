@@ -248,11 +248,11 @@ export function createProjectsApi(ctx) {
       "project:deployment:list": 1,
       "project:write": 2,
       "project:admin": 3,
-      "read": 1,
-      "list": 1,
-      "deploy": 2,
-      "write": 2,
-      "admin": 3,
+      read: 1,
+      list: 1,
+      deploy: 2,
+      write: 2,
+      admin: 3,
     };
     const need = rank[perm] ?? 3;
     if (scopes.some((s) => (rank[s] ?? 0) >= need)) return;
@@ -261,7 +261,9 @@ export function createProjectsApi(ctx) {
 
   function resolve(idOrName) {
     const p = db
-      .prepare("SELECT * FROM projects WHERE id=? OR name=? OR slug=? OR LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)")
+      .prepare(
+        "SELECT * FROM projects WHERE id=? OR name=? OR slug=? OR LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)",
+      )
       .get(idOrName, idOrName, idOrName, idOrName, idOrName);
     if (!p) notFound("project not found");
     return p;
@@ -280,10 +282,7 @@ export function createProjectsApi(ctx) {
         for (const line of lines) {
           const [cName, cPorts] = line.split("\t");
           if (!cName) continue;
-          if (
-            cName.toLowerCase().includes(clean) ||
-            cName.toLowerCase().includes(`hx_${clean}`)
-          )
+          if (cName.toLowerCase().includes(clean) || cName.toLowerCase().includes(`hx_${clean}`))
             return true;
           if (port && cPorts && cPorts.includes(`:${port}->`)) return true;
         }
@@ -370,16 +369,22 @@ export function createProjectsApi(ctx) {
   // Batch version of shape() to avoid N+1 queries when listing projects
   function shapeBatch(projects) {
     if (!projects || projects.length === 0) return [];
-    const names = projects.map(p => p.name);
+    const names = projects.map((p) => p.name);
     const placeholders = names.map(() => "?").join(",");
 
     // Batch fetch routes
-    const routeRows = db.prepare(`SELECT * FROM routes WHERE project IN (${placeholders})`).all(...names);
+    const routeRows = db
+      .prepare(`SELECT * FROM routes WHERE project IN (${placeholders})`)
+      .all(...names);
     const routesByProject = new Map();
     for (const r of routeRows) routesByProject.set(r.project, r);
 
     // Batch fetch domains
-    const domainRows = db.prepare(`SELECT project, hostname, is_primary, verified, ssl_status FROM domains WHERE project IN (${placeholders})`).all(...names);
+    const domainRows = db
+      .prepare(
+        `SELECT project, hostname, is_primary, verified, ssl_status FROM domains WHERE project IN (${placeholders})`,
+      )
+      .all(...names);
     const domainsByProject = new Map();
     for (const d of domainRows) {
       if (!domainsByProject.has(d.project)) domainsByProject.set(d.project, []);
@@ -387,30 +392,49 @@ export function createProjectsApi(ctx) {
     }
 
     const parse = (v, d) => {
-      try { return v ? JSON.parse(v) : d; } catch { return d; }
+      try {
+        return v ? JSON.parse(v) : d;
+      } catch {
+        return d;
+      }
     };
 
-    return projects.map(p => {
+    return projects.map((p) => {
       const isLive = running.has(p.name) || isDockerRunning(p.name, p.port);
       return {
         ...p,
-        id: p.id, name: p.name, slug: p.slug,
+        id: p.id,
+        name: p.name,
+        slug: p.slug,
         enabled: p.enabled !== 0,
         location: p.location || "local",
         projectType: p.project_type || "app",
-        source: p.source, localPath: p.local_path,
-        git: p.git_repo ? {
-          provider: p.git_provider || "github", owner: p.git_owner, repo: p.git_repo,
-          branch: p.git_branch || "main", installationId: p.installation_id, autoDeploy: p.auto_deploy === 1,
-        } : null,
-        framework: p.framework, packageManager: p.package_manager,
-        installCommand: p.install_command, buildCommand: p.build_cmd,
-        startCommand: p.start_cmd, outputDirectory: p.output_directory,
-        productionPaths: p.production_paths, rootDirectory: p.root_directory,
-        buildImage: p.build_image, productionMode: p.production_mode || "host",
+        source: p.source,
+        localPath: p.local_path,
+        git: p.git_repo
+          ? {
+              provider: p.git_provider || "github",
+              owner: p.git_owner,
+              repo: p.git_repo,
+              branch: p.git_branch || "main",
+              installationId: p.installation_id,
+              autoDeploy: p.auto_deploy === 1,
+            }
+          : null,
+        framework: p.framework,
+        packageManager: p.package_manager,
+        installCommand: p.install_command,
+        buildCommand: p.build_cmd,
+        startCommand: p.start_cmd,
+        outputDirectory: p.output_directory,
+        productionPaths: p.production_paths,
+        rootDirectory: p.root_directory,
+        buildImage: p.build_image,
+        productionMode: p.production_mode || "host",
         port: p.port,
         publicEndpoints: parse(p.public_endpoints_json, []),
-        hasServer: p.has_server !== 0, hasBuild: p.has_build === 1,
+        hasServer: p.has_server !== 0,
+        hasBuild: p.has_build === 1,
         rollbackWindow: p.rollback_window ?? 10,
         cloudArchiveStrategy: p.cloud_archive_strategy || "inplace",
         monorepoApps: parse(p.monorepo_apps_json, []),
@@ -418,9 +442,14 @@ export function createProjectsApi(ctx) {
         monorepoSharedPaths: parse(p.monorepo_shared_paths_json, null),
         routingConfig: parse(p.routing_config_json, null),
         defaultRollbackStrategy: p.default_rollback_strategy || "git",
-        target: p.target, sleepMode: p.sleep_mode || "auto_sleep",
+        target: p.target,
+        sleepMode: p.sleep_mode || "auto_sleep",
         resources: parse(p.resources_json, {
-          production: { cpuCores: p.cpu_limit ?? 1, memoryMb: p.memory_mb_limit ?? 512, diskMb: p.disk_mb ?? 2048 },
+          production: {
+            cpuCores: p.cpu_limit ?? 1,
+            memoryMb: p.memory_mb_limit ?? 512,
+            diskMb: p.disk_mb ?? 2048,
+          },
           build: { cpuCores: 2, memoryMb: 2048, diskMb: 8192 },
         }),
         route: routesByProject.get(p.name) ?? null,
@@ -607,13 +636,17 @@ export function createProjectsApi(ctx) {
         let rows = [];
         if (isArchivedQuery) {
           rows = db
-            .prepare("SELECT * FROM projects WHERE status='archived' ORDER BY deleted_at DESC, created_at DESC")
+            .prepare(
+              "SELECT * FROM projects WHERE status='archived' ORDER BY deleted_at DESC, created_at DESC",
+            )
             .all();
         } else if (isAllQuery) {
           rows = db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all();
         } else {
           rows = db
-            .prepare("SELECT * FROM projects WHERE status != 'archived' OR status IS NULL ORDER BY created_at DESC")
+            .prepare(
+              "SELECT * FROM projects WHERE status != 'archived' OR status IS NULL ORDER BY created_at DESC",
+            )
             .all();
         }
         return (json(res, 200, shapeBatch(rows)), true);
@@ -629,7 +662,9 @@ export function createProjectsApi(ctx) {
       if (p === "/api/projects/home" && req.method === "GET") {
         requirePerm(req, "project:list");
         const allRows = db
-          .prepare("SELECT * FROM projects WHERE status != 'archived' OR status IS NULL ORDER BY created_at DESC")
+          .prepare(
+            "SELECT * FROM projects WHERE status != 'archived' OR status IS NULL ORDER BY created_at DESC",
+          )
           .all();
         const local = shapeBatch(allRows);
         return (json(res, 200, { local, cloud: [], projects: local }), true);
@@ -858,7 +893,10 @@ export function createProjectsApi(ctx) {
                   try {
                     fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 5 });
                   } catch (err) {
-                    console.warn(`[project-delete] Could not delete directory ${targetDir}:`, err.message);
+                    console.warn(
+                      `[project-delete] Could not delete directory ${targetDir}:`,
+                      err.message,
+                    );
                   }
                 }
               }
@@ -1462,7 +1500,11 @@ export function createProjectsApi(ctx) {
             for (const l of raw.split("\n").filter(Boolean)) {
               const match = l.match(/^\[(.*?)\] (.*?): (.*)$/);
               if (match) {
-                initial.push({ ts: new Date(match[1]).getTime(), stream: match[2], text: match[3] });
+                initial.push({
+                  ts: new Date(match[1]).getTime(),
+                  stream: match[2],
+                  text: match[3],
+                });
               } else {
                 initial.push({ ts: Date.now(), stream: "stdout", text: l });
               }
@@ -1471,7 +1513,9 @@ export function createProjectsApi(ctx) {
         }
         const rBuf = runtimeLogs.get(proj.name) ?? [];
         for (const l of rBuf) {
-          if (!initial.some((x) => x.text === l.text && Math.abs((x.ts || 0) - (l.ts || 0)) < 1500)) {
+          if (
+            !initial.some((x) => x.text === l.text && Math.abs((x.ts || 0) - (l.ts || 0)) < 1500)
+          ) {
             initial.push(l);
           }
         }

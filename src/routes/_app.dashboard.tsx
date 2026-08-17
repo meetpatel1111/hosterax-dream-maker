@@ -258,7 +258,11 @@ function Dashboard() {
       <div className="grid gap-4 md:grid-cols-4">
         {sys ? (
           <>
-            <Metric label="CPU Usage" value={`${sys.cpu.percent}%`} sub={`${sys.cpu.cores} cores`} />
+            <Metric
+              label="CPU Usage"
+              value={`${sys.cpu.percent}%`}
+              sub={`${sys.cpu.cores} cores`}
+            />
             <Metric
               label="Memory"
               value={`${sys.memory.percent}%`}
@@ -331,7 +335,11 @@ function Dashboard() {
       ) : empty ? (
         <div className="rounded-xl border border-dashed border-border bg-card/50 p-14 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl bg-primary/15 text-primary">
-            {viewTab === "archived" ? <Archive className="h-6 w-6 text-amber-400" /> : <Sparkles className="h-6 w-6" />}
+            {viewTab === "archived" ? (
+              <Archive className="h-6 w-6 text-amber-400" />
+            ) : (
+              <Sparkles className="h-6 w-6" />
+            )}
           </div>
           <h3 className="mt-4 text-lg font-medium">
             {viewTab === "archived" ? "No archived projects" : "No active projects found"}
@@ -403,7 +411,10 @@ function Dashboard() {
                     <div className="flex items-center gap-1.5 truncate text-foreground/80 font-mono">
                       <Globe className="h-3.5 w-3.5 text-primary shrink-0" />
                       <span className="truncate">
-                        {formatMagicDnsUrl(p.name || p.subdomain, magicDns?.activeProvider || "sslip.io")}
+                        {formatMagicDnsUrl(
+                          p.name || p.subdomain,
+                          magicDns?.activeProvider || "sslip.io",
+                        )}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5 font-mono truncate">
@@ -456,7 +467,9 @@ function Dashboard() {
                         </button>
                       </div>
                       {p.current_version && (
-                        <span className="font-mono font-medium text-primary">{p.current_version}</span>
+                        <span className="font-mono font-medium text-primary">
+                          {p.current_version}
+                        </span>
                       )}
                     </>
                   )}
@@ -486,7 +499,9 @@ function Dashboard() {
             </span>
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Browse 112+ curated categories from awesome-selfhosted.net, sysadmin, and selfh.st. Launch Nextcloud, Vaultwarden, Immich, Uptime Kuma, WordPress, and 42+ framework starter templates in 1 click.
+            Browse 112+ curated categories from awesome-selfhosted.net, sysadmin, and selfh.st.
+            Launch Nextcloud, Vaultwarden, Immich, Uptime Kuma, WordPress, and 42+ framework starter
+            templates in 1 click.
           </p>
         </div>
         <Link

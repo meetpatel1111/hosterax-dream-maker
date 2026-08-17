@@ -29,7 +29,9 @@ function DeploymentsPage() {
             trigger_type: d.trigger || "manual",
             phase: d.phase,
             status: d.phase === "ready" ? "success" : d.phase === "failed" ? "error" : "building",
-            created_at: d.started_at ? new Date(d.started_at).toISOString() : new Date().toISOString(),
+            created_at: d.started_at
+              ? new Date(d.started_at).toISOString()
+              : new Date().toISOString(),
             duration_ms: d.finished_at && d.started_at ? d.finished_at - d.started_at : undefined,
           }));
         }
@@ -43,7 +45,9 @@ function DeploymentsPage() {
     <div className="mx-auto w-full max-w-[1600px] space-y-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Deployments</h1>
-        <p className="text-sm text-muted-foreground">All builds and releases tracked in HosteraX SQLite database.</p>
+        <p className="text-sm text-muted-foreground">
+          All builds and releases tracked in HosteraX SQLite database.
+        </p>
       </div>
       <div className="rounded-lg border border-border bg-card">
         {data.length === 0 ? (

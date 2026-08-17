@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Database,
   HardDrive,
@@ -25,8 +25,8 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   const targetsQuery = useBackupTargets();
   const backupsQuery = useBackups();
 
-  const targets = targetsQuery.data || [];
-  const backups = backupsQuery.data || [];
+  const targets = useMemo(() => targetsQuery.data || [], [targetsQuery.data]);
+  const backups = useMemo(() => backupsQuery.data || [], [backupsQuery.data]);
 
   const [selectedTargetId, setSelectedTargetId] = useState<string>("");
 
@@ -66,7 +66,11 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   };
 
   const restoreBackup = async (b: BackupItem) => {
-    if (!confirm(`Are you sure you want to restore snapshot "${b.id}" to ${b.database_name}? This will restore the database to this exact point in time.`)) {
+    if (
+      !confirm(
+        `Are you sure you want to restore snapshot "${b.id}" to ${b.database_name}? This will restore the database to this exact point in time.`,
+      )
+    ) {
       return;
     }
 
@@ -78,9 +82,12 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
         targetContainer: b.database_name,
       });
 
-      toast.success(res.message || `Snapshot ${b.id} restored successfully with verified SHA256 integrity!`, {
-        id: toastId,
-      });
+      toast.success(
+        res.message || `Snapshot ${b.id} restored successfully with verified SHA256 integrity!`,
+        {
+          id: toastId,
+        },
+      );
       backupsQuery.refetch();
     } catch (err: any) {
       toast.error(err?.message || "Restore failed", { id: toastId });
@@ -157,7 +164,8 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                 </label>
                 {targets.length === 0 ? (
                   <div className="p-3 rounded-md border border-border text-xs text-muted-foreground bg-muted/20">
-                    No active database containers detected. You can launch MongoDB, PostgreSQL, or Redis from the App Store.
+                    No active database containers detected. You can launch MongoDB, PostgreSQL, or
+                    Redis from the App Store.
                   </div>
                 ) : (
                   <select
@@ -233,7 +241,8 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                   <FileArchive className="h-10 w-10 text-muted-foreground/40 mb-3" />
                   <h4 className="text-sm font-medium text-foreground">No Snapshots Created Yet</h4>
                   <p className="text-xs text-muted-foreground mt-1 max-w-sm">
-                    Trigger a database snapshot to protect your data with automated SHA256 verified archives.
+                    Trigger a database snapshot to protect your data with automated SHA256 verified
+                    archives.
                   </p>
                   <button
                     onClick={() => setActiveTab("create")}
@@ -261,9 +270,13 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                           </span>
                         </div>
                         <div className="text-muted-foreground text-[11px]">
-                          {b.db_type.toUpperCase()} · {b.sizeMb || 0.1} MB ({b.file_size_bytes || 0} bytes) · Created {new Date(b.created_at).toLocaleString()}
+                          {b.db_type.toUpperCase()} · {b.sizeMb || 0.1} MB ({b.file_size_bytes || 0}{" "}
+                          bytes) · Created {new Date(b.created_at).toLocaleString()}
                         </div>
-                        <div className="font-mono text-[10px] text-muted-foreground/70 truncate max-w-md" title={b.sha256}>
+                        <div
+                          className="font-mono text-[10px] text-muted-foreground/70 truncate max-w-md"
+                          title={b.sha256}
+                        >
                           {b.sha256 || "sha256:verified"}
                         </div>
                       </div>

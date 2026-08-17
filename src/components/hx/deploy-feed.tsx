@@ -44,7 +44,9 @@ export function DeployFeed() {
             environment: d.environment || "production",
             trigger_type: d.trigger || "manual",
             duration_ms: d.finished_at && d.started_at ? d.finished_at - d.started_at : null,
-            created_at: d.started_at ? new Date(d.started_at).toISOString() : new Date().toISOString(),
+            created_at: d.started_at
+              ? new Date(d.started_at).toISOString()
+              : new Date().toISOString(),
             projects: { name: d.project, slug: d.project, stack: "auto" },
           })) as DeployItem[];
         }

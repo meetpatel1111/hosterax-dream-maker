@@ -73,9 +73,7 @@ function AuthPage() {
         </div>
         <div className="rounded-xl border border-border bg-card p-6 shadow-2xl space-y-4">
           <div>
-            <h1 className="text-xl font-semibold tracking-tight">
-              Sign in to HosteraX
-            </h1>
+            <h1 className="text-xl font-semibold tracking-tight">Sign in to HosteraX</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Self-hosted, 100% offline-capable control plane.
             </p>
@@ -100,7 +98,9 @@ function AuthPage() {
             {!useToken ? (
               <>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Email / Username</label>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Email / Username
+                  </label>
                   <input
                     type="text"
                     required
@@ -111,7 +111,9 @@ function AuthPage() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Password</label>
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Password
+                  </label>
                   <input
                     type="password"
                     value={password}
@@ -123,7 +125,9 @@ function AuthPage() {
               </>
             ) : (
               <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">Master Engine Token</label>
+                <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                  Master Engine Token
+                </label>
                 <input
                   type="password"
                   required

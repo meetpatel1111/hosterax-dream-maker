@@ -69,9 +69,12 @@ function RegistryLogo({
   fallbackEmoji: string;
   title: string;
 }) {
-  const candidates = (logoCandidates && logoCandidates.length > 0)
-    ? logoCandidates.filter(Boolean)
-    : (logoUrl ? [logoUrl] : []);
+  const candidates =
+    logoCandidates && logoCandidates.length > 0
+      ? logoCandidates.filter(Boolean)
+      : logoUrl
+        ? [logoUrl]
+        : [];
 
   const [candidateIdx, setCandidateIdx] = useState(0);
   const [failedAll, setFailedAll] = useState(false);
@@ -131,21 +134,49 @@ interface RegistryTagsResponse {
 
 const DOCKERHUB_CATEGORIES = [
   { id: "all", label: "🔥 All Categories", category: "" },
-  { id: "databases-and-storage", label: "🗄️ Databases & Storage", category: "databases-and-storage" },
-  { id: "machine-learning-and-ai", label: "🤖 Machine Learning & AI", category: "machine-learning-and-ai" },
+  {
+    id: "databases-and-storage",
+    label: "🗄️ Databases & Storage",
+    category: "databases-and-storage",
+  },
+  {
+    id: "machine-learning-and-ai",
+    label: "🤖 Machine Learning & AI",
+    category: "machine-learning-and-ai",
+  },
   { id: "web-servers", label: "🌍 Web Servers", category: "web-servers" },
-  { id: "languages-and-frameworks", label: "⚡ Languages & Frameworks", category: "languages-and-frameworks" },
+  {
+    id: "languages-and-frameworks",
+    label: "⚡ Languages & Frameworks",
+    category: "languages-and-frameworks",
+  },
   { id: "networking", label: "🌐 Networking", category: "networking" },
   { id: "api-management", label: "🔌 API Management", category: "api-management" },
   { id: "security", label: "🔐 Security", category: "security" },
-  { id: "integration-and-delivery", label: "🚀 Integration & Delivery", category: "integration-and-delivery" },
+  {
+    id: "integration-and-delivery",
+    label: "🚀 Integration & Delivery",
+    category: "integration-and-delivery",
+  },
   { id: "message-queues", label: "📨 Message Queues", category: "message-queues" },
-  { id: "internet-of-things", label: "🏠 Internet of Things (IoT)", category: "internet-of-things" },
+  {
+    id: "internet-of-things",
+    label: "🏠 Internet of Things (IoT)",
+    category: "internet-of-things",
+  },
   { id: "developer-tools", label: "🛠️ Developer Tools", category: "developer-tools" },
   { id: "data-science", label: "📊 Data Science", category: "data-science" },
   { id: "operating-systems", label: "🖥️ Operating Systems", category: "operating-systems" },
-  { id: "content-management-system", label: "📝 Content Management (CMS)", category: "content-management-system" },
-  { id: "monitoring-and-observability", label: "📈 Monitoring & Observability", category: "monitoring-and-observability" },
+  {
+    id: "content-management-system",
+    label: "📝 Content Management (CMS)",
+    category: "content-management-system",
+  },
+  {
+    id: "monitoring-and-observability",
+    label: "📈 Monitoring & Observability",
+    category: "monitoring-and-observability",
+  },
   { id: "web-analytics", label: "📉 Web Analytics", category: "web-analytics" },
 ];
 
@@ -199,13 +230,19 @@ function ContainerRegistryExplorerPage() {
     return sp.get(key) || defaultVal;
   };
 
-  const [activeRegistry, setActiveRegistry] = useState<"dockerhub" | "ghcr">(() => (getInitialParam("registry") === "ghcr" ? "ghcr" : "dockerhub"));
+  const [activeRegistry, setActiveRegistry] = useState<"dockerhub" | "ghcr">(() =>
+    getInitialParam("registry") === "ghcr" ? "ghcr" : "dockerhub",
+  );
   const [searchQuery, setSearchQuery] = useState(() => getInitialParam("q", ""));
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [activeCategory, setActiveCategory] = useState(() => getInitialParam("category", "all"));
   const [activeBadge, setActiveBadge] = useState<string>(() => getInitialParam("badges", ""));
-  const [activeOS, setActiveOS] = useState<string>(() => getInitialParam("operating_system", getInitialParam("os", "")));
-  const [activeArch, setActiveArch] = useState<string>(() => getInitialParam("architecture", getInitialParam("arch", "")));
+  const [activeOS, setActiveOS] = useState<string>(() =>
+    getInitialParam("operating_system", getInitialParam("os", "")),
+  );
+  const [activeArch, setActiveArch] = useState<string>(() =>
+    getInitialParam("architecture", getInitialParam("arch", "")),
+  );
   const [activeSort, setActiveSort] = useState<string>(() => getInitialParam("sort", "pulls"));
   const [officialOnly, setOfficialOnly] = useState(false);
   const [selectedRepoForTags, setSelectedRepoForTags] = useState<string | null>(null);
@@ -217,7 +254,9 @@ function ContainerRegistryExplorerPage() {
     const ps = parseInt(getInitialParam("page_size", getInitialParam("per_page", "30")), 10);
     return isNaN(ps) ? 30 : ps;
   });
-  const [viewMode, setViewMode] = useState<"stream" | "pages">(() => (getInitialParam("mode") === "pages" ? "pages" : "stream"));
+  const [viewMode, setViewMode] = useState<"stream" | "pages">(() =>
+    getInitialParam("mode") === "pages" ? "pages" : "stream",
+  );
   const [directImageInput, setDirectImageInput] = useState("");
   const [copiedImage, setCopiedImage] = useState<string | null>(null);
 
@@ -228,7 +267,8 @@ function ContainerRegistryExplorerPage() {
 
     if (activeRegistry && activeRegistry !== "dockerhub") sp.set("registry", activeRegistry);
     if (deferredSearchQuery.trim()) sp.set("q", deferredSearchQuery.trim());
-    if (activeCategory && activeCategory !== "all" && activeCategory !== "_search") sp.set("category", activeCategory);
+    if (activeCategory && activeCategory !== "all" && activeCategory !== "_search")
+      sp.set("category", activeCategory);
     if (activeBadge) sp.set("badges", activeBadge);
     if (activeOS) sp.set("operating_system", activeOS);
     if (activeArch) sp.set("architecture", activeArch);
@@ -242,7 +282,18 @@ function ContainerRegistryExplorerPage() {
     if (window.location.search !== (queryString ? `?${queryString}` : "")) {
       window.history.replaceState(null, "", newUrl);
     }
-  }, [activeRegistry, deferredSearchQuery, activeCategory, activeBadge, activeOS, activeArch, activeSort, currentPage, pageSize, viewMode]);
+  }, [
+    activeRegistry,
+    deferredSearchQuery,
+    activeCategory,
+    activeBadge,
+    activeOS,
+    activeArch,
+    activeSort,
+    currentPage,
+    pageSize,
+    viewMode,
+  ]);
 
   // Handle browser Back / Forward buttons
   useEffect(() => {
@@ -271,15 +322,30 @@ function ContainerRegistryExplorerPage() {
 
   // Infinite Query for Stream / Infinite Scroll mode
   const infiniteQuery = useInfiniteQuery<SearchResponse>({
-    queryKey: ["registry-infinite-v5", activeRegistry, deferredSearchQuery.trim(), activeCategory, activeBadge, activeOS, activeArch, activeSort, officialOnly, pageSize, engine.url],
+    queryKey: [
+      "registry-infinite-v5",
+      activeRegistry,
+      deferredSearchQuery.trim(),
+      activeCategory,
+      activeBadge,
+      activeOS,
+      activeArch,
+      activeSort,
+      officialOnly,
+      pageSize,
+      engine.url,
+    ],
     queryFn: async ({ pageParam = 1 }) => {
       if (activeRegistry === "ghcr") {
         return engine.call<SearchResponse>(
           "GET",
-          `/api/catalog/ghcr-search?q=${encodeURIComponent(deferredSearchQuery.trim())}&page=${pageParam}&per_page=${pageSize}`
+          `/api/catalog/ghcr-search?q=${encodeURIComponent(deferredSearchQuery.trim())}&page=${pageParam}&per_page=${pageSize}`,
         );
       }
-      const catParam = activeCategory !== "all" && activeCategory !== "_search" ? `&category=${encodeURIComponent(activeCategory)}` : "";
+      const catParam =
+        activeCategory !== "all" && activeCategory !== "_search"
+          ? `&category=${encodeURIComponent(activeCategory)}`
+          : "";
       const badgeParam = activeBadge ? `&badges=${encodeURIComponent(activeBadge)}` : "";
       const osParam = activeOS ? `&operating_system=${encodeURIComponent(activeOS)}` : "";
       const archParam = activeArch ? `&architecture=${encodeURIComponent(activeArch)}` : "";
@@ -287,7 +353,7 @@ function ContainerRegistryExplorerPage() {
       const offParam = officialOnly ? "&official=true" : "";
       return engine.call<SearchResponse>(
         "GET",
-        `/api/catalog/dockerhub-search?q=${encodeURIComponent(deferredSearchQuery.trim())}${catParam}${badgeParam}${osParam}${archParam}${sortParam}${offParam}&page=${pageParam}&page_size=${pageSize}`
+        `/api/catalog/dockerhub-search?q=${encodeURIComponent(deferredSearchQuery.trim())}${catParam}${badgeParam}${osParam}${archParam}${sortParam}${offParam}&page=${pageParam}&page_size=${pageSize}`,
       );
     },
     initialPageParam: 1,
@@ -303,15 +369,31 @@ function ContainerRegistryExplorerPage() {
 
   // Single Page Query for Paginated Mode
   const pagedQuery = useQuery<SearchResponse>({
-    queryKey: ["registry-paged-v5", activeRegistry, deferredSearchQuery.trim(), activeCategory, activeBadge, activeOS, activeArch, activeSort, officialOnly, currentPage, pageSize, engine.url],
+    queryKey: [
+      "registry-paged-v5",
+      activeRegistry,
+      deferredSearchQuery.trim(),
+      activeCategory,
+      activeBadge,
+      activeOS,
+      activeArch,
+      activeSort,
+      officialOnly,
+      currentPage,
+      pageSize,
+      engine.url,
+    ],
     queryFn: async () => {
       if (activeRegistry === "ghcr") {
         return engine.call<SearchResponse>(
           "GET",
-          `/api/catalog/ghcr-search?q=${encodeURIComponent(deferredSearchQuery.trim())}&page=${currentPage}&per_page=${pageSize}`
+          `/api/catalog/ghcr-search?q=${encodeURIComponent(deferredSearchQuery.trim())}&page=${currentPage}&per_page=${pageSize}`,
         );
       }
-      const catParam = activeCategory !== "all" && activeCategory !== "_search" ? `&category=${encodeURIComponent(activeCategory)}` : "";
+      const catParam =
+        activeCategory !== "all" && activeCategory !== "_search"
+          ? `&category=${encodeURIComponent(activeCategory)}`
+          : "";
       const badgeParam = activeBadge ? `&badges=${encodeURIComponent(activeBadge)}` : "";
       const osParam = activeOS ? `&operating_system=${encodeURIComponent(activeOS)}` : "";
       const archParam = activeArch ? `&architecture=${encodeURIComponent(activeArch)}` : "";
@@ -319,7 +401,7 @@ function ContainerRegistryExplorerPage() {
       const offParam = officialOnly ? "&official=true" : "";
       return engine.call<SearchResponse>(
         "GET",
-        `/api/catalog/dockerhub-search?q=${encodeURIComponent(deferredSearchQuery.trim())}${catParam}${badgeParam}${osParam}${archParam}${sortParam}${offParam}&page=${currentPage}&page_size=${pageSize}`
+        `/api/catalog/dockerhub-search?q=${encodeURIComponent(deferredSearchQuery.trim())}${catParam}${badgeParam}${osParam}${archParam}${sortParam}${offParam}&page=${currentPage}&page_size=${pageSize}`,
       );
     },
     enabled: viewMode === "pages",
@@ -329,13 +411,16 @@ function ContainerRegistryExplorerPage() {
   // Aggregate results based on mode
   const allStreamResults = infiniteQuery.data?.pages?.flatMap((p) => p.results || []) || [];
   const latestPage = infiniteQuery.data?.pages?.[infiniteQuery.data.pages.length - 1];
-  const totalCount = viewMode === "stream" ? (latestPage?.total || allStreamResults.length) : (pagedQuery.data?.total || 0);
+  const totalCount =
+    viewMode === "stream"
+      ? latestPage?.total || allStreamResults.length
+      : pagedQuery.data?.total || 0;
   const searchLoading = viewMode === "stream" ? infiniteQuery.isLoading : pagedQuery.isLoading;
   const isFetchingNext = infiniteQuery.isFetchingNextPage;
   const hasMore = infiniteQuery.hasNextPage;
 
   // Active results list
-  const displayResults = viewMode === "stream" ? allStreamResults : (pagedQuery.data?.results || []);
+  const displayResults = viewMode === "stream" ? allStreamResults : pagedQuery.data?.results || [];
 
   // Infinite scroll trigger on window scroll
   useEffect(() => {
@@ -359,12 +444,12 @@ function ContainerRegistryExplorerPage() {
       if (activeRegistry === "ghcr") {
         return engine.call<RegistryTagsResponse>(
           "GET",
-          `/api/catalog/ghcr-tags?repo=${encodeURIComponent(selectedRepoForTags)}`
+          `/api/catalog/ghcr-tags?repo=${encodeURIComponent(selectedRepoForTags)}`,
         );
       }
       return engine.call<RegistryTagsResponse>(
         "GET",
-        `/api/catalog/dockerhub-tags?repo=${encodeURIComponent(selectedRepoForTags)}`
+        `/api/catalog/dockerhub-tags?repo=${encodeURIComponent(selectedRepoForTags)}`,
       );
     },
     enabled: !!selectedRepoForTags,
@@ -373,7 +458,10 @@ function ContainerRegistryExplorerPage() {
   // Deploy Mutation
   const deployMutation = useMutation({
     mutationFn: async ({ name, image, port }: { name: string; image: string; port: number }) => {
-      const cleanProjName = name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+      const cleanProjName = name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "-");
       // 1. Create project
       await engine.call("POST", "/api/projects", {
         name: cleanProjName,
@@ -387,7 +475,10 @@ function ContainerRegistryExplorerPage() {
       });
     },
     onSuccess: (_, vars) => {
-      const cleanProjName = vars.name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+      const cleanProjName = vars.name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "-");
       toast.success(`Launched container project "${cleanProjName}" with image "${vars.image}"!`);
       setDeployModalImage(null);
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -422,7 +513,9 @@ function ContainerRegistryExplorerPage() {
   const handleDirectLaunch = () => {
     const trimmed = directImageInput.trim();
     if (!trimmed) {
-      toast.error("Please enter a valid container image (e.g. redis:alpine, quay.io/coreos/etcd:latest)");
+      toast.error(
+        "Please enter a valid container image (e.g. redis:alpine, quay.io/coreos/etcd:latest)",
+      );
       return;
     }
     handleOpenDeploy(trimmed, 8080);
@@ -449,7 +542,8 @@ function ContainerRegistryExplorerPage() {
             </span>
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Discover, search all 13.2M+ public container images from Docker Hub and GitHub Container Registry, inspect version tags, and 1-click deploy to HosteraX.
+            Discover, search all 13.2M+ public container images from Docker Hub and GitHub Container
+            Registry, inspect version tags, and 1-click deploy to HosteraX.
           </p>
         </div>
 
@@ -489,9 +583,13 @@ function ContainerRegistryExplorerPage() {
           <div>
             <div className="text-xs font-semibold text-foreground flex items-center gap-1.5">
               <span>Quick Launch Any Container Image</span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-success/15 text-success font-mono font-medium">OCI Ready</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-success/15 text-success font-mono font-medium">
+                OCI Ready
+              </span>
             </div>
-            <p className="text-[11px] text-muted-foreground">Pull from any public or private registry directly (Docker Hub, GHCR, Quay, ECR, GCR)</p>
+            <p className="text-[11px] text-muted-foreground">
+              Pull from any public or private registry directly (Docker Hub, GHCR, Quay, ECR, GCR)
+            </p>
           </div>
         </div>
 
@@ -681,16 +779,25 @@ function ContainerRegistryExplorerPage() {
               <span>
                 {activeRegistry === "dockerhub" ? (
                   <>
-                    Showing <span className="text-foreground font-semibold font-mono">{viewMode === "stream" ? `1 - ${displayResults.length} of ${(totalCount || 0).toLocaleString()}` : `${(currentPage - 1) * pageSize + 1} - ${Math.min(currentPage * pageSize, totalCount || 0)} of ${(totalCount || 0).toLocaleString()}`} available results</span> on Docker Hub
+                    Showing{" "}
+                    <span className="text-foreground font-semibold font-mono">
+                      {viewMode === "stream"
+                        ? `1 - ${displayResults.length} of ${(totalCount || 0).toLocaleString()}`
+                        : `${(currentPage - 1) * pageSize + 1} - ${Math.min(currentPage * pageSize, totalCount || 0)} of ${(totalCount || 0).toLocaleString()}`}{" "}
+                      available results
+                    </span>{" "}
+                    on Docker Hub
                   </>
                 ) : (
                   <>
-                    Showing <span className="text-foreground font-semibold font-mono">{displayResults.length} of {(totalCount || 0).toLocaleString()}</span> available packages on GitHub Container Registry (ghcr.io)
+                    Showing{" "}
+                    <span className="text-foreground font-semibold font-mono">
+                      {displayResults.length} of {(totalCount || 0).toLocaleString()}
+                    </span>{" "}
+                    available packages on GitHub Container Registry (ghcr.io)
                   </>
                 )}
-                {deferredSearchQuery && (
-                  <span> for "{deferredSearchQuery}"</span>
-                )}
+                {deferredSearchQuery && <span> for "{deferredSearchQuery}"</span>}
               </span>
             )}
           </div>
@@ -701,7 +808,9 @@ function ContainerRegistryExplorerPage() {
               <button
                 onClick={() => setViewMode("stream")}
                 className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                  viewMode === "stream" ? "bg-card text-foreground shadow-sm font-semibold" : "text-muted-foreground hover:text-foreground"
+                  viewMode === "stream"
+                    ? "bg-card text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
                 title="Continuous Infinite Stream (auto-load as you scroll)"
               >
@@ -710,7 +819,9 @@ function ContainerRegistryExplorerPage() {
               <button
                 onClick={() => setViewMode("pages")}
                 className={`px-2 py-1 rounded text-[11px] font-medium transition-colors ${
-                  viewMode === "pages" ? "bg-card text-foreground shadow-sm font-semibold" : "text-muted-foreground hover:text-foreground"
+                  viewMode === "pages"
+                    ? "bg-card text-foreground shadow-sm font-semibold"
+                    : "text-muted-foreground hover:text-foreground"
                 }`}
                 title="Paginated View"
               >
@@ -757,27 +868,40 @@ function ContainerRegistryExplorerPage() {
         {searchLoading && displayResults.length === 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3, 4, 5, 6].map((i) => (
-              <div key={i} className="h-44 rounded-xl border border-border bg-card/50 animate-pulse p-5" />
+              <div
+                key={i}
+                className="h-44 rounded-xl border border-border bg-card/50 animate-pulse p-5"
+              />
             ))}
           </div>
         ) : displayResults.length === 0 ? (
           <div className="rounded-xl border border-border bg-card p-12 text-center text-muted-foreground">
             <Boxes className="mx-auto h-12 w-12 opacity-20 mb-3" />
-            <p className="text-base font-medium text-foreground">No container repositories found for "{searchQuery}"</p>
-            <p className="text-xs mt-1">Try searching by package name or owner, or use the Quick Launch input above to run any container image directly.</p>
+            <p className="text-base font-medium text-foreground">
+              No container repositories found for "{searchQuery}"
+            </p>
+            <p className="text-xs mt-1">
+              Try searching by package name or owner, or use the Quick Launch input above to run any
+              container image directly.
+            </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {displayResults.map((r, idx) => {
               const isSelected = selectedRepoForTags === (r.repo || r.repoName || r.name);
               const targetRepo = r.repo || r.repoName || r.name;
-              const fullImageUri = activeRegistry === "ghcr" ? `ghcr.io/${targetRepo}:latest` : (r.image || `${targetRepo}:latest`);
+              const fullImageUri =
+                activeRegistry === "ghcr"
+                  ? `ghcr.io/${targetRepo}:latest`
+                  : r.image || `${targetRepo}:latest`;
 
               return (
                 <div
                   key={`${r.id || targetRepo}-${idx}`}
                   className={`rounded-xl border transition-all flex flex-col justify-between bg-card p-5 ${
-                    isSelected ? "border-primary ring-1 ring-primary shadow-md" : "border-border hover:border-primary/50"
+                    isSelected
+                      ? "border-primary ring-1 ring-primary shadow-md"
+                      : "border-border hover:border-primary/50"
                   }`}
                 >
                   <div className="space-y-2.5">
@@ -795,7 +919,9 @@ function ContainerRegistryExplorerPage() {
 
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 flex-wrap">
-                            <span className="font-semibold text-sm truncate text-foreground">{r.name || targetRepo}</span>
+                            <span className="font-semibold text-sm truncate text-foreground">
+                              {r.name || targetRepo}
+                            </span>
                             {(r.isOfficial || r.official) && (
                               <span className="inline-flex items-center gap-1 rounded bg-primary/15 px-1.5 py-0.2 text-[10px] font-semibold text-primary">
                                 <CheckCircle2 className="h-2.5 w-2.5" /> Verified
@@ -826,7 +952,11 @@ function ContainerRegistryExplorerPage() {
                           className="p-1.5 rounded-lg border border-border text-muted-foreground hover:text-foreground hover:bg-surface-2 transition-colors"
                           title="Copy full image URI"
                         >
-                          {copiedImage === fullImageUri ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
+                          {copiedImage === fullImageUri ? (
+                            <Check className="h-3.5 w-3.5 text-success" />
+                          ) : (
+                            <Copy className="h-3.5 w-3.5" />
+                          )}
                         </button>
                         <a
                           href={r.ghcrUrl || r.hubUrl || `https://github.com/${targetRepo}`}
@@ -842,7 +972,8 @@ function ContainerRegistryExplorerPage() {
 
                     {/* Description */}
                     <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">
-                      {r.desc || `Public container image from ${activeRegistry === "ghcr" ? "GitHub Container Registry" : "Docker Hub"}.`}
+                      {r.desc ||
+                        `Public container image from ${activeRegistry === "ghcr" ? "GitHub Container Registry" : "Docker Hub"}.`}
                     </p>
                   </div>
 
@@ -851,12 +982,18 @@ function ContainerRegistryExplorerPage() {
                     <button
                       onClick={() => setSelectedRepoForTags(isSelected ? null : targetRepo)}
                       className={`inline-flex items-center gap-1 text-xs font-medium px-2.5 py-1 rounded-md transition-colors ${
-                        isSelected ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-surface"
+                        isSelected
+                          ? "bg-primary text-primary-foreground"
+                          : "text-muted-foreground hover:text-foreground hover:bg-surface"
                       }`}
                     >
                       <Tag className="h-3 w-3" />
                       <span>Explore Tags</span>
-                      {isSelected ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                      {isSelected ? (
+                        <ChevronUp className="h-3 w-3" />
+                      ) : (
+                        <ChevronDown className="h-3 w-3" />
+                      )}
                     </button>
 
                     <button
@@ -872,14 +1009,21 @@ function ContainerRegistryExplorerPage() {
                   {isSelected && (
                     <div className="mt-4 pt-3 border-t border-primary/30 space-y-2.5 animate-in fade-in duration-150">
                       <div className="flex items-center justify-between text-xs font-mono">
-                        <span className="text-muted-foreground">Available Tags for {targetRepo}:</span>
+                        <span className="text-muted-foreground">
+                          Available Tags for {targetRepo}:
+                        </span>
                         {tagsLoading && <RefreshCw className="h-3 w-3 animate-spin text-primary" />}
                       </div>
 
                       {tagsLoading ? (
-                        <div className="py-4 text-center text-xs text-muted-foreground font-mono">Loading tags from {activeRegistry === "ghcr" ? "ghcr.io" : "Docker Hub"}...</div>
+                        <div className="py-4 text-center text-xs text-muted-foreground font-mono">
+                          Loading tags from {activeRegistry === "ghcr" ? "ghcr.io" : "Docker Hub"}
+                          ...
+                        </div>
                       ) : tagsData?.tags?.length === 0 ? (
-                        <div className="py-2 text-xs text-muted-foreground font-mono">No tags discovered.</div>
+                        <div className="py-2 text-xs text-muted-foreground font-mono">
+                          No tags discovered.
+                        </div>
                       ) : (
                         <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
                           {tagsData?.tags.map((t) => (
@@ -889,7 +1033,9 @@ function ContainerRegistryExplorerPage() {
                             >
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="font-semibold text-foreground truncate">{t.name}</span>
+                                  <span className="font-semibold text-foreground truncate">
+                                    {t.name}
+                                  </span>
                                   {t.isHardened && (
                                     <span className="px-1.5 py-0.2 rounded bg-success/15 text-[10px] font-semibold text-success">
                                       Hardened
@@ -945,7 +1091,10 @@ function ContainerRegistryExplorerPage() {
                   className="inline-flex items-center gap-2 px-6 py-2.5 text-xs font-semibold rounded-xl border border-border bg-card hover:bg-surface transition-all shadow-sm glow-primary"
                 >
                   <Plus className="h-4 w-4 text-primary" />
-                  <span>Load More (Showing {displayResults.length} of {totalCount.toLocaleString()} available results)</span>
+                  <span>
+                    Load More (Showing {displayResults.length} of {totalCount.toLocaleString()}{" "}
+                    available results)
+                  </span>
                 </button>
               </div>
             )}
@@ -954,11 +1103,17 @@ function ContainerRegistryExplorerPage() {
           totalCount > pageSize && (
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 px-2 border-t border-border mt-4">
               <div className="text-xs text-muted-foreground font-mono">
-                Showing <span className="text-foreground font-semibold">{(currentPage - 1) * pageSize + 1}</span> to{" "}
+                Showing{" "}
+                <span className="text-foreground font-semibold">
+                  {(currentPage - 1) * pageSize + 1}
+                </span>{" "}
+                to{" "}
                 <span className="text-foreground font-semibold">
                   {Math.min(currentPage * pageSize, totalCount)}
                 </span>{" "}
-                of <span className="text-foreground font-semibold">{totalCount.toLocaleString()}</span> container repositories
+                of{" "}
+                <span className="text-foreground font-semibold">{totalCount.toLocaleString()}</span>{" "}
+                container repositories
               </div>
 
               <div className="flex items-center gap-2">
@@ -1038,7 +1193,8 @@ function ContainerRegistryExplorerPage() {
                   className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-surface font-mono"
                 />
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  HosteraX will automatically map this to a verified free host port and configure your wildcard domain.
+                  HosteraX will automatically map this to a verified free host port and configure
+                  your wildcard domain.
                 </p>
               </div>
             </div>
@@ -1062,7 +1218,9 @@ function ContainerRegistryExplorerPage() {
                 className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-sm disabled:opacity-50"
               >
                 {deployMutation.isPending && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-                <span>{deployMutation.isPending ? "Launching Project..." : "Deploy Container"}</span>
+                <span>
+                  {deployMutation.isPending ? "Launching Project..." : "Deploy Container"}
+                </span>
               </button>
             </div>
           </div>

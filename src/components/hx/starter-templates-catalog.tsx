@@ -2,20 +2,9 @@ import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import {
-  STARTER_TEMPLATES,
-  STARTER_TEMPLATE_CATEGORIES,
-  StarterTemplate,
-} from "@/lib/stacks";
+import { STARTER_TEMPLATES, STARTER_TEMPLATE_CATEGORIES, StarterTemplate } from "@/lib/stacks";
 import { useEngine, useEngineHealth } from "@/lib/engine";
-import {
-  Search,
-  Sparkles,
-  Rocket,
-  Filter,
-  Layers,
-  Code,
-} from "lucide-react";
+import { Search, Sparkles, Rocket, Filter, Layers, Code } from "lucide-react";
 
 export function StarterTemplatesCatalog({
   onSelectTemplate,
@@ -101,7 +90,8 @@ export function StarterTemplatesCatalog({
                 Starter Templates
               </h2>
               <p className="text-sm text-muted-foreground mt-1 max-w-xl">
-                Kick off production-ready projects in Next.js, React, FastAPI, Astro, Go, or Rust with instant zero-config deployments.
+                Kick off production-ready projects in Next.js, React, FastAPI, Astro, Go, or Rust
+                with instant zero-config deployments.
               </p>
             </div>
             <div className="rounded-xl border border-border/80 bg-surface/60 p-4 text-xs">

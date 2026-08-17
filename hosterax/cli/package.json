@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "bin": { "hosterax": "./src/cli.mjs" },
-  "engines": { "node": ">=20" }
+  "bin": {
+    "hosterax": "./src/cli.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }

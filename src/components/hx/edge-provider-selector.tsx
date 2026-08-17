@@ -120,7 +120,7 @@ export function EdgeProviderSelector() {
     },
     onSuccess: (data: any) => {
       toast.success(
-        `Edge Gateway updated to ${form.provider === "caddy" ? "Caddy 2" : form.provider === "openresty" ? "OpenResty" : "External Proxy"}!`
+        `Edge Gateway updated to ${form.provider === "caddy" ? "Caddy 2" : form.provider === "openresty" ? "OpenResty" : "External Proxy"}!`,
       );
       qc.invalidateQueries({ queryKey: ["edge-settings"] });
       qc.invalidateQueries({ queryKey: ["edge-status"] });
@@ -153,7 +153,8 @@ export function EdgeProviderSelector() {
     updateMutation.mutate(form);
   }
 
-  const isRunning = edgeStatus?.containerStatus === "running" || edgeStatus?.containerStatus === "Up";
+  const isRunning =
+    edgeStatus?.containerStatus === "running" || edgeStatus?.containerStatus === "Up";
 
   return (
     <div className="rounded-xl border border-border bg-card p-6 shadow-sm space-y-6">
@@ -178,7 +179,8 @@ export function EdgeProviderSelector() {
               </span>
             </h2>
             <p className="text-xs text-muted-foreground">
-              Choose your high-performance reverse proxy & TLS termination engine for all public and internal routes.
+              Choose your high-performance reverse proxy & TLS termination engine for all public and
+              internal routes.
             </p>
           </div>
         </div>
@@ -189,7 +191,9 @@ export function EdgeProviderSelector() {
             disabled={syncMutation.isPending}
             className="flex items-center gap-1.5 rounded-lg border border-border bg-secondary/50 px-3 py-1.5 text-xs font-medium text-foreground hover:bg-secondary transition disabled:opacity-50"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin text-primary" : ""}`} />
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin text-primary" : ""}`}
+            />
             Sync Routes
           </button>
           <button
@@ -231,7 +235,9 @@ export function EdgeProviderSelector() {
               </div>
               <div
                 className={`h-4 w-4 rounded-full border flex items-center justify-center ${
-                  form.provider === "caddy" ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground"
+                  form.provider === "caddy"
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-muted-foreground"
                 }`}
               >
                 {form.provider === "caddy" && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
@@ -239,7 +245,8 @@ export function EdgeProviderSelector() {
             </div>
 
             <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
-              Zero-configuration automatic ACME (Let's Encrypt + ZeroSSL), zero-downtime hot reloads via REST API, HTTP/3 (QUIC), and local development TLS.
+              Zero-configuration automatic ACME (Let's Encrypt + ZeroSSL), zero-downtime hot reloads
+              via REST API, HTTP/3 (QUIC), and local development TLS.
             </p>
 
             <div className="mt-4 flex flex-wrap gap-1.5">
@@ -291,15 +298,21 @@ export function EdgeProviderSelector() {
               </div>
               <div
                 className={`h-4 w-4 rounded-full border flex items-center justify-center ${
-                  form.provider === "openresty" ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground"
+                  form.provider === "openresty"
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-muted-foreground"
                 }`}
               >
-                {form.provider === "openresty" && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                {form.provider === "openresty" && (
+                  <div className="h-1.5 w-1.5 rounded-full bg-white" />
+                )}
               </div>
             </div>
 
             <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
-              The modular Nginx edge model. Generates declarative Nginx vhosts in <code className="text-[10px] text-primary">sites-enabled</code> with ACME HTTP-01 webroot challenge validation.
+              The modular Nginx edge model. Generates declarative Nginx vhosts in{" "}
+              <code className="text-[10px] text-primary">sites-enabled</code> with ACME HTTP-01
+              webroot challenge validation.
             </p>
 
             <div className="mt-4 flex flex-wrap gap-1.5">
@@ -346,15 +359,20 @@ export function EdgeProviderSelector() {
               </div>
               <div
                 className={`h-4 w-4 rounded-full border flex items-center justify-center ${
-                  form.provider === "external" ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground"
+                  form.provider === "external"
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-muted-foreground"
                 }`}
               >
-                {form.provider === "external" && <div className="h-1.5 w-1.5 rounded-full bg-white" />}
+                {form.provider === "external" && (
+                  <div className="h-1.5 w-1.5 rounded-full bg-white" />
+                )}
               </div>
             </div>
 
             <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
-              Use your own external reverse proxy (Cloudflare, Traefik, AWS ALB). HosteraX exports clean Caddy & Nginx config files without running a local edge container.
+              Use your own external reverse proxy (Cloudflare, Traefik, AWS ALB). HosteraX exports
+              clean Caddy & Nginx config files without running a local edge container.
             </p>
 
             <div className="mt-4 flex flex-wrap gap-1.5">
@@ -386,29 +404,43 @@ export function EdgeProviderSelector() {
 
           <div className="grid gap-4 sm:grid-cols-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">HTTP Port</label>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                HTTP Port
+              </label>
               <input
                 type="number"
                 value={form.http_port}
-                onChange={(e) => setForm({ ...form, http_port: parseInt(e.target.value, 10) || 80 })}
+                onChange={(e) =>
+                  setForm({ ...form, http_port: parseInt(e.target.value, 10) || 80 })
+                }
                 className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-primary font-mono"
               />
-              <span className="text-[10px] text-muted-foreground">Standard: 80 (or 8088 in dev)</span>
+              <span className="text-[10px] text-muted-foreground">
+                Standard: 80 (or 8088 in dev)
+              </span>
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">HTTPS (TLS) Port</label>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                HTTPS (TLS) Port
+              </label>
               <input
                 type="number"
                 value={form.https_port}
-                onChange={(e) => setForm({ ...form, https_port: parseInt(e.target.value, 10) || 443 })}
+                onChange={(e) =>
+                  setForm({ ...form, https_port: parseInt(e.target.value, 10) || 443 })
+                }
                 className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-primary font-mono"
               />
-              <span className="text-[10px] text-muted-foreground">Standard: 443 (or 8443 in dev)</span>
+              <span className="text-[10px] text-muted-foreground">
+                Standard: 443 (or 8443 in dev)
+              </span>
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">ACME Notification Email</label>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                ACME Notification Email
+              </label>
               <input
                 type="email"
                 value={form.acme_email}
@@ -416,7 +448,9 @@ export function EdgeProviderSelector() {
                 placeholder="admin@example.com"
                 className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm outline-none focus:border-primary"
               />
-              <span className="text-[10px] text-muted-foreground">Used for Let's Encrypt renewal alerts</span>
+              <span className="text-[10px] text-muted-foreground">
+                Used for Let's Encrypt renewal alerts
+              </span>
             </div>
           </div>
 

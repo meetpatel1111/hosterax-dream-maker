@@ -25,7 +25,6 @@ import { Route as AppOauthRouteImport } from './routes/_app.oauth'
 import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppTokensRouteImport } from './routes/_app.tokens'
-import { Route as AppPRouteImport } from './routes/_app.p.'
 import { Route as AppPSlugRouteImport } from './routes/_app.p.$slug'
 
 const IndexRoute = IndexRouteImport.update({
@@ -107,11 +106,6 @@ const AppTokensRoute = AppTokensRouteImport.update({
   path: '/tokens',
   getParentRoute: () => AppRoute,
 } as any)
-const AppPRoute = AppPRouteImport.update({
-  id: '/p/',
-  path: '/p/',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppPSlugRoute = AppPSlugRouteImport.update({
   id: '/p/$slug',
   path: '/p/$slug',
@@ -134,7 +128,6 @@ export interface FileRoutesByFullPath {
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/tokens': typeof AppTokensRoute
-  '/p/': typeof AppPRoute
   '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesByTo {
@@ -153,7 +146,6 @@ export interface FileRoutesByTo {
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/tokens': typeof AppTokensRoute
-  '/p': typeof AppPRoute
   '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesById {
@@ -174,7 +166,6 @@ export interface FileRoutesById {
   '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/tokens': typeof AppTokensRoute
-  '/_app/p/': typeof AppPRoute
   '/_app/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRouteTypes {
@@ -195,7 +186,6 @@ export interface FileRouteTypes {
     | '/servers'
     | '/settings'
     | '/tokens'
-    | '/p/'
     | '/p/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -214,7 +204,6 @@ export interface FileRouteTypes {
     | '/servers'
     | '/settings'
     | '/tokens'
-    | '/p'
     | '/p/$slug'
   id:
     | '__root__'
@@ -234,7 +223,6 @@ export interface FileRouteTypes {
     | '/_app/servers'
     | '/_app/settings'
     | '/_app/tokens'
-    | '/_app/p/'
     | '/_app/p/$slug'
   fileRoutesById: FileRoutesById
 }
@@ -358,13 +346,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTokensRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/p/': {
-      id: '/_app/p/'
-      path: '/p'
-      fullPath: '/p/'
-      preLoaderRoute: typeof AppPRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/p/$slug': {
       id: '/_app/p/$slug'
       path: '/p/$slug'
@@ -389,7 +370,6 @@ interface AppRouteChildren {
   AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTokensRoute: typeof AppTokensRoute
-  AppPRoute: typeof AppPRoute
   AppPSlugRoute: typeof AppPSlugRoute
 }
 
@@ -407,7 +387,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTokensRoute: AppTokensRoute,
-  AppPRoute: AppPRoute,
   AppPSlugRoute: AppPSlugRoute,
 }
 

@@ -37,20 +37,20 @@ Open the dashboard and go to **/local**. Point it at `http://localhost:7777`. It
 
 ## API surface (engine)
 
-| Method | Path | Purpose |
-|---|---|---|
-| GET | `/health` | ping |
-| GET | `/api/projects` | list |
-| POST | `/api/projects` | create `{name, source, buildCmd, startCmd, env}` |
-| DELETE | `/api/projects/:name` | remove |
-| GET | `/api/projects/:name/deployments` | history |
-| POST | `/api/projects/:name/deploy` | trigger deploy `{trigger?}` |
-| POST | `/api/deployments/:id/rollback` | redeploy that version |
-| POST | `/api/deployments/:id/cancel` | kill build |
-| GET | `/api/deployments/:id/logs` | full log text |
-| WS   | `/ws?deployment=:id` | live log stream (line-delimited JSON) |
-| POST | `/api/projects/:name/env` | replace env vars |
-| GET | `/api/tokens` / POST / DELETE | personal access tokens |
+| Method | Path                              | Purpose                                          |
+| ------ | --------------------------------- | ------------------------------------------------ |
+| GET    | `/health`                         | ping                                             |
+| GET    | `/api/projects`                   | list                                             |
+| POST   | `/api/projects`                   | create `{name, source, buildCmd, startCmd, env}` |
+| DELETE | `/api/projects/:name`             | remove                                           |
+| GET    | `/api/projects/:name/deployments` | history                                          |
+| POST   | `/api/projects/:name/deploy`      | trigger deploy `{trigger?}`                      |
+| POST   | `/api/deployments/:id/rollback`   | redeploy that version                            |
+| POST   | `/api/deployments/:id/cancel`     | kill build                                       |
+| GET    | `/api/deployments/:id/logs`       | full log text                                    |
+| WS     | `/ws?deployment=:id`              | live log stream (line-delimited JSON)            |
+| POST   | `/api/projects/:name/env`         | replace env vars                                 |
+| GET    | `/api/tokens` / POST / DELETE     | personal access tokens                           |
 
 Auth: `Authorization: Bearer <token>` — first request without any tokens configured is allowed and creates a bootstrap token printed to the engine console.
 

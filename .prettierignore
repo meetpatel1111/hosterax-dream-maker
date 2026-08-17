@@ -6,3 +6,21 @@ pnpm-lock.yaml
 package-lock.json
 bun.lock
 routeTree.gen.ts
+.wrangler/
+.playwright-mcp/
+
+# Runtime & scratch artifacts
+hosterax/engine/*.db
+hosterax/engine/*.db-journal
+hosterax/engine/*.db-wal
+awesome_sysadmin_full.md
+awesome_sysadmin_raw.md
+dashboard_icons_list.txt
+simple_icons_list.txt
+selfhst_apps_script.js
+.env
+
+# Generated catalog data (huge, already 2-space formatted)
+src/lib/awesome-selfhosted-db.json
+hosterax/engine/src/awesome-selfhosted-db.json
+public/catalog.json

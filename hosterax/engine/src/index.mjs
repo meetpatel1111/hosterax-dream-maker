@@ -23,7 +23,9 @@ import { TLSManager } from "./tls-manager.mjs";
 import { EdgeManager } from "./edge-manager.mjs";
 import { BackupManager } from "./backup-manager.mjs";
 
-const HOME = path.join(os.homedir(), ".hosterax");
+const HOME = process.env.HOSTERAX_HOME
+  ? path.resolve(process.env.HOSTERAX_HOME)
+  : path.join(os.homedir(), ".hosterax");
 const WORK = path.join(HOME, "work");
 const LOGDIR = path.join(HOME, "logs");
 const EDGEDIR = path.join(HOME, "edge");
@@ -180,7 +182,10 @@ try {
     value TEXT NOT NULL
   )`);
   // Seed defaults
-  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run("magic_dns_provider", "sslip.io");
+  db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)").run(
+    "magic_dns_provider",
+    "sslip.io",
+  );
 } catch (e) {}
 
 function getSetting(key, fallback = null) {
@@ -188,7 +193,9 @@ function getSetting(key, fallback = null) {
   return row?.value ?? fallback;
 }
 function setSetting(key, value) {
-  db.prepare("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(key, value);
+  db.prepare(
+    "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+  ).run(key, value);
 }
 const MAGIC_DNS_PROVIDERS = {
   "sslip.io": {
@@ -231,7 +238,7 @@ const MAGIC_DNS_PROVIDERS = {
     description: "Magic wildcard domain resolving to any target IP address.",
     status: "active",
   },
-  "localhost": {
+  localhost: {
     suffix: "localhost",
     format: (proj) => `${proj}.localhost`,
     label: ".localhost",
@@ -251,11 +258,13 @@ initProjectsSchema(db);
 
 // Clean up stale in-flight deployments from previous engine sessions/restarts
 try {
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE deployments 
     SET phase='failed', finished_at=?, exit_code=1 
     WHERE phase IN ('queued', 'building', 'pulling', 'deploying', 'fetching')
-  `).run(Date.now());
+  `,
+  ).run(Date.now());
 } catch {}
 
 // bootstrap token
@@ -302,7 +311,12 @@ const deploymentLogs = new Map(); // deploymentId -> [{ts, stream, text}]
 const MAX_DEPLOYMENT_LOG_ENTRIES = 5000;
 const MAX_ACTIVE_LOG_BUFFERS = 200;
 function publish(deploymentId, line) {
-  const item = { deploymentId, ts: line.ts || Date.now(), stream: line.stream || "stdout", text: line.text || "" };
+  const item = {
+    deploymentId,
+    ts: line.ts || Date.now(),
+    stream: line.stream || "stdout",
+    text: line.text || "",
+  };
   const msg = JSON.stringify(item);
   const set = subscribers.get(deploymentId);
   if (set) {
@@ -380,7 +394,9 @@ const running = new Map(); // project -> { child, restarts, stopped, startedAt, 
 
 // On engine startup, inspect running docker containers starting with hx_ and track them
 try {
-  const cp = spawnSync("docker", ["ps", "--filter", "name=hx_", "--format", "{{.Names}}"], { shell: true });
+  const cp = spawnSync("docker", ["ps", "--filter", "name=hx_", "--format", "{{.Names}}"], {
+    shell: true,
+  });
   if (cp.stdout) {
     const lines = cp.stdout.toString().trim().split("\n");
     for (const l of lines) {
@@ -603,59 +619,62 @@ export function allocateProjectPort(projectName, preferredPort = null) {
   }
   portLock.add(currentProjectName);
   try {
+    // Collect all ports currently assigned or in use by other projects
+    const usedPorts = new Set([7777, 8080]);
 
-  // Collect all ports currently assigned or in use by other projects
-  const usedPorts = new Set([7777, 8080]);
+    // Ports in projects table for other projects
+    try {
+      const allProjects = db.prepare("SELECT name, port FROM projects").all();
+      for (const p of allProjects) {
+        if (norm(p.name) !== currentProjectName && p.port) {
+          usedPorts.add(Number(p.port));
+        }
+      }
+    } catch {}
 
-  // Ports in projects table for other projects
-  try {
-    const allProjects = db.prepare("SELECT name, port FROM projects").all();
-    for (const p of allProjects) {
-      if (norm(p.name) !== currentProjectName && p.port) {
-        usedPorts.add(Number(p.port));
+    // Ports in routes table for other projects
+    try {
+      const allRoutes = db.prepare("SELECT project, upstream_port FROM routes").all();
+      for (const r of allRoutes) {
+        if (norm(r.project) !== currentProjectName && r.upstream_port) {
+          usedPorts.add(Number(r.upstream_port));
+        }
+      }
+    } catch {}
+
+    // Ports in running map
+    for (const [runProj] of running) {
+      if (norm(runProj) !== currentProjectName) {
+        try {
+          const pr = db
+            .prepare("SELECT port FROM projects WHERE LOWER(name)=LOWER(?)")
+            .get(runProj);
+          if (pr?.port) usedPorts.add(Number(pr.port));
+        } catch {}
       }
     }
-  } catch {}
 
-  // Ports in routes table for other projects
-  try {
-    const allRoutes = db.prepare("SELECT project, upstream_port FROM routes").all();
-    for (const r of allRoutes) {
-      if (norm(r.project) !== currentProjectName && r.upstream_port) {
-        usedPorts.add(Number(r.upstream_port));
+    // If this project already has a specific port in projects or routes that is NOT taken by others, reuse it
+    try {
+      const thisProj = db
+        .prepare("SELECT port FROM projects WHERE LOWER(name)=LOWER(?)")
+        .get(projectName);
+      if (thisProj?.port && !usedPorts.has(Number(thisProj.port))) {
+        return Number(thisProj.port);
       }
+    } catch {}
+
+    // If user or detector preferred a port (e.g. 3000, 5173, 8000) and it's not taken:
+    if (preferredPort && !usedPorts.has(Number(preferredPort))) {
+      return Number(preferredPort);
     }
-  } catch {}
 
-  // Ports in running map
-  for (const [runProj] of running) {
-    if (norm(runProj) !== currentProjectName) {
-      try {
-        const pr = db.prepare("SELECT port FROM projects WHERE LOWER(name)=LOWER(?)").get(runProj);
-        if (pr?.port) usedPorts.add(Number(pr.port));
-      } catch {}
+    // Otherwise, find the next free port starting at 3000
+    let candidate = preferredPort ? Number(preferredPort) : 3000;
+    while (usedPorts.has(candidate)) {
+      candidate += 1;
     }
-  }
-
-  // If this project already has a specific port in projects or routes that is NOT taken by others, reuse it
-  try {
-    const thisProj = db.prepare("SELECT port FROM projects WHERE LOWER(name)=LOWER(?)").get(projectName);
-    if (thisProj?.port && !usedPorts.has(Number(thisProj.port))) {
-      return Number(thisProj.port);
-    }
-  } catch {}
-
-  // If user or detector preferred a port (e.g. 3000, 5173, 8000) and it's not taken:
-  if (preferredPort && !usedPorts.has(Number(preferredPort))) {
-    return Number(preferredPort);
-  }
-
-  // Otherwise, find the next free port starting at 3000
-  let candidate = preferredPort ? Number(preferredPort) : 3000;
-  while (usedPorts.has(candidate)) {
-    candidate += 1;
-  }
-  return candidate;
+    return candidate;
   } finally {
     portLock.delete(currentProjectName);
   }
@@ -773,7 +792,11 @@ function runStep(deploymentId, cwd, cmd, env) {
 
 function runGitClone(deploymentId, cwd, url, targetDir) {
   return new Promise((resolve) => {
-    publish(deploymentId, { ts: Date.now(), stream: "system", text: `$ git clone --depth 1 ${url} ${targetDir}` });
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "system",
+      text: `$ git clone --depth 1 ${url} ${targetDir}`,
+    });
     const child = spawn("git", ["clone", "--depth", "1", url, targetDir], {
       cwd,
       env: { ...process.env },
@@ -797,7 +820,12 @@ function runGitClone(deploymentId, cwd, url, targetDir) {
 
 async function fetchSource(deploymentId, source, workdir, target) {
   fs.mkdirSync(workdir, { recursive: true });
-  if (target === "docker" && source && !fs.existsSync(source) && !/^https?:|^git@|\.git$/.test(source)) {
+  if (
+    target === "docker" &&
+    source &&
+    !fs.existsSync(source) &&
+    !/^https?:|^git@|\.git$/.test(source)
+  ) {
     // Direct Docker image deployment (One-Click App as project)
     publish(deploymentId, {
       ts: Date.now(),
@@ -904,7 +932,10 @@ CMD ["sh", "-c", "if [ -f 'main.py' ]; then python main.py; elif [ -f 'app.py' ]
   }
 
   // PHP
-  if (fs.existsSync(path.join(workdir, "composer.json")) || fs.existsSync(path.join(workdir, "index.php"))) {
+  if (
+    fs.existsSync(path.join(workdir, "composer.json")) ||
+    fs.existsSync(path.join(workdir, "index.php"))
+  ) {
     return `# Zero-config Dockerfile generated by HosteraX for PHP
 FROM php:8.2-apache
 WORKDIR /var/www/html
@@ -975,7 +1006,14 @@ function startStaticServer(project, rootDir, port, deploymentId) {
     ".txt": "text/plain",
   };
 
-  const MAGIC_DNS_SUFFIXES_INNER = [".sslip.io", ".nip.io", ".traefik.me", ".ipq.co", ".fdns.uk", ".localhost"];
+  const MAGIC_DNS_SUFFIXES_INNER = [
+    ".sslip.io",
+    ".nip.io",
+    ".traefik.me",
+    ".ipq.co",
+    ".fdns.uk",
+    ".localhost",
+  ];
 
   const srv = http.createServer((req, res) => {
     const rawHost = (req.headers.host || "").toLowerCase();
@@ -984,7 +1022,7 @@ function startStaticServer(project, rootDir, port, deploymentId) {
 
     // If host specifies another project and is not this project, proxy to the other project's upstream port!
     if (
-      MAGIC_DNS_SUFFIXES_INNER.some(s => reqHostname.includes(s)) &&
+      MAGIC_DNS_SUFFIXES_INNER.some((s) => reqHostname.includes(s)) &&
       sub &&
       sub.toLowerCase() !== project.toLowerCase()
     ) {
@@ -1196,7 +1234,9 @@ function inspectDockerImage(tag) {
 
 function pickPrimaryHttpPort(exposedPorts) {
   if (!exposedPorts || exposedPorts.length === 0) return 3000;
-  const priority = [80, 8080, 3000, 5000, 8000, 5678, 8090, 8055, 8096, 2368, 2283, 9000, 8108, 6333];
+  const priority = [
+    80, 8080, 3000, 5000, 8000, 5678, 8090, 8055, 8096, 2368, 2283, 9000, 8108, 6333,
+  ];
   for (const p of priority) {
     if (exposedPorts.includes(p)) return p;
   }
@@ -1212,7 +1252,10 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
   if (target === "docker") {
     const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
     const projRow = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
-    const isDirectImage = projRow?.source && !fs.existsSync(projRow.source) && !/^https?:|^git@|\.git$/.test(projRow.source);
+    const isDirectImage =
+      projRow?.source &&
+      !fs.existsSync(projRow.source) &&
+      !/^https?:|^git@|\.git$/.test(projRow.source);
     const WELL_KNOWN_IMAGES = {
       ollama: "ollama/ollama:latest",
       "ollama/ollama": "ollama/ollama:latest",
@@ -1351,7 +1394,12 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       }
 
       publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
-      let bc = await runStep(deploymentId, workdir, `docker build -t ${sanitizeImageTag(tag)} .`, env);
+      let bc = await runStep(
+        deploymentId,
+        workdir,
+        `docker build -t ${sanitizeImageTag(tag)} .`,
+        env,
+      );
 
       // Self-Healing Build Fallback: If original Dockerfile build failed, fallback to zero-config multi-stage build!
       if (bc !== 0 && !isZeroConfigGenerated) {
@@ -1362,8 +1410,17 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
         });
         const generatedDockerfile = generateZeroConfigDockerfile(workdir);
         fs.writeFileSync(dockerfilePath, generatedDockerfile, "utf8");
-        publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build (self-healing retry) → ${tag}` });
-        bc = await runStep(deploymentId, workdir, `docker build -t ${sanitizeImageTag(tag)} .`, env);
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "system",
+          text: `docker build (self-healing retry) → ${tag}`,
+        });
+        bc = await runStep(
+          deploymentId,
+          workdir,
+          `docker build -t ${sanitizeImageTag(tag)} .`,
+          env,
+        );
       }
 
       if (bc !== 0) return bc;
@@ -1416,6 +1473,18 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       if (!dockerEnv.database__client && !dockerEnv.DATABASE__CLIENT) {
         dockerEnv.database__client = "sqlite3";
         dockerEnv.database__connection__filename = "/var/lib/ghost/content/data/ghost.db";
+      }
+    }
+
+    if (tag.includes("elasticsearch")) {
+      if (!dockerEnv["discovery.type"]) {
+        dockerEnv["discovery.type"] = "single-node";
+      }
+      if (!dockerEnv["xpack.security.enabled"]) {
+        dockerEnv["xpack.security.enabled"] = "false";
+      }
+      if (!dockerEnv["ES_JAVA_OPTS"]) {
+        dockerEnv["ES_JAVA_OPTS"] = "-Xms512m -Xmx512m";
       }
     }
 
@@ -1493,7 +1562,12 @@ pages:
     if (rc === 0) {
       if (glanceConfigFile && fs.existsSync(glanceConfigFile)) {
         try {
-          await runStep(deploymentId, workdir, `docker cp "${glanceConfigFile}" hx_${cleanName}:/app/config/glance.yml`, {});
+          await runStep(
+            deploymentId,
+            workdir,
+            `docker cp "${glanceConfigFile}" hx_${cleanName}:/app/config/glance.yml`,
+            {},
+          );
           await runStep(deploymentId, workdir, `docker restart hx_${cleanName}`, {});
         } catch {}
       }
@@ -1550,8 +1624,16 @@ pages:
 }
 
 const ALLOWED_PHASE_COLUMNS = new Set([
-  "phase", "finished_at", "exit_code", "stack", "snapshot_json", "route_status",
-  "workdir", "environment", "trigger", "version",
+  "phase",
+  "finished_at",
+  "exit_code",
+  "stack",
+  "snapshot_json",
+  "route_status",
+  "workdir",
+  "environment",
+  "trigger",
+  "version",
 ]);
 function setPhase(id, phase, extra = {}) {
   const fields = ["phase = ?"];
@@ -1710,7 +1792,11 @@ async function runDeployment(project, opts = {}) {
               const pkg = JSON.parse(fs.readFileSync(path.join(workdir, "package.json"), "utf8"));
               if (pkg.scripts?.build) buildCmd = "npm run build";
             } catch {}
-          } else if (!buildCmd && (fs.existsSync(path.join(workdir, "go.mod")) || fs.existsSync(path.join(workdir, "main.go")))) {
+          } else if (
+            !buildCmd &&
+            (fs.existsSync(path.join(workdir, "go.mod")) ||
+              fs.existsSync(path.join(workdir, "main.go")))
+          ) {
             buildCmd = "go build -o app . || go build -o app ./cmd/... || go build -o app ./...";
           } else if (!buildCmd && fs.existsSync(path.join(workdir, "Cargo.toml"))) {
             buildCmd = "cargo build --release";
@@ -1748,9 +1834,16 @@ async function runDeployment(project, opts = {}) {
               else if (fs.existsSync(path.join(workdir, "index.js")))
                 finalStartCmd = "node index.js";
             } catch {}
-          } else if (fs.existsSync(path.join(workdir, "app")) || fs.existsSync(path.join(workdir, "app.exe")) || fs.existsSync(path.join(workdir, "go.mod"))) {
+          } else if (
+            fs.existsSync(path.join(workdir, "app")) ||
+            fs.existsSync(path.join(workdir, "app.exe")) ||
+            fs.existsSync(path.join(workdir, "go.mod"))
+          ) {
             finalStartCmd = "./app";
-          } else if (fs.existsSync(path.join(workdir, "target", "release")) || fs.existsSync(path.join(workdir, "Cargo.toml"))) {
+          } else if (
+            fs.existsSync(path.join(workdir, "target", "release")) ||
+            fs.existsSync(path.join(workdir, "Cargo.toml"))
+          ) {
             finalStartCmd = "./target/release/app";
           } else if (fs.existsSync(path.join(workdir, "main.py"))) {
             finalStartCmd = "python main.py";
@@ -1786,7 +1879,15 @@ async function runDeployment(project, opts = {}) {
       }
 
       setPhase(id, "deploying");
-      const serviceRc = await startService(id, project, workdir, finalStartCmd, env, target, finalPort);
+      const serviceRc = await startService(
+        id,
+        project,
+        workdir,
+        finalStartCmd,
+        env,
+        target,
+        finalPort,
+      );
       if (serviceRc !== 0) {
         publish(id, {
           ts: Date.now(),
@@ -1861,7 +1962,13 @@ function getSystemMetrics() {
 async function getContainerMetrics(projectName) {
   const cleanName = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
   return new Promise((resolve) => {
-    const cp = spawn("docker", ["stats", "--no-stream", "--format", "{{json .}}", `hx_${cleanName}`]);
+    const cp = spawn("docker", [
+      "stats",
+      "--no-stream",
+      "--format",
+      "{{json .}}",
+      `hx_${cleanName}`,
+    ]);
     let stdout = "";
     cp.stdout.on("data", (d) => (stdout += d.toString()));
     cp.on("close", (code) => {
@@ -1942,6 +2049,25 @@ function authOk(req) {
   return !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(t);
 }
 
+function requirePerm(req, perm) {
+  const h = req.headers.authorization || "";
+  const t = h.replace(/^Bearer\s+/i, "");
+  const ip = req.socket?.remoteAddress || "";
+  const isLoopback =
+    ip === "127.0.0.1" ||
+    ip === "::1" ||
+    ip === "::ffff:127.0.0.1" ||
+    ip.includes("127.0.0.1") ||
+    req.headers.host?.startsWith("localhost") ||
+    req.headers.host?.startsWith("127.0.0.1");
+  if (isLoopback) return true;
+  if (!t) return false;
+  const row = db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(t);
+  if (!row) return false;
+  const scopes = JSON.parse(row.scopes_json || "[]");
+  return scopes.includes("*") || scopes.includes(perm);
+}
+
 const projectsApi = createProjectsApi({
   db,
   runDeployment,
@@ -1987,7 +2113,7 @@ const selfHeal = new SelfHealEngine({
           p.start_cmd,
           JSON.parse(p.env_json || "{}"),
           p.target,
-          p.port || 3000
+          p.port || 3000,
         );
       } else {
         const hostPort = p.port || 3002;
@@ -2024,7 +2150,7 @@ const selfHeal = new SelfHealEngine({
           p.start_cmd,
           JSON.parse(p.env_json || "{}"),
           p.target,
-          p.port || 3000
+          p.port || 3000,
         );
       }
     }
@@ -2060,7 +2186,10 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/auth/login" && req.method === "POST") {
     const b = await readBody(req);
     const bToken = db.prepare("SELECT token FROM tokens LIMIT 1").get()?.token || "";
-    if (b.token && (b.token === bToken || db.prepare("SELECT 1 FROM tokens WHERE token=?").get(b.token))) {
+    if (
+      b.token &&
+      (b.token === bToken || db.prepare("SELECT 1 FROM tokens WHERE token=?").get(b.token))
+    ) {
       return json(res, 200, {
         ok: true,
         user: { id: "admin-local", email: b.email || "admin@hosterax.local", role: "admin" },
@@ -2074,7 +2203,9 @@ const server = http.createServer(async (req, res) => {
   const rawHost = (req.headers.host || "").toLowerCase();
   const hostname = rawHost.split(":")[0];
   const MAGIC_DNS_SUFFIXES = [".sslip.io", ".nip.io", ".traefik.me", ".ipq.co", ".fdns.uk"];
-  const isMagicDns = MAGIC_DNS_SUFFIXES.some(s => hostname.includes(s)) || (hostname.endsWith(".localhost") && hostname !== "localhost");
+  const isMagicDns =
+    MAGIC_DNS_SUFFIXES.some((s) => hostname.includes(s)) ||
+    (hostname.endsWith(".localhost") && hostname !== "localhost");
   if (
     isMagicDns &&
     !url.pathname.startsWith("/api") &&
@@ -2082,8 +2213,14 @@ const server = http.createServer(async (req, res) => {
     !url.pathname.startsWith("/webhooks")
   ) {
     const sub = hostname.split(".")[0];
-    const route = db.prepare("SELECT * FROM routes WHERE LOWER(project)=LOWER(?) OR LOWER(hostname) LIKE LOWER(?)").get(sub, `%${sub}%`);
-    const proj = db.prepare("SELECT * FROM projects WHERE LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)").get(sub, sub);
+    const route = db
+      .prepare(
+        "SELECT * FROM routes WHERE LOWER(project)=LOWER(?) OR LOWER(hostname) LIKE LOWER(?)",
+      )
+      .get(sub, `%${sub}%`);
+    const proj = db
+      .prepare("SELECT * FROM projects WHERE LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)")
+      .get(sub, sub);
     const upstreamPort = route?.upstream_port || proj?.port;
     if (upstreamPort) {
       const proxyReq = http.request(
@@ -2167,7 +2304,10 @@ const server = http.createServer(async (req, res) => {
       await selfHeal.probeAndHealProject(p);
       return json(res, 200, selfHeal.getStatusSummary().projects[m[1]] || { status: "unknown" });
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipeline-audit$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipeline-audit$/)) &&
+      req.method === "POST"
+    ) {
       try {
         const audit = await selfHeal.runFullPipelineAudit(m[1]);
         return json(res, 200, audit);
@@ -2175,7 +2315,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 500, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/chaos-test$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/chaos-test$/)) &&
+      req.method === "POST"
+    ) {
       try {
         const body = await readBody(req);
         const result = await selfHeal.simulateChaos(m[1], body.type || "kill");
@@ -2184,7 +2327,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 500, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/auto-remediate-image$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/auto-remediate-image$/)) &&
+      req.method === "POST"
+    ) {
       try {
         const result = await selfHeal.autoRemediateCrashLoop(m[1]);
         return json(res, 200, result);
@@ -2192,7 +2338,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 500, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/reset-circuit$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/reset-circuit$/)) &&
+      req.method === "POST"
+    ) {
       try {
         const result = selfHeal.resetCircuit(m[1]);
         return json(res, 200, result);
@@ -2200,10 +2349,16 @@ const server = http.createServer(async (req, res) => {
         return json(res, 500, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/health-config$/)) && req.method === "GET") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/health-config$/)) &&
+      req.method === "GET"
+    ) {
       return json(res, 200, selfHeal.getHealthConfig(m[1]));
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/health-config$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/health-config$/)) &&
+      req.method === "POST"
+    ) {
       const body = await readBody(req);
       const updated = selfHeal.setHealthConfig(m[1], body);
       return json(res, 200, updated);
@@ -2289,7 +2444,9 @@ const server = http.createServer(async (req, res) => {
     // ────────── project metrics (including docker stats & process stats) ──────────
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/metrics$/)) && req.method === "GET") {
       const projectName = m[1];
-      const p = db.prepare("SELECT * FROM projects WHERE name=? OR slug=?").get(projectName, projectName);
+      const p = db
+        .prepare("SELECT * FROM projects WHERE name=? OR slug=?")
+        .get(projectName, projectName);
       if (!p) return json(res, 404, { error: "project not found" });
 
       const dockerMetrics = await getContainerMetrics(p.name);
@@ -2299,15 +2456,17 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         project: p.name,
         target: p.target,
-        status: proc ? "running" : (dockerMetrics ? "running" : "stopped"),
+        status: proc ? "running" : dockerMetrics ? "running" : "stopped",
         docker: dockerMetrics,
-        process: proc ? {
-          pid: proc.child?.pid,
-          started_at: proc.startedAt,
-          cmd: proc.cmd,
-          policy: proc.policy,
-          uptime_seconds: Math.floor((Date.now() - (proc.startedAt || Date.now())) / 1000),
-        } : null,
+        process: proc
+          ? {
+              pid: proc.child?.pid,
+              started_at: proc.startedAt,
+              cmd: proc.cmd,
+              policy: proc.policy,
+              uptime_seconds: Math.floor((Date.now() - (proc.startedAt || Date.now())) / 1000),
+            }
+          : null,
         system: sys,
       });
     }
@@ -2349,21 +2508,18 @@ const server = http.createServer(async (req, res) => {
       } else if (b.key) {
         current[b.key] = b.value ?? "";
       }
-      db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(
-        JSON.stringify(current),
-        m[1],
-      );
+      db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(JSON.stringify(current), m[1]);
       return json(res, 200, { ok: true, env: current });
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/env\/([^/]+)$/)) && req.method === "DELETE") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/env\/([^/]+)$/)) &&
+      req.method === "DELETE"
+    ) {
       const p = db.prepare("SELECT env_json FROM projects WHERE name=?").get(m[1]);
       if (!p) return json(res, 404, { error: "project not found" });
       const current = JSON.parse(p.env_json || "{}");
       delete current[m[2]];
-      db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(
-        JSON.stringify(current),
-        m[1],
-      );
+      db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(JSON.stringify(current), m[1]);
       return json(res, 200, { ok: true, env: current });
     }
     if (
@@ -2519,7 +2675,8 @@ const server = http.createServer(async (req, res) => {
       }));
       return json(res, 200, {
         activeProvider,
-        activeHostFormat: MAGIC_DNS_PROVIDERS[activeProvider]?.format("app-name") || `${activeProvider}`,
+        activeHostFormat:
+          MAGIC_DNS_PROVIDERS[activeProvider]?.format("app-name") || `${activeProvider}`,
         providers: list,
       });
     }
@@ -2537,10 +2694,15 @@ const server = http.createServer(async (req, res) => {
       try {
         const routes = db.prepare("SELECT * FROM routes").all();
         for (const r of routes) {
-          const hasPrimary = db.prepare("SELECT 1 FROM domains WHERE project=? AND is_primary=1").get(r.project);
+          const hasPrimary = db
+            .prepare("SELECT 1 FROM domains WHERE project=? AND is_primary=1")
+            .get(r.project);
           if (!hasPrimary) {
             const newDefaultHost = getMagicDnsHost(r.project);
-            db.prepare("UPDATE routes SET hostname=? WHERE project=?").run(newDefaultHost, r.project);
+            db.prepare("UPDATE routes SET hostname=? WHERE project=?").run(
+              newDefaultHost,
+              r.project,
+            );
           }
         }
       } catch {}
@@ -2598,7 +2760,10 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/backups" && req.method === "GET") {
       const dbFilter = url.searchParams.get("database");
       const projFilter = url.searchParams.get("project");
-      const backups = backupManager.listBackups({ database_name: dbFilter, project_name: projFilter });
+      const backups = backupManager.listBackups({
+        database_name: dbFilter,
+        project_name: projFilter,
+      });
       return json(res, 200, backups);
     }
     if (url.pathname === "/api/backups/create" && req.method === "POST") {
@@ -2661,18 +2826,8 @@ const server = http.createServer(async (req, res) => {
       const challenge = "hosterax-verify-" + crypto.randomBytes(12).toString("hex");
       db.prepare(
         `INSERT INTO domains (id, project, hostname, verified, is_primary, ssl_status, ssl_expires_at, challenge_token, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`
-      ).run(
-        id,
-        m[1],
-        b.hostname,
-        0,
-        0,
-        "none",
-        null,
-        challenge,
-        Date.now(),
-      );
+         VALUES (?,?,?,?,?,?,?,?,?)`,
+      ).run(id, m[1], b.hostname, 0, 0, "none", null, challenge, Date.now());
       await edgeManager.syncRoutes().catch(() => {});
       return json(res, 200, { id, hostname: b.hostname, challenge_token: challenge });
     }
@@ -2703,7 +2858,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: e.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/domains\/([^/]+)\/custom-ssl$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/domains\/([^/]+)\/custom-ssl$/)) &&
+      req.method === "POST"
+    ) {
       try {
         const b = await readBody(req);
         const certRes = await tlsManager.applyCustomCertificate(m[1], b.cert_pem, b.key_pem);
@@ -2718,7 +2876,7 @@ const server = http.createServer(async (req, res) => {
       db.prepare("UPDATE domains SET force_https=?, hsts_enabled=? WHERE id=?").run(
         b.force_https ? 1 : 0,
         b.hsts_enabled ? 1 : 0,
-        m[1]
+        m[1],
       );
       await edgeManager.syncRoutes().catch(() => {});
       return json(res, 200, { ok: true });
@@ -2781,7 +2939,8 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, db.prepare("SELECT * FROM managed_dbs ORDER BY created_at DESC").all());
     }
     if ((m = url.pathname.match(/^\/api\/databases\/([^/]+)$/)) && req.method === "DELETE") {
-      db.prepare("DELETE FROM backups WHERE database_id=?").run(m[1]);
+      const mdb = db.prepare("SELECT name FROM managed_dbs WHERE id=?").get(m[1]);
+      if (mdb) db.prepare("DELETE FROM backups WHERE database_name=?").run(mdb.name);
       db.prepare("DELETE FROM managed_dbs WHERE id=?").run(m[1]);
       return json(res, 200, { ok: true });
     }
@@ -2795,14 +2954,21 @@ const server = http.createServer(async (req, res) => {
       // Generate deterministic SHA256 based on backup metadata
       const hashInput = `${id}|${m[1]}|${sizeMb}|${Date.now()}`;
       const hash = crypto.createHash("sha256").update(hashInput).digest("hex");
-      db.prepare("INSERT INTO backups VALUES (?,?,?,?,?,?,?)").run(
+      db.prepare(
+        "INSERT INTO backups (id, project_name, database_name, db_type, file_path, file_size_bytes, sha256, destination, status, created_at, finished_at, error_message) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+      ).run(
         id,
-        m[1],
-        "manual",
-        sizeMb,
-        sha,
+        mdb.project,
+        mdb.name,
+        mdb.engine,
+        "",
+        Math.round(sizeMb * 1024 * 1024),
+        hash,
+        "local",
         "pending",
         Date.now(),
+        null,
+        null,
       );
       // Simulate backup completion
       setTimeout(() => {
@@ -2813,7 +2979,7 @@ const server = http.createServer(async (req, res) => {
         database: mdb.name,
         engine: mdb.engine,
         size_mb: sizeMb,
-        sha256: sha,
+        sha256: hash,
         status: "pending",
       });
     }
@@ -2860,7 +3026,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { token: t });
     }
     if ((m = url.pathname.match(/^\/api\/tokens\/([^/]+)$/)) && req.method === "DELETE") {
-      requirePerm(req, "token:delete");
+      if (!requirePerm(req, "token:delete")) return json(res, 403, { error: "forbidden" });
       db.prepare("DELETE FROM tokens WHERE token=?").run(m[1]);
       return json(res, 200, { ok: true });
     }
@@ -2968,7 +3134,8 @@ wss.on("connection", (ws, req) => {
   const t = token || "";
   const isValidToken = !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(t);
   const ip = req.socket?.remoteAddress || "";
-  const isLoopback = ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1" || ip.includes("127.0.0.1");
+  const isLoopback =
+    ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1" || ip.includes("127.0.0.1");
   if (!isValidToken && !isLoopback) return ws.close();
   if (!subscribers.has(id)) subscribers.set(id, new Set());
   subscribers.get(id).add(ws);

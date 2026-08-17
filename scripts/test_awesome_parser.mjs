@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+import fs from "node:fs";
 
 function parseAwesomeHtml(html) {
   const apps = [];
@@ -13,18 +13,22 @@ function parseAwesomeHtml(html) {
     const name = h3Match ? h3Match[1].trim() : slug;
 
     const pMatch = content.match(/<\/h3>\s*<p>([\s\S]*?)<\/p>/i);
-    let desc = '';
+    let desc = "";
     if (pMatch) {
-      desc = pMatch[1].replace(/<[^>]+>/g, '').trim();
+      desc = pMatch[1].replace(/<[^>]+>/g, "").trim();
     }
 
     let website = null;
     let sourceCode = null;
 
-    const webMatch = content.match(/<a\s+class="external-link"\s+href="([^"]+)"[^>]*>[\s\S]*?Website<\/a>/i);
+    const webMatch = content.match(
+      /<a\s+class="external-link"\s+href="([^"]+)"[^>]*>[\s\S]*?Website<\/a>/i,
+    );
     if (webMatch) website = webMatch[1];
 
-    const srcMatch = content.match(/<a\s+class="external-link"\s+href="([^"]+)"[^>]*>[\s\S]*?Source\s*Code<\/a>/i);
+    const srcMatch = content.match(
+      /<a\s+class="external-link"\s+href="([^"]+)"[^>]*>[\s\S]*?Source\s*Code<\/a>/i,
+    );
     if (srcMatch) sourceCode = srcMatch[1];
 
     let stars = null;
@@ -39,14 +43,14 @@ function parseAwesomeHtml(html) {
     const platRegex = /class="platform">\s*<a[^>]*>[\s\S]*?([A-Za-z0-9_+#. -]+)<\/a>/gi;
     let plMatch;
     while ((plMatch = platRegex.exec(content)) !== null) {
-      const plName = plMatch[1].replace(/<[^>]+>/g, '').trim();
+      const plName = plMatch[1].replace(/<[^>]+>/g, "").trim();
       if (plName && !platforms.includes(plName)) platforms.push(plName);
     }
 
     let license = null;
     const licMatch = content.match(/class="license">\s*<a[^>]*>[\s\S]*?([A-Za-z0-9_+#. -]+)<\/a>/i);
     if (licMatch) {
-      license = licMatch[1].replace(/<[^>]+>/g, '').trim();
+      license = licMatch[1].replace(/<[^>]+>/g, "").trim();
     }
 
     apps.push({
@@ -58,7 +62,7 @@ function parseAwesomeHtml(html) {
       stars,
       updatedAt,
       platforms,
-      license
+      license,
     });
   }
 
@@ -66,10 +70,13 @@ function parseAwesomeHtml(html) {
 }
 
 async function test() {
-  const html = await (await fetch('https://awesome-selfhosted.net/tags/analytics.html')).text();
+  const html = await (await fetch("https://awesome-selfhosted.net/tags/analytics.html")).text();
   const parsed = parseAwesomeHtml(html);
   console.log(`Parsed ${parsed.length} apps from analytics.html:`);
-  console.log('Sample parsed ANALOG:', parsed.find(a => a.name === 'ANALOG'));
+  console.log(
+    "Sample parsed ANALOG:",
+    parsed.find((a) => a.name === "ANALOG"),
+  );
 }
 
 test();

@@ -96,7 +96,9 @@ export function createCatalogApi({ db, HOME, readBody }) {
         if (source === "selfhst") {
           filtered = filtered.filter((a) => a.source === "selfhst" || a.tags?.includes("selfhst"));
         } else if (source === "awesome_sysadmin") {
-          filtered = filtered.filter((a) => a.source === "awesome_sysadmin" || a.tags?.includes("sysadmin"));
+          filtered = filtered.filter(
+            (a) => a.source === "awesome_sysadmin" || a.tags?.includes("sysadmin"),
+          );
         } else if (source === "awesome_selfhosted") {
           filtered = filtered.filter((a) => a.source === "awesome_selfhosted");
         } else if (source === "verified") {
@@ -148,15 +150,20 @@ export function createCatalogApi({ db, HOME, readBody }) {
         const catUrl = `https://hub.docker.com/categories/${encodeURIComponent(categorySlug)}`;
         const res = await fetch(catUrl, {
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           },
         });
 
         if (!res.ok) return [];
         const html = await res.text();
-        const officialMatches = [...html.matchAll(/href="\/_\/([a-zA-Z0-9_-]+)"/g)].map((m) => m[1]);
-        const communityMatches = [...html.matchAll(/href="\/r\/([a-zA-Z0-9_\/-]+)"/g)].map((m) => m[1]);
+        const officialMatches = [...html.matchAll(/href="\/_\/([a-zA-Z0-9_-]+)"/g)].map(
+          (m) => m[1],
+        );
+        const communityMatches = [...html.matchAll(/href="\/r\/([a-zA-Z0-9_\/-]+)"/g)].map(
+          (m) => m[1],
+        );
         const uniqueRepos = [...new Set([...officialMatches, ...communityMatches])];
 
         const items = await Promise.all(
@@ -166,7 +173,11 @@ export function createCatalogApi({ db, HOME, readBody }) {
               ? `https://hub.docker.com/v2/repositories/library/${cleanRepo}/`
               : `https://hub.docker.com/v2/repositories/${cleanRepo}/`;
 
-            let meta = { star_count: 0, pull_count: 0, description: "Official container image from Docker Hub." };
+            let meta = {
+              star_count: 0,
+              pull_count: 0,
+              description: "Official container image from Docker Hub.",
+            };
             try {
               const metaRes = await fetch(metaUrl, { headers: { "User-Agent": "HosteraX/1.0" } });
               if (metaRes.ok) {
@@ -185,7 +196,10 @@ export function createCatalogApi({ db, HOME, readBody }) {
               repoName: cleanRepo,
               image: imageTag,
               tag: imageTag,
-              desc: meta.description || meta.short_description || "Public Docker container image from Docker Hub.",
+              desc:
+                meta.description ||
+                meta.short_description ||
+                "Public Docker container image from Docker Hub.",
               stars: meta.star_count || 0,
               starCountFormatted: formatCount(meta.star_count || 0),
               pulls: meta.pull_count || 0,
@@ -218,21 +232,34 @@ export function createCatalogApi({ db, HOME, readBody }) {
       const isHardenedBadge = badges === "hardened";
       const isVerifiedPublisherBadge = badges === "verified_publisher";
       const isOpenSourceBadge = badges === "open_source";
-      const os = (url.searchParams.get("operating_system") || url.searchParams.get("os") || "").trim().toLowerCase();
+      const os = (url.searchParams.get("operating_system") || url.searchParams.get("os") || "")
+        .trim()
+        .toLowerCase();
       const isWindowsOS = os === "windows";
       const isLinuxOS = os === "linux";
 
-      const arch = (url.searchParams.get("architecture") || url.searchParams.get("arch") || "").trim().toLowerCase();
+      const arch = (url.searchParams.get("architecture") || url.searchParams.get("arch") || "")
+        .trim()
+        .toLowerCase();
       const sort = (url.searchParams.get("sort") || "pulls").trim().toLowerCase();
 
       const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
-      const pageSize = Math.min(100, Math.max(1, parseInt(url.searchParams.get("page_size") || url.searchParams.get("per_page") || "30", 10)));
+      const pageSize = Math.min(
+        100,
+        Math.max(
+          1,
+          parseInt(
+            url.searchParams.get("page_size") || url.searchParams.get("per_page") || "30",
+            10,
+          ),
+        ),
+      );
 
       // Map official Docker Hub category slugs to search keywords for live search
       const CATEGORY_SEARCH_MAP = {
-        "networking": "network",
+        networking: "network",
         "api-management": "api gateway",
-        "security": "security",
+        security: "security",
         "languages-and-frameworks": "programming language",
         "integration-and-delivery": "ci cd",
         "message-queues": "message broker",
@@ -272,53 +299,293 @@ export function createCatalogApi({ db, HOME, readBody }) {
 
         if (rawQ && rawQ !== "__ALL__") {
           // Shard specific keyword search with contextual sub-qualifiers
-          const SEARCH_MODIFIERS = ["", "server", "alpine", "cluster", "backup", "client", "exporter", "proxy", "latest", "dev", "app", "ui", "node", "tools", "web", "cloud"];
-          const modIndex = Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % SEARCH_MODIFIERS.length;
+          const SEARCH_MODIFIERS = [
+            "",
+            "server",
+            "alpine",
+            "cluster",
+            "backup",
+            "client",
+            "exporter",
+            "proxy",
+            "latest",
+            "dev",
+            "app",
+            "ui",
+            "node",
+            "tools",
+            "web",
+            "cloud",
+          ];
+          const modIndex =
+            Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % SEARCH_MODIFIERS.length;
           const modifier = SEARCH_MODIFIERS[modIndex];
           hubQuery = modifier ? `${rawQ} ${modifier}` : rawQ;
           hubPage = (Math.floor(offsetPastInitial / pageSize) % pagesPerShard) + 1;
         } else if (isWindowsOS) {
-          const WIN_SHARDS = ["windows", "nanoserver", "servercore", "dotnet-framework", "iis", "powershell", "windows-server", "aspnet-framework", "mcr"];
-          const shardIndex = Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % WIN_SHARDS.length;
+          const WIN_SHARDS = [
+            "windows",
+            "nanoserver",
+            "servercore",
+            "dotnet-framework",
+            "iis",
+            "powershell",
+            "windows-server",
+            "aspnet-framework",
+            "mcr",
+          ];
+          const shardIndex =
+            Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % WIN_SHARDS.length;
           hubQuery = WIN_SHARDS[shardIndex];
           hubPage = (Math.floor(offsetPastInitial / pageSize) % pagesPerShard) + 1;
         } else if (isHardenedBadge) {
-          const HARDENED_SHARDS = ["hardened", "dhi", "chainguard", "distroless", "minimal", "rootless", "cgr", "secure", "wolfi"];
-          const shardIndex = Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % HARDENED_SHARDS.length;
+          const HARDENED_SHARDS = [
+            "hardened",
+            "dhi",
+            "chainguard",
+            "distroless",
+            "minimal",
+            "rootless",
+            "cgr",
+            "secure",
+            "wolfi",
+          ];
+          const shardIndex =
+            Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % HARDENED_SHARDS.length;
           hubQuery = HARDENED_SHARDS[shardIndex];
           hubPage = (Math.floor(offsetPastInitial / pageSize) % pagesPerShard) + 1;
         } else if (isVerifiedPublisherBadge) {
-          const VP_SHARDS = ["publisher", "bitnami", "grafana", "hashicorp", "elastic", "portainer", "kong", "keycloak", "minio", "qdrant", "apache"];
-          const shardIndex = Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % VP_SHARDS.length;
+          const VP_SHARDS = [
+            "publisher",
+            "bitnami",
+            "grafana",
+            "hashicorp",
+            "elastic",
+            "portainer",
+            "kong",
+            "keycloak",
+            "minio",
+            "qdrant",
+            "apache",
+          ];
+          const shardIndex =
+            Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % VP_SHARDS.length;
           hubQuery = VP_SHARDS[shardIndex];
           hubPage = (Math.floor(offsetPastInitial / pageSize) % pagesPerShard) + 1;
         } else if (category) {
           // Shard category with related keywords pool
           const CAT_EXPANSION_MAP = {
-            "databases-and-storage": ["database", "postgres", "redis", "mysql", "mongodb", "sqlite", "mariadb", "vector", "cache", "storage", "s3", "minio"],
-            "machine-learning-and-ai": ["ai", "ollama", "llm", "vllm", "pytorch", "tensorflow", "whisper", "rag", "embeddings", "openai", "deeplearning"],
-            "web-servers": ["web server", "nginx", "httpd", "caddy", "apache", "traefik", "reverse proxy", "ingress", "gateway", "tls", "ssl"],
-            "languages-and-frameworks": ["runtime", "node", "python", "golang", "rust", "openjdk", "php", "ruby", "bun", "deno", "dotnet"],
-            "networking": ["network", "traefik", "wireguard", "tailscale", "vpn", "proxy", "dns", "pihole", "firewall", "router"],
-            "security": ["security", "vault", "auth", "keycloak", "sso", "identity", "oauth", "crowdsec", "firewall", "certs"],
-            "integration-and-delivery": ["ci cd", "jenkins", "gitea", "drone", "runner", "gitlab", "pipeline", "builder", "actions"],
-            "message-queues": ["message broker", "rabbitmq", "kafka", "nats", "mqtt", "mosquitto", "redis pubsub", "sqs", "queues"],
-            "internet-of-things": ["iot", "home assistant", "nodered", "zigbee", "matter", "sensor", "smart home", "mqtt client"],
-            "developer-tools": ["developer", "code server", "vscode", "portainer", "dind", "cli", "git", "terminal", "debugger"],
-            "data-science": ["data science", "airflow", "jupyter", "pandas", "superset", "metabase", "spark", "hadoop", "etl"],
-            "operating-systems": ["linux", "alpine", "ubuntu", "debian", "fedora", "archlinux", "centos", "busybox", "coreos"],
-            "content-management-system": ["cms", "wordpress", "ghost", "strapi", "directus", "drupal", "blog", "markdown"],
-            "monitoring-and-observability": ["monitoring", "grafana", "prometheus", "uptime", "netdata", "vector", "loki", "jaeger", "metrics"],
-            "web-analytics": ["analytics", "matomo", "plausible", "umami", "traffic", "telemetry", "counter", "shlink"],
+            "databases-and-storage": [
+              "database",
+              "postgres",
+              "redis",
+              "mysql",
+              "mongodb",
+              "sqlite",
+              "mariadb",
+              "vector",
+              "cache",
+              "storage",
+              "s3",
+              "minio",
+            ],
+            "machine-learning-and-ai": [
+              "ai",
+              "ollama",
+              "llm",
+              "vllm",
+              "pytorch",
+              "tensorflow",
+              "whisper",
+              "rag",
+              "embeddings",
+              "openai",
+              "deeplearning",
+            ],
+            "web-servers": [
+              "web server",
+              "nginx",
+              "httpd",
+              "caddy",
+              "apache",
+              "traefik",
+              "reverse proxy",
+              "ingress",
+              "gateway",
+              "tls",
+              "ssl",
+            ],
+            "languages-and-frameworks": [
+              "runtime",
+              "node",
+              "python",
+              "golang",
+              "rust",
+              "openjdk",
+              "php",
+              "ruby",
+              "bun",
+              "deno",
+              "dotnet",
+            ],
+            networking: [
+              "network",
+              "traefik",
+              "wireguard",
+              "tailscale",
+              "vpn",
+              "proxy",
+              "dns",
+              "pihole",
+              "firewall",
+              "router",
+            ],
+            security: [
+              "security",
+              "vault",
+              "auth",
+              "keycloak",
+              "sso",
+              "identity",
+              "oauth",
+              "crowdsec",
+              "firewall",
+              "certs",
+            ],
+            "integration-and-delivery": [
+              "ci cd",
+              "jenkins",
+              "gitea",
+              "drone",
+              "runner",
+              "gitlab",
+              "pipeline",
+              "builder",
+              "actions",
+            ],
+            "message-queues": [
+              "message broker",
+              "rabbitmq",
+              "kafka",
+              "nats",
+              "mqtt",
+              "mosquitto",
+              "redis pubsub",
+              "sqs",
+              "queues",
+            ],
+            "internet-of-things": [
+              "iot",
+              "home assistant",
+              "nodered",
+              "zigbee",
+              "matter",
+              "sensor",
+              "smart home",
+              "mqtt client",
+            ],
+            "developer-tools": [
+              "developer",
+              "code server",
+              "vscode",
+              "portainer",
+              "dind",
+              "cli",
+              "git",
+              "terminal",
+              "debugger",
+            ],
+            "data-science": [
+              "data science",
+              "airflow",
+              "jupyter",
+              "pandas",
+              "superset",
+              "metabase",
+              "spark",
+              "hadoop",
+              "etl",
+            ],
+            "operating-systems": [
+              "linux",
+              "alpine",
+              "ubuntu",
+              "debian",
+              "fedora",
+              "archlinux",
+              "centos",
+              "busybox",
+              "coreos",
+            ],
+            "content-management-system": [
+              "cms",
+              "wordpress",
+              "ghost",
+              "strapi",
+              "directus",
+              "drupal",
+              "blog",
+              "markdown",
+            ],
+            "monitoring-and-observability": [
+              "monitoring",
+              "grafana",
+              "prometheus",
+              "uptime",
+              "netdata",
+              "vector",
+              "loki",
+              "jaeger",
+              "metrics",
+            ],
+            "web-analytics": [
+              "analytics",
+              "matomo",
+              "plausible",
+              "umami",
+              "traffic",
+              "telemetry",
+              "counter",
+              "shlink",
+            ],
           };
           const pool = CAT_EXPANSION_MAP[category] || [CATEGORY_SEARCH_MAP[category] || category];
-          const poolIndex = Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % pool.length;
+          const poolIndex =
+            Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % pool.length;
           hubQuery = pool[poolIndex];
           hubPage = (Math.floor(offsetPastInitial / pageSize) % pagesPerShard) + 1;
         } else {
           // Shard global wildcard browsing across alphabetical sets
-          const SHARDS = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"];
-          const shardIndex = Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % SHARDS.length;
+          const SHARDS = [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f",
+            "g",
+            "h",
+            "i",
+            "j",
+            "k",
+            "l",
+            "m",
+            "n",
+            "o",
+            "p",
+            "q",
+            "r",
+            "s",
+            "t",
+            "u",
+            "v",
+            "w",
+            "x",
+            "y",
+            "z",
+          ];
+          const shardIndex =
+            Math.floor(offsetPastInitial / (pagesPerShard * pageSize)) % SHARDS.length;
           hubQuery = SHARDS[shardIndex];
           hubPage = (Math.floor(offsetPastInitial / pageSize) % pagesPerShard) + 1;
         }
@@ -336,7 +603,7 @@ export function createCatalogApi({ db, HOME, readBody }) {
           signal: ctrl.signal,
           headers: {
             "User-Agent": "HosteraX-DockerHubSearch/1.0",
-            "Accept": "application/json",
+            Accept: "application/json",
           },
         });
         clearTimeout(timeout);
@@ -346,8 +613,11 @@ export function createCatalogApi({ db, HOME, readBody }) {
           const rawResults = data.results || [];
 
           let results = rawResults.map((r) => {
-            const isOfficial = !!r.is_official || r.repo_name.startsWith("library/") || !r.repo_name.includes("/");
-            const cleanRepo = r.repo_name.startsWith("library/") ? r.repo_name.slice("library/".length) : r.repo_name;
+            const isOfficial =
+              !!r.is_official || r.repo_name.startsWith("library/") || !r.repo_name.includes("/");
+            const cleanRepo = r.repo_name.startsWith("library/")
+              ? r.repo_name.slice("library/".length)
+              : r.repo_name;
             const imageTag = cleanRepo.includes(":") ? cleanRepo : `${cleanRepo}:latest`;
             const logoCandidates = getLogoCandidates(cleanRepo);
 
@@ -381,7 +651,10 @@ export function createCatalogApi({ db, HOME, readBody }) {
             const liveCategoryItems = await fetchLiveDockerHubCategory(category);
             if (liveCategoryItems && liveCategoryItems.length > 0) {
               const liveNames = new Set(liveCategoryItems.map((c) => c.name.toLowerCase()));
-              results = [...liveCategoryItems, ...results.filter((r) => !liveNames.has(r.name.toLowerCase()))];
+              results = [
+                ...liveCategoryItems,
+                ...results.filter((r) => !liveNames.has(r.name.toLowerCase())),
+              ];
             }
           }
 
@@ -477,7 +750,12 @@ export function createCatalogApi({ db, HOME, readBody }) {
         clearTimeout(timeout);
 
         if (!tagsRes.ok) {
-          return sendJson(200, { repo, total: 0, tags: [], error: `Docker Hub HTTP ${tagsRes.status}` });
+          return sendJson(200, {
+            repo,
+            total: 0,
+            tags: [],
+            error: `Docker Hub HTTP ${tagsRes.status}`,
+          });
         }
 
         const data = await tagsRes.json();
@@ -501,7 +779,8 @@ export function createCatalogApi({ db, HOME, readBody }) {
           }
 
           const isSlim = t.name.includes("slim") || t.name.includes("alpine");
-          const isHardened = t.name.includes("hardened") || t.name.includes("dhi") || repo.startsWith("dhi/");
+          const isHardened =
+            t.name.includes("hardened") || t.name.includes("dhi") || repo.startsWith("dhi/");
 
           return {
             name: t.name,
@@ -509,7 +788,9 @@ export function createCatalogApi({ db, HOME, readBody }) {
             fullSize: t.full_size || 0,
             sizeFormatted: formatSize(t.full_size),
             lastUpdated: t.last_updated,
-            lastUpdatedFormatted: t.last_updated ? new Date(t.last_updated).toLocaleDateString() : "",
+            lastUpdatedFormatted: t.last_updated
+              ? new Date(t.last_updated).toLocaleDateString()
+              : "",
             architectures: architectures.length > 0 ? architectures : ["amd64"],
             isSlim,
             isHardened,
@@ -518,7 +799,11 @@ export function createCatalogApi({ db, HOME, readBody }) {
         });
 
         // Check if there is a known Hardened Image (DHI) alternative for this repo
-        const baseName = repo.split("/").pop().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const baseName = repo
+          .split("/")
+          .pop()
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, "");
         const HARDENED_EQUIVALENTS = {
           airflow: "dhi/airflow",
           redis: "dhi/redis",
@@ -537,7 +822,8 @@ export function createCatalogApi({ db, HOME, readBody }) {
           mysql: "dhi/mysql",
         };
 
-        const hardenedAlternative = HARDENED_EQUIVALENTS[baseName] || (repo.startsWith("dhi/") ? repo : null);
+        const hardenedAlternative =
+          HARDENED_EQUIVALENTS[baseName] || (repo.startsWith("dhi/") ? repo : null);
 
         return sendJson(200, {
           repo,
@@ -769,8 +1055,17 @@ export function createCatalogApi({ db, HOME, readBody }) {
       const rawQ = url.searchParams.get("q")?.trim() || "";
       const q = rawQ === "__ALL__" ? "" : rawQ;
       const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
-      const perPage = Math.min(100, Math.max(1, parseInt(url.searchParams.get("per_page") || url.searchParams.get("page_size") || "24", 10)));
-      
+      const perPage = Math.min(
+        100,
+        Math.max(
+          1,
+          parseInt(
+            url.searchParams.get("per_page") || url.searchParams.get("page_size") || "24",
+            10,
+          ),
+        ),
+      );
+
       // If empty query, return featured packages with proper pagination & logo candidates
       if (!q) {
         const offset = (page - 1) * perPage;
@@ -965,7 +1260,8 @@ export function createCatalogApi({ db, HOME, readBody }) {
           lastUpdatedFormatted: "Published",
           architectures: ["amd64", "arm64"],
           isSlim: tagName.includes("slim") || tagName.includes("alpine"),
-          isHardened: tagName.includes("hardened") || tagName.includes("dhi") || tagName.includes("rootless"),
+          isHardened:
+            tagName.includes("hardened") || tagName.includes("dhi") || tagName.includes("rootless"),
           digest: "",
         }));
 
@@ -1032,7 +1328,10 @@ export function createCatalogApi({ db, HOME, readBody }) {
       };
 
       const cleanKey = rawImage.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-      const baseKey = rawImage.split(":")[0].toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      const baseKey = rawImage
+        .split(":")[0]
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, "");
       let imageTag = WELL_KNOWN_MAP[cleanKey] || WELL_KNOWN_MAP[baseKey] || rawImage;
       if (!imageTag.includes(":")) imageTag = `${imageTag}:latest`;
 
@@ -1101,7 +1400,9 @@ export function createCatalogApi({ db, HOME, readBody }) {
         const defaultPort = WELL_KNOWN_PORTS[cleanKey] || WELL_KNOWN_PORTS[baseKey] || 3000;
 
         // Priority web ports: 80, 8080, 3000, 5000, 8000, 5678, 8090, 8055, 8096, 2368, 2283, 9000, 8108, 6333, 11434
-        const priority = [80, 8080, 3000, 5000, 8000, 5678, 8090, 8055, 8096, 2368, 2283, 9000, 8108, 6333, 11434];
+        const priority = [
+          80, 8080, 3000, 5000, 8000, 5678, 8090, 8055, 8096, 2368, 2283, 9000, 8108, 6333, 11434,
+        ];
         let detectedPort = defaultPort;
         for (const p of priority) {
           if (exposedPorts.includes(p)) {
@@ -1133,42 +1434,216 @@ export function createCatalogApi({ db, HOME, readBody }) {
     // Multi-category Docker Hub search — aggregates all categories, deduplicates, returns paginated
     if (p === "/api/catalog/dockerhub-all" && req.method === "GET") {
       const page = Math.max(1, parseInt(url.searchParams.get("page") || "1", 10));
-      const pageSize = Math.min(100, Math.max(1, parseInt(url.searchParams.get("page_size") || "24", 10)));
+      const pageSize = Math.min(
+        100,
+        Math.max(1, parseInt(url.searchParams.get("page_size") || "24", 10)),
+      );
       const sort = url.searchParams.get("sort") || "stars";
 
       const QUERIES = [
         // Docker Hub Official Categories (16)
-        "traefik", "envoy", "haproxy", "nginx", "dns",
-        "api-management", "kong", "apigee",
-        "vault", "auth", "oauth", "sso", "keycloak", "crowdsec", "fail2ban", "clamav",
-        "node", "python", "golang", "java", "php", "ruby", "rust", "dotnet", "swift", "kotlin", "typescript", "elixir", "haskell", "dart", "zig",
-        "jenkins", "gitlab", "gitea", "drone", "argo", "tekton", "flux", "tekton", "github-actions",
-        "rabbitmq", "kafka", "nats", "mosquitto", "emqx", "zeromq", "pulsar",
-        "mqtt", "iot", "home-assistant", "openhab", "domoticz", "node-red", "tasmota",
-        "ollama", "llama", "open-webui", "stable-diffusion", "whisper", "tensorflow", "pytorch", "jupyter", "mlflow", "kubeflow", "ray", "vllm",
-        "vscode", "git", "docker", "kubectl", "helm", "terraform", "ansible", "pulumi", "vagrant",
-        "jupyter", "pandas", "spark", "airflow", "dbt", "superset", "metabase", "grafana", "prometheus",
-        "nginx", "apache", "caddy", "lighttpd", "tomcat", "openresty",
-        "alpine", "ubuntu", "debian", "centos", "fedora", "archlinux", "void",
-        "wordpress", "drupal", "joomla", "ghost", "strapi", "directus", "cockpit", "keystonejs",
-        "postgres", "mysql", "mongo", "mariadb", "redis", "elasticsearch", "cassandra", "couchdb", "influxdb", "clickhouse", "timescaledb", "meilisearch", "typesense", "minio", "neo4j", "dgraph", "arangodb", "vitess",
-        "grafana", "prometheus", "zabbix", "netdata", "datadog", "nagios", "icinga", "checkmk", "uptime-kuma", "statping", "gatus",
-        "matomo", "plausible", "umami", "goaccess", "shlink",
+        "traefik",
+        "envoy",
+        "haproxy",
+        "nginx",
+        "dns",
+        "api-management",
+        "kong",
+        "apigee",
+        "vault",
+        "auth",
+        "oauth",
+        "sso",
+        "keycloak",
+        "crowdsec",
+        "fail2ban",
+        "clamav",
+        "node",
+        "python",
+        "golang",
+        "java",
+        "php",
+        "ruby",
+        "rust",
+        "dotnet",
+        "swift",
+        "kotlin",
+        "typescript",
+        "elixir",
+        "haskell",
+        "dart",
+        "zig",
+        "jenkins",
+        "gitlab",
+        "gitea",
+        "drone",
+        "argo",
+        "tekton",
+        "flux",
+        "tekton",
+        "github-actions",
+        "rabbitmq",
+        "kafka",
+        "nats",
+        "mosquitto",
+        "emqx",
+        "zeromq",
+        "pulsar",
+        "mqtt",
+        "iot",
+        "home-assistant",
+        "openhab",
+        "domoticz",
+        "node-red",
+        "tasmota",
+        "ollama",
+        "llama",
+        "open-webui",
+        "stable-diffusion",
+        "whisper",
+        "tensorflow",
+        "pytorch",
+        "jupyter",
+        "mlflow",
+        "kubeflow",
+        "ray",
+        "vllm",
+        "vscode",
+        "git",
+        "docker",
+        "kubectl",
+        "helm",
+        "terraform",
+        "ansible",
+        "pulumi",
+        "vagrant",
+        "jupyter",
+        "pandas",
+        "spark",
+        "airflow",
+        "dbt",
+        "superset",
+        "metabase",
+        "grafana",
+        "prometheus",
+        "nginx",
+        "apache",
+        "caddy",
+        "lighttpd",
+        "tomcat",
+        "openresty",
+        "alpine",
+        "ubuntu",
+        "debian",
+        "centos",
+        "fedora",
+        "archlinux",
+        "void",
+        "wordpress",
+        "drupal",
+        "joomla",
+        "ghost",
+        "strapi",
+        "directus",
+        "cockpit",
+        "keystonejs",
+        "postgres",
+        "mysql",
+        "mongo",
+        "mariadb",
+        "redis",
+        "elasticsearch",
+        "cassandra",
+        "couchdb",
+        "influxdb",
+        "clickhouse",
+        "timescaledb",
+        "meilisearch",
+        "typesense",
+        "minio",
+        "neo4j",
+        "dgraph",
+        "arangodb",
+        "vitess",
+        "grafana",
+        "prometheus",
+        "zabbix",
+        "netdata",
+        "datadog",
+        "nagios",
+        "icinga",
+        "checkmk",
+        "uptime-kuma",
+        "statping",
+        "gatus",
+        "matomo",
+        "plausible",
+        "umami",
+        "goaccess",
+        "shlink",
         // Popular self-hosted images
-        "nextcloud", "owncloud", "seafile", "gitea", "forgejo",
-        "plex", "jellyfin", "emby", "navidrome", "sonarr", "radarr", "lidarr", "prowlarr", "overseerr",
-        "portainer", "dockge", "watchtower", "linuxserver",
-        "vaultwarden", "bitwarden", "paperless", "immich", "photoprism",
-        "n8n", "duplicati", "pi-hole", "adguard", "blocky",
-        "mattermost", "rocketchat", "zulip", "element",
-        "drawio", "excalidraw", "stirling-pdf", "mealie", "linkding",
-        "calcom", "focalboard", "planka", "vikunja",
-        "mailhog", "mailu", "docker-mailserver",
-        "code-server", "openvscode",
-        "comfyui", "automatic1111", "localai", "kobold",
-        "duplicati", "restic", "borg", "kopia",
-        "zammad", "osticket",
-        "sabnzbd", "nzbget", "qbittorrent", "transmission", "deluge", "jackett",
+        "nextcloud",
+        "owncloud",
+        "seafile",
+        "gitea",
+        "forgejo",
+        "plex",
+        "jellyfin",
+        "emby",
+        "navidrome",
+        "sonarr",
+        "radarr",
+        "lidarr",
+        "prowlarr",
+        "overseerr",
+        "portainer",
+        "dockge",
+        "watchtower",
+        "linuxserver",
+        "vaultwarden",
+        "bitwarden",
+        "paperless",
+        "immich",
+        "photoprism",
+        "n8n",
+        "duplicati",
+        "pi-hole",
+        "adguard",
+        "blocky",
+        "mattermost",
+        "rocketchat",
+        "zulip",
+        "element",
+        "drawio",
+        "excalidraw",
+        "stirling-pdf",
+        "mealie",
+        "linkding",
+        "calcom",
+        "focalboard",
+        "planka",
+        "vikunja",
+        "mailhog",
+        "mailu",
+        "docker-mailserver",
+        "code-server",
+        "openvscode",
+        "comfyui",
+        "automatic1111",
+        "localai",
+        "kobold",
+        "duplicati",
+        "restic",
+        "borg",
+        "kopia",
+        "zammad",
+        "osticket",
+        "sabnzbd",
+        "nzbget",
+        "qbittorrent",
+        "transmission",
+        "deluge",
+        "jackett",
       ];
 
       const seen = new Set();
@@ -1199,10 +1674,13 @@ export function createCatalogApi({ db, HOME, readBody }) {
         const batchResults = await Promise.all(batch.map(fetchOne));
         for (const results of batchResults) {
           for (const r of results) {
-            const cleanRepo = r.repo_name.startsWith("library/") ? r.repo_name.slice("library/".length) : r.repo_name;
+            const cleanRepo = r.repo_name.startsWith("library/")
+              ? r.repo_name.slice("library/".length)
+              : r.repo_name;
             if (seen.has(cleanRepo)) continue;
             seen.add(cleanRepo);
-            const isOfficial = !!r.is_official || r.repo_name.startsWith("library/") || !r.repo_name.includes("/");
+            const isOfficial =
+              !!r.is_official || r.repo_name.startsWith("library/") || !r.repo_name.includes("/");
             const logoCandidates = getLogoCandidates(cleanRepo);
             allResults.push({
               id: cleanRepo.replace(/[^a-zA-Z0-9_-]/g, "_"),

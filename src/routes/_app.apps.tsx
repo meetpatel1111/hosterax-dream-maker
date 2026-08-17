@@ -10,7 +10,8 @@ export const Route = createFileRoute("/_app/apps")({
       { title: "App Store & Catalog — HosteraX" },
       {
         name: "description",
-        content: "Browse 2,550+ Awesome-Selfhosted applications and starter templates for 1-click deployment.",
+        content:
+          "Browse 2,550+ Awesome-Selfhosted applications and starter templates for 1-click deployment.",
       },
     ],
   }),
@@ -31,7 +32,8 @@ function AppsCatalogPage() {
           </div>
           <h1 className="text-2xl font-semibold tracking-tight mt-1">App Store & Catalog</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Discover, install, and run 2,550+ self-hosted software packages and starter templates with zero-config.
+            Discover, install, and run 2,550+ self-hosted software packages and starter templates
+            with zero-config.
           </p>
         </div>
 
@@ -64,11 +66,7 @@ function AppsCatalogPage() {
 
       {/* Main Content */}
       <div className="animate-in fade-in duration-200">
-        {catalogSection === "one-click" ? (
-          <OneClickAppsCatalog />
-        ) : (
-          <StarterTemplatesCatalog />
-        )}
+        {catalogSection === "one-click" ? <OneClickAppsCatalog /> : <StarterTemplatesCatalog />}
       </div>
     </div>
   );

@@ -1,5 +1,14 @@
 import React, { useState } from "react";
-import { Archive, Trash2, AlertTriangle, X, Check, RefreshCw, HardDrive, ShieldAlert } from "lucide-react";
+import {
+  Archive,
+  Trash2,
+  AlertTriangle,
+  X,
+  Check,
+  RefreshCw,
+  HardDrive,
+  ShieldAlert,
+} from "lucide-react";
 
 interface DeleteProjectModalProps {
   isOpen: boolean;
@@ -51,7 +60,8 @@ export function DeleteProjectModal({
               {permanent ? "Permanently Purge Project" : "Delete & Archive Project"}
             </h2>
             <p className="text-xs text-muted-foreground">
-              Target service: <span className="font-mono font-semibold text-foreground">{projectName}</span>
+              Target service:{" "}
+              <span className="font-mono font-semibold text-foreground">{projectName}</span>
             </p>
           </div>
         </div>
@@ -69,20 +79,28 @@ export function DeleteProjectModal({
           >
             <div
               className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                !permanent ? "border-amber-500 bg-amber-500 text-black" : "border-muted-foreground/40"
+                !permanent
+                  ? "border-amber-500 bg-amber-500 text-black"
+                  : "border-muted-foreground/40"
               }`}
             >
               {!permanent && <Check className="h-2.5 w-2.5 stroke-[3]" />}
             </div>
             <div className="space-y-1">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-foreground">Archive & Free Disk Space</span>
+                <span className="text-sm font-semibold text-foreground">
+                  Archive & Free Disk Space
+                </span>
                 <span className="rounded-full bg-emerald-500/10 px-2 py-0.2 text-[10px] font-semibold text-emerald-400 border border-emerald-500/20">
                   Recommended
                 </span>
               </div>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Immediately terminates processes/containers and <strong className="text-foreground">purges all cloned source code, node_modules, and build files from disk</strong> (0 MB footprint). Preserves configuration and env vars for 1-click restore.
+                Immediately terminates processes/containers and{" "}
+                <strong className="text-foreground">
+                  purges all cloned source code, node_modules, and build files from disk
+                </strong>{" "}
+                (0 MB footprint). Preserves configuration and env vars for 1-click restore.
               </p>
             </div>
           </div>
@@ -98,15 +116,20 @@ export function DeleteProjectModal({
           >
             <div
               className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${
-                permanent ? "border-destructive bg-destructive text-white" : "border-muted-foreground/40"
+                permanent
+                  ? "border-destructive bg-destructive text-white"
+                  : "border-muted-foreground/40"
               }`}
             >
               {permanent && <Check className="h-2.5 w-2.5 stroke-[3]" />}
             </div>
             <div className="space-y-1">
-              <span className="text-sm font-semibold text-foreground">Permanently Purge Everything</span>
+              <span className="text-sm font-semibold text-foreground">
+                Permanently Purge Everything
+              </span>
               <p className="text-xs text-muted-foreground leading-relaxed">
-                Deletes all disk files, database records, deployment histories, and domain mappings permanently. <strong className="text-destructive">Cannot be undone.</strong>
+                Deletes all disk files, database records, deployment histories, and domain mappings
+                permanently. <strong className="text-destructive">Cannot be undone.</strong>
               </p>
             </div>
           </div>

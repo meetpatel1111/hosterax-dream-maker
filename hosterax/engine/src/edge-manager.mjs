@@ -51,7 +51,7 @@ export class EdgeManager {
       this.db
         .prepare(
           `INSERT INTO edge_settings (id, provider, http_port, https_port, admin_port, acme_email, auto_https, on_demand_tls, hsts_enabled, is_running, last_sync_at, updated_at)
-           VALUES (1, 'caddy', 80, 443, 2019, '', 1, 1, 1, 0, 0, ?)`
+           VALUES (1, 'caddy', 80, 443, 2019, '', 1, 1, 1, 0, 0, ?)`,
         )
         .run(Date.now());
     }
@@ -82,7 +82,7 @@ export class EdgeManager {
         `UPDATE edge_settings SET 
         provider=?, http_port=?, https_port=?, admin_port=?, acme_email=?, 
         auto_https=?, on_demand_tls=?, hsts_enabled=?, updated_at=?
-       WHERE id=1`
+       WHERE id=1`,
       )
       .run(
         updated.provider,
@@ -93,7 +93,7 @@ export class EdgeManager {
         updated.auto_https ? 1 : 0,
         updated.on_demand_tls ? 1 : 0,
         updated.hsts_enabled ? 1 : 0,
-        Date.now()
+        Date.now(),
       );
 
     this.settings = this.getSettings();
@@ -119,7 +119,9 @@ export class EdgeManager {
     }
 
     // Check registered project domains in SQLite
-    const dom = this.db.prepare("SELECT 1 FROM domains WHERE LOWER(hostname)=? AND verified=1").get(clean);
+    const dom = this.db
+      .prepare("SELECT 1 FROM domains WHERE LOWER(hostname)=? AND verified=1")
+      .get(clean);
     return Boolean(dom);
   }
 
@@ -131,12 +133,14 @@ export class EdgeManager {
     const clean = host.toLowerCase().trim();
     if (clean === "localhost" || clean.endsWith(".localhost")) return true;
 
-    const ipMatch = clean.match(/(\d{1,3})[-.](\d{1,3})[-.](\d{1,3})[-.](\d{1,3})\.(sslip\.io|nip\.io|traefik\.me|ipq\.co|fdns\.uk)$/);
+    const ipMatch = clean.match(
+      /(\d{1,3})[-.](\d{1,3})[-.](\d{1,3})[-.](\d{1,3})\.(sslip\.io|nip\.io|traefik\.me|ipq\.co|fdns\.uk)$/,
+    );
     if (ipMatch) {
       const a = Number(ipMatch[1]);
       const b = Number(ipMatch[2]);
       if (a === 127) return true; // 127.0.0.0/8 loopback
-      if (a === 10) return true;  // 10.0.0.0/8 private
+      if (a === 10) return true; // 10.0.0.0/8 private
       if (a === 192 && b === 168) return true; // 192.168.0.0/16 private
       if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12 private
       return false; // Real Public IP!
@@ -196,7 +200,9 @@ export class EdgeManager {
    */
   async generateCaddyfile(routeList, settings) {
     const caddyfilePath = path.join(this.edgeDir, "Caddyfile");
-    const emailDirective = settings.acme_email ? `email ${settings.acme_email}` : "# No ACME email specified";
+    const emailDirective = settings.acme_email
+      ? `email ${settings.acme_email}`
+      : "# No ACME email specified";
 
     let content = `# Generated automatically by HosteraX Managed Edge Subsystem
 # Provider: Caddy 2 (Automatic HTTPS & Zero-Downtime Hot Reload)
@@ -204,9 +210,13 @@ export class EdgeManager {
 {
   admin 0.0.0.0:${settings.admin_port}
   ${emailDirective}
-  ${settings.on_demand_tls ? `on_demand_tls {
+  ${
+    settings.on_demand_tls
+      ? `on_demand_tls {
     ask http://host.docker.internal:7777/api/edge/check-domain
-  }` : ""}
+  }`
+      : ""
+  }
 }
 
 `;
@@ -240,9 +250,7 @@ export class EdgeManager {
           content += `}\n\n`;
         } else {
           // Public custom domain with automatic Let's Encrypt / ZeroSSL on-demand
-          const tlsDirective = settings.on_demand_tls
-            ? "tls {\n    on_demand\n  }"
-            : "";
+          const tlsDirective = settings.on_demand_tls ? "tls {\n    on_demand\n  }" : "";
 
           content += `${host} {\n`;
           if (tlsDirective) content += `  ${tlsDirective}\n`;
@@ -274,10 +282,19 @@ export class EdgeManager {
     }
     try {
       const cert = await new Promise((resolve, reject) => {
-        const child = spawn("docker", ["exec", "hx_edge", "cat", "/data/caddy/pki/authorities/local/root.crt"]);
+        const child = spawn("docker", [
+          "exec",
+          "hx_edge",
+          "cat",
+          "/data/caddy/pki/authorities/local/root.crt",
+        ]);
         let out = "";
         child.stdout.on("data", (d) => (out += d.toString()));
-        child.on("close", (code) => (code === 0 && out.includes("BEGIN CERTIFICATE") ? resolve(out) : reject(new Error("no cert"))));
+        child.on("close", (code) =>
+          code === 0 && out.includes("BEGIN CERTIFICATE")
+            ? resolve(out)
+            : reject(new Error("no cert")),
+        );
         child.on("error", reject);
       });
       fs.writeFileSync(caFile, cert, "utf8");
@@ -371,7 +388,7 @@ http {
           (res) => {
             if (res.statusCode >= 200 && res.statusCode < 300) resolve(true);
             else reject(new Error(`Caddy API returned ${res.statusCode}`));
-          }
+          },
         );
         req.on("error", (e) => reject(e));
         req.write(caddyfileContent);
@@ -390,7 +407,9 @@ http {
     await this.ensureEdgeContainerRunning("openresty", settings);
     try {
       await new Promise((resolve) => {
-        const child = spawn("docker", ["exec", "hx_edge", "openresty", "-s", "reload"], { encoding: "utf8" });
+        const child = spawn("docker", ["exec", "hx_edge", "openresty", "-s", "reload"], {
+          encoding: "utf8",
+        });
         child.on("close", resolve);
         child.on("error", resolve);
         setTimeout(() => resolve(), 3000);
@@ -454,7 +473,7 @@ http {
         `hx_edge_caddy_data:/data`,
         "-v",
         `hx_edge_caddy_config:/config`,
-        image
+        image,
       );
     } else {
       dockerArgs.push(
@@ -466,7 +485,7 @@ http {
         `${this.acmeWebrootDir}:/var/www/acme-challenge`,
         "-v",
         `hx_edge_openresty_certs:/etc/letsencrypt`,
-        image
+        image,
       );
     }
 
@@ -491,9 +510,13 @@ http {
 
     try {
       const inspectRes = await new Promise((resolve) => {
-        const child = spawn("docker", ["inspect", "--format", "{{.State.Status}}|{{.State.StartedAt}}", "hx_edge"], {
-          encoding: "utf8",
-        });
+        const child = spawn(
+          "docker",
+          ["inspect", "--format", "{{.State.Status}}|{{.State.StartedAt}}", "hx_edge"],
+          {
+            encoding: "utf8",
+          },
+        );
         let out = "";
         child.stdout.on("data", (d) => (out += d.toString()));
         child.on("close", () => resolve(out.trim()));
@@ -509,7 +532,9 @@ http {
     } catch {}
 
     const totalDomains = this.db.prepare("SELECT COUNT(*) c FROM domains").get().c;
-    const activeSsl = this.db.prepare("SELECT COUNT(*) c FROM domains WHERE ssl_status='active'").get().c;
+    const activeSsl = this.db
+      .prepare("SELECT COUNT(*) c FROM domains WHERE ssl_status='active'")
+      .get().c;
 
     return {
       provider: settings.provider,

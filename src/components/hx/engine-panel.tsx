@@ -179,10 +179,7 @@ export function OneClickApps() {
         <h2 className="flex items-center gap-2 text-sm font-semibold">
           <Package className="h-4 w-4 text-primary" /> Quick Install Apps
         </h2>
-        <a
-          href="/new"
-          className="text-xs font-medium text-primary hover:underline"
-        >
+        <a href="/new" className="text-xs font-medium text-primary hover:underline">
           Browse All 2,550+ Apps →
         </a>
       </div>

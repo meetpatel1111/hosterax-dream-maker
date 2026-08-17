@@ -39,14 +39,7 @@ export const Route = createFileRoute("/_app/p/$slug")({
 });
 
 type Tab =
-  | "overview"
-  | "deployments"
-  | "self-heal"
-  | "logs"
-  | "env"
-  | "domains"
-  | "databases"
-  | "settings";
+  "overview" | "deployments" | "self-heal" | "logs" | "env" | "domains" | "databases" | "settings";
 
 function ProjectPage() {
   const { slug } = Route.useParams();
@@ -82,8 +75,12 @@ function ProjectPage() {
             target_type: ep.target || "process",
             workspace_type: "none",
             build_timeout_minutes: 30,
-            created_at: ep.created_at ? new Date(ep.created_at).toISOString() : new Date().toISOString(),
-            updated_at: ep.updated_at ? new Date(ep.updated_at).toISOString() : new Date().toISOString(),
+            created_at: ep.created_at
+              ? new Date(ep.created_at).toISOString()
+              : new Date().toISOString(),
+            updated_at: ep.updated_at
+              ? new Date(ep.updated_at).toISOString()
+              : new Date().toISOString(),
             isLocal: true,
           };
         }
@@ -112,8 +109,12 @@ function ProjectPage() {
             target_type: found.target || "process",
             workspace_type: "none",
             build_timeout_minutes: 30,
-            created_at: found.created_at ? new Date(found.created_at).toISOString() : new Date().toISOString(),
-            updated_at: found.updated_at ? new Date(found.updated_at).toISOString() : new Date().toISOString(),
+            created_at: found.created_at
+              ? new Date(found.created_at).toISOString()
+              : new Date().toISOString(),
+            updated_at: found.updated_at
+              ? new Date(found.updated_at).toISOString()
+              : new Date().toISOString(),
             isLocal: true,
           };
         }
@@ -222,7 +223,8 @@ function ProjectPage() {
                 rel="noreferrer"
                 className="flex items-center gap-1 hover:text-primary transition-colors text-primary font-medium font-mono"
               >
-                <Globe className="h-3 w-3" /> https://{formatMagicDnsUrl(project.name, magicDns?.activeProvider || "sslip.io")}{" "}
+                <Globe className="h-3 w-3" /> https://
+                {formatMagicDnsUrl(project.name, magicDns?.activeProvider || "sslip.io")}{" "}
                 <ExternalLink className="h-3 w-3" />
               </a>
             </div>
@@ -264,13 +266,17 @@ function ProjectPage() {
       </div>
 
       {tab === "overview" && <Overview project={project} />}
-      {tab === "deployments" && <DeploymentsTab projectId={project.id} projectName={project.name} />}
+      {tab === "deployments" && (
+        <DeploymentsTab projectId={project.id} projectName={project.name} />
+      )}
       {tab === "self-heal" && <SelfHealingPanel projectName={project.name} />}
       {tab === "logs" && <LiveLogs projectName={project.name} />}
       {tab === "env" && <EnvVars projectId={project.id} projectName={project.name} />}
       {tab === "domains" && <ProjectDomains projectId={project.id} projectName={project.name} />}
       {tab === "databases" && <DatabasesTab projectId={project.id} projectName={project.name} />}
-      {tab === "settings" && <Settings project={project} onDelete={() => setDeleteModalOpen(true)} />}
+      {tab === "settings" && (
+        <Settings project={project} onDelete={() => setDeleteModalOpen(true)} />
+      )}
 
       <DeleteProjectModal
         isOpen={deleteModalOpen}
@@ -289,14 +295,19 @@ function Overview({ project }: { project: any }) {
     queryFn: async () => {
       // 1. Check Engine deployments
       try {
-        const engDeps = await engine.call<any[]>("GET", `/api/projects/${project.name}/deployments`);
+        const engDeps = await engine.call<any[]>(
+          "GET",
+          `/api/projects/${project.name}/deployments`,
+        );
         if (engDeps && engDeps.length > 0) {
           return engDeps.slice(0, 5).map((d) => ({
             id: d.id,
             commit_message: d.commit_message || `Release ${d.version}`,
             commit_sha: d.commit_sha || d.id.slice(0, 8),
             status: d.phase === "ready" ? "success" : d.phase === "failed" ? "error" : "building",
-            created_at: d.started_at ? new Date(d.started_at).toISOString() : new Date().toISOString(),
+            created_at: d.started_at
+              ? new Date(d.started_at).toISOString()
+              : new Date().toISOString(),
             version: d.version,
           }));
         }
@@ -332,7 +343,9 @@ function Overview({ project }: { project: any }) {
                     <div className="text-sm font-medium">{d.commit_message ?? "Deployment"}</div>
                     <div className="mt-0.5 text-xs text-muted-foreground">
                       <span className="font-mono">{d.commit_sha}</span>
-                      {d.version && <span className="ml-2 font-mono text-primary">{d.version}</span>}
+                      {d.version && (
+                        <span className="ml-2 font-mono text-primary">{d.version}</span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -370,7 +383,9 @@ function DeploymentsTab({ projectId, projectName }: { projectId: string; project
             trigger_type: d.trigger || "manual",
             phase: d.phase,
             status: d.phase === "ready" ? "success" : d.phase === "failed" ? "error" : "building",
-            created_at: d.started_at ? new Date(d.started_at).toISOString() : new Date().toISOString(),
+            created_at: d.started_at
+              ? new Date(d.started_at).toISOString()
+              : new Date().toISOString(),
           }));
         }
       } catch {}
@@ -532,45 +547,47 @@ function LiveLogs({ projectName }: { projectName: string }) {
     fetch(`${engine.url}/api/projects/${projectName}/logs/stream`, {
       headers: { Authorization: `Bearer ${engine.token}` },
       signal: abortController.signal,
-    }).then((res) => {
-      if (!res.ok || !res.body) return;
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      const readChunk = () => {
-        reader.read().then(({ done, value }) => {
-          if (done) return;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const payload = JSON.parse(line.slice(6));
-                if (payload?.text) {
-                  setLogs((prev) => {
-                    if (
-                      prev.some(
-                        (p) =>
-                          p.text === payload.text &&
-                          Math.abs((p.ts || 0) - (payload.ts || 0)) < 1500,
-                      )
-                    ) {
-                      return prev;
-                    }
-                    return [...prev, payload];
-                  });
-                }
-              } catch {}
+    })
+      .then((res) => {
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        const readChunk = () => {
+          reader.read().then(({ done, value }) => {
+            if (done) return;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              if (line.startsWith("data: ")) {
+                try {
+                  const payload = JSON.parse(line.slice(6));
+                  if (payload?.text) {
+                    setLogs((prev) => {
+                      if (
+                        prev.some(
+                          (p) =>
+                            p.text === payload.text &&
+                            Math.abs((p.ts || 0) - (payload.ts || 0)) < 1500,
+                        )
+                      ) {
+                        return prev;
+                      }
+                      return [...prev, payload];
+                    });
+                  }
+                } catch {}
+              }
             }
-          }
-          readChunk();
-        });
-      };
-      readChunk();
-    }).catch(() => {});
+            readChunk();
+          });
+        };
+        readChunk();
+      })
+      .catch(() => {});
     return () => abortController.abort();
-  }, [active, engine.url, engine.token, projectName]);
+  }, [active, engine, projectName]);
 
   return (
     <div className="grid gap-4 md:grid-cols-[220px_1fr]">
@@ -616,7 +633,9 @@ function LiveLogs({ projectName }: { projectName: string }) {
           )}
           {logs.map((l, i) => (
             <div key={i} className="flex gap-3">
-              <span className="text-muted-foreground/60">{format(new Date(l.ts || Date.now()), "HH:mm:ss")}</span>
+              <span className="text-muted-foreground/60">
+                {format(new Date(l.ts || Date.now()), "HH:mm:ss")}
+              </span>
               <span
                 className={
                   l.stream === "stderr"
@@ -649,7 +668,11 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
             id: `env-${k}`,
             key: k,
             value: String(v),
-            is_secret: k.toLowerCase().includes("secret") || k.toLowerCase().includes("key") || k.toLowerCase().includes("token") || k.toLowerCase().includes("pass"),
+            is_secret:
+              k.toLowerCase().includes("secret") ||
+              k.toLowerCase().includes("key") ||
+              k.toLowerCase().includes("token") ||
+              k.toLowerCase().includes("pass"),
           }));
         }
       } catch {}
@@ -782,7 +805,9 @@ function ProjectDomains({ projectId, projectName }: { projectId: string; project
     queryFn: async () => {
       try {
         const all = await engine.call<any[]>("GET", "/api/domains");
-        return (all ?? []).filter((d: any) => (d.project || "").toLowerCase() === projectName.toLowerCase());
+        return (all ?? []).filter(
+          (d: any) => (d.project || "").toLowerCase() === projectName.toLowerCase(),
+        );
       } catch {
         return [];
       }
@@ -854,7 +879,10 @@ function ProjectDomains({ projectId, projectName }: { projectId: string; project
             </div>
           ) : (
             domains.map((d: any) => (
-              <div key={d.id || d.hostname} className="flex items-center justify-between py-3 font-mono text-xs">
+              <div
+                key={d.id || d.hostname}
+                className="flex items-center justify-between py-3 font-mono text-xs"
+              >
                 <div className="flex items-center gap-2">
                   <Globe className="h-3.5 w-3.5 text-primary" />
                   <span className="font-medium text-foreground">{d.hostname}</span>
@@ -882,13 +910,7 @@ function ProjectDomains({ projectId, projectName }: { projectId: string; project
   );
 }
 
-function DatabasesTab({
-  projectId,
-  projectName,
-}: {
-  projectId: string;
-  projectName: string;
-}) {
+function DatabasesTab({ projectId, projectName }: { projectId: string; projectName: string }) {
   const engine = useEngine();
   const qc = useQueryClient();
   const { data: dbs = [] } = useQuery({
