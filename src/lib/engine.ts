@@ -699,8 +699,10 @@ export type EmailDomain = {
   dkim_selector: string;
   dkim_public_key: string;
   mailbox_count?: number;
+  alias_count?: number;
   dns_records?: DnsRecord[];
   mailboxes?: Mailbox[];
+  aliases?: EmailAlias[];
   created_at: number;
 };
 
@@ -777,6 +779,94 @@ export function useEmailMessages(mailboxId?: string, folder = "inbox") {
     },
     enabled: !!health.data?.ok && !!mailboxId,
     refetchInterval: 4000,
+  });
+}
+
+export type EmailAlias = {
+  id: string;
+  domain_id: string;
+  source_email: string;
+  destination_type: "email" | "webhook";
+  destination_target: string;
+  is_active: number;
+  created_at: number;
+};
+
+export type EmailSmtpRelay = {
+  id: string;
+  name: string;
+  provider: "direct" | "resend" | "postmark" | "ses" | "sendgrid" | "custom";
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  from_email?: string;
+  is_default: number;
+  created_at: number;
+};
+
+export function useEmailAliases(domainId?: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<EmailAlias[]>({
+    queryKey: ["email-aliases", eng.url, eng.token, domainId],
+    queryFn: async () => {
+      try {
+        const path = domainId ? `/api/email/aliases?domain_id=${domainId}` : "/api/email/aliases";
+        return await eng.call<EmailAlias[]>("GET", path);
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 6000,
+  });
+}
+
+export function useEmailSmtpRelays() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<EmailSmtpRelay[]>({
+    queryKey: ["email-smtp-relays", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<EmailSmtpRelay[]>("GET", "/api/email/smtp-relays");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 6000,
+  });
+}
+
+export type ProjectDiagnostics = {
+  project: string;
+  container: string;
+  fault_type: string;
+  severity: "low" | "medium" | "high" | "critical";
+  root_cause: string;
+  suggested_action: string;
+  suggested_command: string;
+  analyzed_lines: number;
+  timestamp: number;
+};
+
+export function useProjectDiagnostics(projectName?: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<ProjectDiagnostics>({
+    queryKey: ["project-diagnostics", eng.url, eng.token, projectName],
+    queryFn: async () => {
+      if (!projectName) return null as any;
+      try {
+        return await eng.call<ProjectDiagnostics>("GET", `/api/projects/${projectName}/diagnostics`);
+      } catch {
+        return null as any;
+      }
+    },
+    enabled: !!health.data?.ok && !!projectName,
+    refetchInterval: 10000,
   });
 }
 

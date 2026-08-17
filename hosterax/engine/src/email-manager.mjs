@@ -1,10 +1,11 @@
 // hosterax/engine/src/email-manager.mjs
-// Self-Hosted Email Stack, Live DNS Resolver & Zero-Email Webmail Subsystem for HosteraX
-// Features real live DNS queries (node:dns), automated SPF, DKIM, DMARC validation, and Docker Mailserver provisioning.
+// Self-Hosted Email Stack, Inbound Forwarding, SMTP Relay & Zero-Email Webmail Subsystem for HosteraX
+// Features real live DNS queries (node:dns), automated SPF/DKIM/DMARC/MX, Email Aliases/Webhooks, and Outbound SMTP Relay.
 
 import crypto from "node:crypto";
 import dns from "node:dns";
-import { spawnSync } from "node:child_process";
+import net from "node:net";
+import tls from "node:tls";
 
 export class EmailManager {
   constructor({ db, HOME }) {
@@ -56,8 +57,33 @@ export class EmailManager {
         FOREIGN KEY(mailbox_id) REFERENCES mailboxes(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS email_aliases (
+        id TEXT PRIMARY KEY,
+        domain_id TEXT NOT NULL,
+        source_email TEXT NOT NULL UNIQUE,
+        destination_type TEXT NOT NULL DEFAULT 'email',
+        destination_target TEXT NOT NULL,
+        is_active INTEGER DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY(domain_id) REFERENCES email_domains(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS email_smtp_relays (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        provider TEXT NOT NULL DEFAULT 'custom',
+        host TEXT NOT NULL,
+        port INTEGER NOT NULL DEFAULT 587,
+        username TEXT,
+        password TEXT,
+        from_email TEXT,
+        is_default INTEGER DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_mailboxes_domain ON mailboxes(domain_id);
       CREATE INDEX IF NOT EXISTS idx_messages_mailbox ON email_messages(mailbox_id, folder);
+      CREATE INDEX IF NOT EXISTS idx_aliases_domain ON email_aliases(domain_id);
     `);
 
     try {
@@ -115,6 +141,16 @@ export class EmailManager {
       `
         )
         .run(`msg_${crypto.randomBytes(6).toString("hex")}`, mboxId, now);
+
+      // Seed default alias
+      this.db
+        .prepare(
+          `
+        INSERT INTO email_aliases (id, domain_id, source_email, destination_type, destination_target, is_active, created_at)
+        VALUES ('alias_support', ?, 'support@hosterax.internal', 'email', 'admin@hosterax.internal', 1, ?)
+      `
+        )
+        .run(id, now);
     }
   }
 
@@ -124,9 +160,13 @@ export class EmailManager {
       const mailboxCount = this.db
         .prepare("SELECT COUNT(*) as count FROM mailboxes WHERE domain_id=?")
         .get(d.id)?.count || 0;
+      const aliasCount = this.db
+        .prepare("SELECT COUNT(*) as count FROM email_aliases WHERE domain_id=?")
+        .get(d.id)?.count || 0;
       return {
         ...d,
         mailbox_count: mailboxCount,
+        alias_count: aliasCount,
         dns_records: this.calculateDnsRecords(d),
       };
     });
@@ -170,9 +210,6 @@ export class EmailManager {
     ];
   }
 
-  /**
-   * Real Live DNS Resolver: queries nameservers for SPF, DKIM, DMARC, MX records in real-time
-   */
   async verifyLiveDns(domainId) {
     const d = this.db.prepare("SELECT * FROM email_domains WHERE id=?").get(domainId);
     if (!d) throw new Error("Domain not found.");
@@ -183,7 +220,12 @@ export class EmailManager {
     let dmarcStatus = "missing";
     let mxStatus = "missing";
 
-    if (domain.endsWith(".internal") || domain.endsWith(".local") || domain.includes("127.0.0.1") || domain.includes("localhost")) {
+    if (
+      domain.endsWith(".internal") ||
+      domain.endsWith(".local") ||
+      domain.includes("127.0.0.1") ||
+      domain.includes("localhost")
+    ) {
       spfStatus = "verified";
       dkimStatus = "verified";
       dmarcStatus = "verified";
@@ -267,6 +309,7 @@ export class EmailManager {
       ...d,
       dns_records: this.calculateDnsRecords(d),
       mailboxes: this.listMailboxes(d.id),
+      aliases: this.listAliases(d.id),
     };
   }
 
@@ -274,6 +317,7 @@ export class EmailManager {
     const d = this.db.prepare("SELECT * FROM email_domains WHERE id=?").get(id);
     if (!d) throw new Error("Domain not found.");
 
+    this.db.prepare("DELETE FROM email_aliases WHERE domain_id=?").run(d.id);
     this.db.prepare("DELETE FROM mailboxes WHERE domain_id=?").run(d.id);
     const res = this.db.prepare("DELETE FROM email_domains WHERE id=?").run(d.id);
     return res.changes > 0;
@@ -314,6 +358,102 @@ export class EmailManager {
     return res.changes > 0;
   }
 
+  // ────────── Aliases & Inbound Forwarding ──────────
+  listAliases(domainId = null) {
+    if (domainId) {
+      return this.db.prepare("SELECT * FROM email_aliases WHERE domain_id=? ORDER BY source_email ASC").all(domainId);
+    }
+    return this.db.prepare("SELECT * FROM email_aliases ORDER BY created_at DESC").all();
+  }
+
+  createAlias({ domain_id, source_email, destination_type = "email", destination_target }) {
+    const cleanSource = source_email.toLowerCase().trim();
+    const existing = this.db.prepare("SELECT * FROM email_aliases WHERE source_email=?").get(cleanSource);
+    if (existing) throw new Error(`Alias "${cleanSource}" already exists.`);
+
+    const id = `alias_${crypto.randomBytes(6).toString("hex")}`;
+    const now = Date.now();
+
+    this.db
+      .prepare(
+        `
+      INSERT INTO email_aliases (id, domain_id, source_email, destination_type, destination_target, is_active, created_at)
+      VALUES (?, ?, ?, ?, ?, 1, ?)
+    `
+      )
+      .run(id, domain_id, cleanSource, destination_type, destination_target.trim(), now);
+
+    return this.db.prepare("SELECT * FROM email_aliases WHERE id=?").get(id);
+  }
+
+  deleteAlias(id) {
+    const res = this.db.prepare("DELETE FROM email_aliases WHERE id=?").run(id);
+    return res.changes > 0;
+  }
+
+  // ────────── Outbound SMTP Relays ──────────
+  listSmtpRelays() {
+    return this.db.prepare("SELECT * FROM email_smtp_relays ORDER BY created_at ASC").all();
+  }
+
+  saveSmtpRelay({ id, name, provider = "custom", host, port = 587, username = "", password = "", from_email = "", is_default = 0 }) {
+    const now = Date.now();
+    const relayId = id || `relay_${crypto.randomBytes(6).toString("hex")}`;
+
+    if (is_default) {
+      this.db.prepare("UPDATE email_smtp_relays SET is_default=0").run();
+    }
+
+    const existing = this.db.prepare("SELECT id FROM email_smtp_relays WHERE id=?").get(relayId);
+    if (existing) {
+      this.db
+        .prepare(
+          `
+        UPDATE email_smtp_relays SET
+          name=?, provider=?, host=?, port=?, username=?, password=?, from_email=?, is_default=?
+        WHERE id=?
+      `
+        )
+        .run(name, provider, host, Number(port), username, password, from_email, is_default ? 1 : 0, relayId);
+    } else {
+      this.db
+        .prepare(
+          `
+        INSERT INTO email_smtp_relays (id, name, provider, host, port, username, password, from_email, is_default, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `
+        )
+        .run(relayId, name, provider, host, Number(port), username, password, from_email, is_default ? 1 : 0, now);
+    }
+
+    return this.db.prepare("SELECT * FROM email_smtp_relays WHERE id=?").get(relayId);
+  }
+
+  deleteSmtpRelay(id) {
+    const res = this.db.prepare("DELETE FROM email_smtp_relays WHERE id=?").run(id);
+    return res.changes > 0;
+  }
+
+  async testSmtpRelay(relayConfig) {
+    return new Promise((resolve) => {
+      const socket = net.createConnection({ host: relayConfig.host, port: Number(relayConfig.port), timeout: 5000 });
+
+      socket.on("connect", () => {
+        socket.end();
+        resolve({ ok: true, message: `Connected successfully to ${relayConfig.host}:${relayConfig.port}` });
+      });
+
+      socket.on("timeout", () => {
+        socket.destroy();
+        resolve({ ok: false, error: `Connection timed out to ${relayConfig.host}:${relayConfig.port}` });
+      });
+
+      socket.on("error", (err) => {
+        resolve({ ok: false, error: err.message });
+      });
+    });
+  }
+
   // ────────── Messages & Webmail ──────────
   listMessages(mailboxId, folder = "inbox") {
     return this.db
@@ -345,6 +485,23 @@ export class EmailManager {
         body_html || `<p>${body_text || ""}</p>`,
         now
       );
+
+    // If destination matches any local alias with webhook, trigger webhook in background
+    const alias = this.db.prepare("SELECT * FROM email_aliases WHERE source_email=? AND is_active=1").get(to.trim().toLowerCase());
+    if (alias && alias.destination_type === "webhook" && alias.destination_target.startsWith("http")) {
+      fetch(alias.destination_target, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          event: "inbound_email",
+          from: mbox.email,
+          to: to.trim().toLowerCase(),
+          subject: subject.trim(),
+          body: body_text,
+          timestamp: now,
+        }),
+      }).catch(() => {});
+    }
 
     return this.db.prepare("SELECT * FROM email_messages WHERE id=?").get(id);
   }

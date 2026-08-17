@@ -19,15 +19,24 @@ import {
   Globe,
   Loader2,
   FileText,
+  Forward,
+  Server,
+  Zap,
+  Radio,
+  ExternalLink,
 } from "lucide-react";
 import {
   useEngine,
   useEmailDomains,
   useMailboxes,
   useEmailMessages,
+  useEmailAliases,
+  useEmailSmtpRelays,
   type EmailDomain,
   type Mailbox,
   type EmailMessage,
+  type EmailAlias,
+  type EmailSmtpRelay,
 } from "@/lib/engine";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,13 +53,15 @@ import {
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/mail")({
-  head: () => ({ meta: [{ title: "Mailboxes — HosteraX" }] }),
+  head: () => ({ meta: [{ title: "Mailboxes & Email Stack — HosteraX" }] }),
   component: MailboxesPage,
 });
 
 function MailboxesPage() {
   const engine = useEngine();
-  const { data: domains = [], refetch: refetchDomains, isLoading: loadingDomains } = useEmailDomains();
+  const [activeTab, setActiveTab] = useState<"webmail" | "aliases" | "relays">("webmail");
+
+  const { data: domains = [], refetch: refetchDomains } = useEmailDomains();
   const [selectedDomainId, setSelectedDomainId] = useState<string | null>(null);
 
   const activeDomain = domains.find((d) => (selectedDomainId ? d.id === selectedDomainId : true)) || domains[0];
@@ -60,10 +71,12 @@ function MailboxesPage() {
   const activeMailbox = mailboxes.find((m) => (selectedMailboxId ? m.id === selectedMailboxId : true)) || mailboxes[0];
   const [folder, setFolder] = useState<"inbox" | "sent" | "trash">("inbox");
   const { data: messages = [], refetch: refetchMessages } = useEmailMessages(activeMailbox?.id, folder);
-
   const [selectedMessage, setSelectedMessage] = useState<EmailMessage | null>(null);
 
-  // Modals
+  const { data: aliases = [], refetch: refetchAliases } = useEmailAliases(activeDomain?.id);
+  const { data: relays = [], refetch: refetchRelays } = useEmailSmtpRelays();
+
+  // Modals & Forms
   const [addDomainOpen, setAddDomainOpen] = useState(false);
   const [newDomainName, setNewDomainName] = useState("");
   const [addMailboxOpen, setAddMailboxOpen] = useState(false);
@@ -75,8 +88,24 @@ function MailboxesPage() {
   const [composeBody, setComposeBody] = useState("");
   const [sending, setSending] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
   const [verifyingDns, setVerifyingDns] = useState(false);
+
+  // Alias modal
+  const [addAliasOpen, setAddAliasOpen] = useState(false);
+  const [newAliasSource, setNewAliasSource] = useState("");
+  const [newAliasType, setNewAliasType] = useState<"email" | "webhook">("email");
+  const [newAliasTarget, setNewAliasTarget] = useState("");
+
+  // Relay modal
+  const [addRelayOpen, setAddRelayOpen] = useState(false);
+  const [relayName, setRelayName] = useState("");
+  const [relayProvider, setRelayProvider] = useState<"direct" | "resend" | "postmark" | "ses" | "sendgrid" | "custom">("resend");
+  const [relayHost, setRelayHost] = useState("smtp.resend.com");
+  const [relayPort, setRelayPort] = useState(587);
+  const [relayUsername, setRelayUsername] = useState("resend");
+  const [relayPassword, setRelayPassword] = useState("");
+  const [relayFromEmail, setRelayFromEmail] = useState("");
+  const [testingRelayId, setTestingRelayId] = useState<string | null>(null);
 
   async function handleAddDomain() {
     if (!newDomainName.trim()) return;
@@ -127,6 +156,87 @@ function MailboxesPage() {
     }
   }
 
+  async function handleCreateAlias() {
+    if (!newAliasSource.trim() || !newAliasTarget.trim() || !activeDomain) return;
+    try {
+      const fullSource = newAliasSource.includes("@")
+        ? newAliasSource.trim()
+        : `${newAliasSource.trim()}@${activeDomain.domain}`;
+      await engine.call("POST", "/api/email/aliases", {
+        domain_id: activeDomain.id,
+        source_email: fullSource,
+        destination_type: newAliasType,
+        destination_target: newAliasTarget.trim(),
+      });
+      toast.success(`Alias "${fullSource}" created!`);
+      setNewAliasSource("");
+      setNewAliasTarget("");
+      setAddAliasOpen(false);
+      refetchAliases();
+      refetchDomains();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create alias");
+    }
+  }
+
+  async function handleDeleteAlias(id: string) {
+    try {
+      await engine.call("DELETE", `/api/email/aliases/${id}`);
+      toast.success("Alias deleted");
+      refetchAliases();
+      refetchDomains();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to delete alias");
+    }
+  }
+
+  async function handleSaveRelay() {
+    if (!relayName.trim() || !relayHost.trim()) return;
+    try {
+      await engine.call("POST", "/api/email/smtp-relays", {
+        name: relayName.trim(),
+        provider: relayProvider,
+        host: relayHost.trim(),
+        port: Number(relayPort),
+        username: relayUsername.trim(),
+        password: relayPassword,
+        from_email: relayFromEmail.trim(),
+        is_default: 1,
+      });
+      toast.success(`SMTP Relay "${relayName}" configured!`);
+      setAddRelayOpen(false);
+      refetchRelays();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to save SMTP relay");
+    }
+  }
+
+  async function handleTestRelay(relay: EmailSmtpRelay) {
+    setTestingRelayId(relay.id);
+    try {
+      const res: any = await engine.call("POST", "/api/email/smtp-relays/test", relay);
+      if (res.ok) {
+        toast.success(res.message || "SMTP connection verified!");
+      } else {
+        toast.error(res.error || "Connection failed");
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Test error");
+    } finally {
+      setTestingRelayId(null);
+    }
+  }
+
+  async function handleDeleteRelay(id: string) {
+    try {
+      await engine.call("DELETE", `/api/email/smtp-relays/${id}`);
+      toast.success("SMTP relay deleted");
+      refetchRelays();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to delete relay");
+    }
+  }
+
   async function handleSendMessage() {
     if (!activeMailbox || !composeTo.trim() || !composeSubject.trim()) return;
     setSending(true);
@@ -166,13 +276,13 @@ function MailboxesPage() {
             <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-mono">
               <Mail className="w-3 h-3 mr-1" /> Self-Hosted Email Stack
             </Badge>
-            <span className="text-xs text-muted-foreground">Phase 3 Parity</span>
+            <span className="text-xs text-muted-foreground">Enhanced Parity+</span>
           </div>
           <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
-            Mailboxes & Webmail
+            Mailboxes & Email Stack
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Self-host your custom domain email infrastructure with automated SPF, DKIM, DMARC DNS calculation and integrated webmail.
+            Custom domain mailboxes, real-time DNS anti-spam verification, inbound webhook forwarding, and outbound SMTP relays.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -185,6 +295,34 @@ function MailboxesPage() {
             Compose Email
           </Button>
         </div>
+      </div>
+
+      {/* Navigation Sub-Tabs */}
+      <div className="flex items-center gap-2 border-b border-border/60 pb-3">
+        <button
+          onClick={() => setActiveTab("webmail")}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            activeTab === "webmail" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          }`}
+        >
+          <Inbox className="w-3.5 h-3.5" /> Mailboxes & Webmail
+        </button>
+        <button
+          onClick={() => setActiveTab("aliases")}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            activeTab === "aliases" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          }`}
+        >
+          <Forward className="w-3.5 h-3.5" /> Aliases & Inbound Webhooks ({aliases.length})
+        </button>
+        <button
+          onClick={() => setActiveTab("relays")}
+          className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+            activeTab === "relays" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          }`}
+        >
+          <Server className="w-3.5 h-3.5" /> Outbound SMTP Relays ({relays.length})
+        </button>
       </div>
 
       {/* Domain DNS Health Card */}
@@ -201,6 +339,11 @@ function MailboxesPage() {
                   <Badge variant="secondary" className="text-[10px] py-0 px-2 font-mono">
                     {activeDomain.mailbox_count || 0} Mailboxes
                   </Badge>
+                  {activeDomain.alias_count ? (
+                    <Badge variant="outline" className="text-[10px] py-0 px-2 font-mono">
+                      {activeDomain.alias_count} Aliases
+                    </Badge>
+                  ) : null}
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">
                   Automated DNS Records & Anti-Spam Security Enforcement
@@ -267,140 +410,249 @@ function MailboxesPage() {
         </div>
       )}
 
-      {/* Webmail Split Workspace */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Sidebar: Mailboxes & Folders */}
-        <div className="lg:col-span-3 rounded-xl border bg-card/60 p-4 shadow-sm space-y-5">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Mailboxes</span>
-              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setAddMailboxOpen(true)}>
-                <Plus className="w-3.5 h-3.5" />
+      {/* Tab 1: Webmail Workspace */}
+      {activeTab === "webmail" && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left Sidebar: Mailboxes & Folders */}
+          <div className="lg:col-span-3 rounded-xl border bg-card/60 p-4 shadow-sm space-y-5">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Mailboxes</span>
+                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setAddMailboxOpen(true)}>
+                  <Plus className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+
+              <div className="space-y-1">
+                {mailboxes.map((mbox) => (
+                  <button
+                    key={mbox.id}
+                    onClick={() => {
+                      setSelectedMailboxId(mbox.id);
+                      setSelectedMessage(null);
+                    }}
+                    className={`w-full text-left p-2.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
+                      activeMailbox?.id === mbox.id ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
+                    }`}
+                  >
+                    <div className="truncate">
+                      <div className="font-semibold truncate">{mbox.name}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">{mbox.email}</div>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] font-mono shrink-0 ml-1">
+                      {mbox.used_mb}MB
+                    </Badge>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-border/40 space-y-1">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Folders</span>
+              <button
+                onClick={() => {
+                  setFolder("inbox");
+                  setSelectedMessage(null);
+                }}
+                className={`w-full text-left p-2 rounded-lg text-xs flex items-center justify-between ${
+                  folder === "inbox" ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-muted-foreground"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Inbox className="w-4 h-4" /> Inbox
+                </span>
+                <span className="font-mono text-[10px]">{folder === "inbox" ? messages.length : ""}</span>
+              </button>
+              <button
+                onClick={() => {
+                  setFolder("sent");
+                  setSelectedMessage(null);
+                }}
+                className={`w-full text-left p-2 rounded-lg text-xs flex items-center justify-between ${
+                  folder === "sent" ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-muted-foreground"
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Send className="w-4 h-4" /> Sent
+                </span>
+                <span className="font-mono text-[10px]">{folder === "sent" ? messages.length : ""}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Middle: Message List */}
+          <div className="lg:col-span-4 rounded-xl border bg-card/60 shadow-sm overflow-hidden min-h-[420px]">
+            <div className="p-3.5 border-b border-border/40 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground capitalize">
+                {folder} ({messages.length})
+              </span>
+              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => refetchMessages()}>
+                <RefreshCw className="w-3.5 h-3.5" />
               </Button>
             </div>
 
-            <div className="space-y-1">
-              {mailboxes.map((mbox) => (
-                <button
-                  key={mbox.id}
-                  onClick={() => {
-                    setSelectedMailboxId(mbox.id);
-                    setSelectedMessage(null);
-                  }}
-                  className={`w-full text-left p-2.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
-                    activeMailbox?.id === mbox.id ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
-                  }`}
-                >
-                  <div className="truncate">
-                    <div className="font-semibold truncate">{mbox.name}</div>
-                    <div className="text-[11px] text-muted-foreground truncate">{mbox.email}</div>
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
+                <Inbox className="w-8 h-8 opacity-20 mb-2" />
+                <p className="text-xs">No emails in {folder}</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border/30 max-h-[500px] overflow-y-auto">
+                {messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    onClick={() => setSelectedMessage(msg)}
+                    className={`p-3 text-xs cursor-pointer transition-colors ${
+                      selectedMessage?.id === msg.id ? "bg-primary/10" : msg.is_read ? "hover:bg-muted/30 opacity-75" : "hover:bg-muted/30 font-medium"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-semibold truncate text-foreground">{folder === "sent" ? msg.to_address : msg.from_address}</span>
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                    <div className="text-foreground truncate font-medium">{msg.subject}</div>
+                    <div className="text-muted-foreground text-[11px] truncate mt-0.5">{msg.body_text}</div>
                   </div>
-                  <Badge variant="outline" className="text-[10px] font-mono shrink-0 ml-1">
-                    {mbox.used_mb}MB
-                  </Badge>
-                </button>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div className="pt-3 border-t border-border/40 space-y-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Folders</span>
-            <button
-              onClick={() => {
-                setFolder("inbox");
-                setSelectedMessage(null);
-              }}
-              className={`w-full text-left p-2 rounded-lg text-xs flex items-center justify-between ${
-                folder === "inbox" ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-muted-foreground"
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <Inbox className="w-4 h-4" /> Inbox
-              </span>
-              <span className="font-mono text-[10px]">{folder === "inbox" ? messages.length : ""}</span>
-            </button>
-            <button
-              onClick={() => {
-                setFolder("sent");
-                setSelectedMessage(null);
-              }}
-              className={`w-full text-left p-2 rounded-lg text-xs flex items-center justify-between ${
-                folder === "sent" ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-muted-foreground"
-              }`}
-            >
-              <span className="flex items-center gap-2">
-                <Send className="w-4 h-4" /> Sent
-              </span>
-              <span className="font-mono text-[10px]">{folder === "sent" ? messages.length : ""}</span>
-            </button>
+          {/* Right: Message Detail Viewer */}
+          <div className="lg:col-span-5 rounded-xl border bg-card/60 p-5 shadow-sm min-h-[420px] flex flex-col justify-between">
+            {selectedMessage ? (
+              <div className="space-y-4">
+                <div className="border-b border-border/40 pb-3">
+                  <h3 className="text-base font-bold text-foreground">{selectedMessage.subject}</h3>
+                  <div className="text-xs text-muted-foreground mt-1 space-y-0.5 font-mono">
+                    <div>From: {selectedMessage.from_address}</div>
+                    <div>To: {selectedMessage.to_address}</div>
+                    <div>Date: {new Date(selectedMessage.created_at).toLocaleString()}</div>
+                  </div>
+                </div>
+
+                <div className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
+                  {selectedMessage.body_text}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground my-auto">
+                <FileText className="w-8 h-8 opacity-20 mb-2" />
+                <p className="text-xs">Select an email to read its contents</p>
+              </div>
+            )}
           </div>
         </div>
+      )}
 
-        {/* Middle: Message List */}
-        <div className="lg:col-span-4 rounded-xl border bg-card/60 shadow-sm overflow-hidden min-h-[420px]">
-          <div className="p-3.5 border-b border-border/40 flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground capitalize">
-              {folder} ({messages.length})
-            </span>
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => refetchMessages()}>
-              <RefreshCw className="w-3.5 h-3.5" />
+      {/* Tab 2: Aliases & Inbound Webhook Forwarders */}
+      {activeTab === "aliases" && (
+        <div className="rounded-xl border bg-card/60 p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-border/40 pb-3">
+            <div>
+              <h3 className="text-base font-semibold">Email Aliases & Webhook Forwarders</h3>
+              <p className="text-xs text-muted-foreground">
+                Route incoming emails to external addresses or pipe raw email payloads directly into HTTP Webhook endpoints.
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setAddAliasOpen(true)}>
+              <Plus className="w-4 h-4 mr-1.5" /> Add Alias
             </Button>
           </div>
 
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
-              <Inbox className="w-8 h-8 opacity-20 mb-2" />
-              <p className="text-xs">No emails in {folder}</p>
+          {aliases.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground">
+              <Forward className="w-8 h-8 opacity-20 mx-auto mb-2" />
+              <p className="text-xs">No email aliases created yet for {activeDomain?.domain}</p>
             </div>
           ) : (
-            <div className="divide-y divide-border/30 max-h-[500px] overflow-y-auto">
-              {messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  onClick={() => setSelectedMessage(msg)}
-                  className={`p-3 text-xs cursor-pointer transition-colors ${
-                    selectedMessage?.id === msg.id ? "bg-primary/10" : msg.is_read ? "hover:bg-muted/30 opacity-75" : "hover:bg-muted/30 font-medium"
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-semibold truncate text-foreground">{folder === "sent" ? msg.to_address : msg.from_address}</span>
-                    <span className="text-[10px] text-muted-foreground font-mono">
-                      {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </span>
+            <div className="divide-y divide-border/30">
+              {aliases.map((al) => (
+                <div key={al.id} className="py-3 flex items-center justify-between text-xs">
+                  <div className="space-y-0.5">
+                    <div className="font-semibold text-foreground flex items-center gap-2">
+                      {al.source_email}
+                      <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                        {al.destination_type}
+                      </Badge>
+                    </div>
+                    <div className="text-muted-foreground font-mono text-[11px] flex items-center gap-1.5">
+                      <Forward className="w-3 h-3 text-primary" /> {al.destination_target}
+                    </div>
                   </div>
-                  <div className="text-foreground truncate font-medium">{msg.subject}</div>
-                  <div className="text-muted-foreground text-[11px] truncate mt-0.5">{msg.body_text}</div>
+                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteAlias(al.id)}>
+                    <Trash2 className="w-4 h-4" />
+                  </Button>
                 </div>
               ))}
             </div>
           )}
         </div>
+      )}
 
-        {/* Right: Message Detail Viewer */}
-        <div className="lg:col-span-5 rounded-xl border bg-card/60 p-5 shadow-sm min-h-[420px] flex flex-col justify-between">
-          {selectedMessage ? (
-            <div className="space-y-4">
-              <div className="border-b border-border/40 pb-3">
-                <h3 className="text-base font-bold text-foreground">{selectedMessage.subject}</h3>
-                <div className="text-xs text-muted-foreground mt-1 space-y-0.5 font-mono">
-                  <div>From: {selectedMessage.from_address}</div>
-                  <div>To: {selectedMessage.to_address}</div>
-                  <div>Date: {new Date(selectedMessage.created_at).toLocaleString()}</div>
-                </div>
-              </div>
+      {/* Tab 3: Outbound SMTP Relays */}
+      {activeTab === "relays" && (
+        <div className="rounded-xl border bg-card/60 p-5 shadow-sm space-y-4">
+          <div className="flex items-center justify-between border-b border-border/40 pb-3">
+            <div>
+              <h3 className="text-base font-semibold">Outbound SMTP Relays</h3>
+              <p className="text-xs text-muted-foreground">
+                Connect Resend, AWS SES, Postmark, SendGrid, or custom SMTP relays for maximum outbound deliverability.
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setAddRelayOpen(true)}>
+              <Plus className="w-4 h-4 mr-1.5" /> Connect SMTP Relay
+            </Button>
+          </div>
 
-              <div className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
-                {selectedMessage.body_text}
-              </div>
+          {relays.length === 0 ? (
+            <div className="p-12 text-center text-muted-foreground">
+              <Server className="w-8 h-8 opacity-20 mx-auto mb-2" />
+              <p className="text-xs">No external SMTP relays configured. Outbound mail uses direct server MX delivery.</p>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground my-auto">
-              <FileText className="w-8 h-8 opacity-20 mb-2" />
-              <p className="text-xs">Select an email to read its contents</p>
+            <div className="divide-y divide-border/30">
+              {relays.map((rel) => (
+                <div key={rel.id} className="py-3 flex items-center justify-between text-xs">
+                  <div className="space-y-1">
+                    <div className="font-semibold text-foreground flex items-center gap-2">
+                      {rel.name}
+                      <Badge variant="secondary" className="text-[10px] uppercase font-mono">
+                        {rel.provider}
+                      </Badge>
+                      {rel.is_default ? (
+                        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
+                          Default Outbound
+                        </Badge>
+                      ) : null}
+                    </div>
+                    <div className="text-muted-foreground font-mono text-[11px]">
+                      {rel.host}:{rel.port} (User: {rel.username || "anonymous"})
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs"
+                      disabled={testingRelayId === rel.id}
+                      onClick={() => handleTestRelay(rel)}
+                    >
+                      {testingRelayId === rel.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                      Test
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteRelay(rel.id)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
-      </div>
+      )}
 
       {/* Add Domain Modal */}
       <Dialog open={addDomainOpen} onOpenChange={setAddDomainOpen}>
@@ -459,6 +711,123 @@ function MailboxesPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddMailboxOpen(false)}>Cancel</Button>
             <Button onClick={handleCreateMailbox}>Create Mailbox</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Alias Modal */}
+      <Dialog open={addAliasOpen} onOpenChange={setAddAliasOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create Inbound Alias / Forwarder</DialogTitle>
+            <DialogDescription>
+              Forward inbound emails received at an alias to an external email or an HTTP Webhook.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <div className="space-y-1.5">
+              <Label>Alias Address</Label>
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="team"
+                  value={newAliasSource}
+                  onChange={(e) => setNewAliasSource(e.target.value)}
+                />
+                <span className="font-mono text-xs text-muted-foreground">@{activeDomain?.domain}</span>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Destination Type</Label>
+              <select
+                value={newAliasType}
+                onChange={(e) => setNewAliasType(e.target.value as any)}
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs"
+              >
+                <option value="email">Forward to External Email (e.g. personal@gmail.com)</option>
+                <option value="webhook">Pipe to HTTP Webhook URL (POST JSON)</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Destination Target</Label>
+              <Input
+                placeholder={newAliasType === "email" ? "user@example.com" : "https://api.mycompany.com/webhooks/inbound-mail"}
+                value={newAliasTarget}
+                onChange={(e) => setNewAliasTarget(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddAliasOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateAlias}>Create Alias</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add SMTP Relay Modal */}
+      <Dialog open={addRelayOpen} onOpenChange={setAddRelayOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Connect Outbound SMTP Relay</DialogTitle>
+            <DialogDescription>
+              Route outbound system emails through high-reputation delivery providers.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <div className="space-y-1">
+              <Label>Configuration Name</Label>
+              <Input placeholder="Resend Production Relay" value={relayName} onChange={(e) => setRelayName(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Provider</Label>
+              <select
+                value={relayProvider}
+                onChange={(e) => {
+                  const p = e.target.value as any;
+                  setRelayProvider(p);
+                  if (p === "resend") {
+                    setRelayHost("smtp.resend.com");
+                    setRelayUsername("resend");
+                  } else if (p === "postmark") {
+                    setRelayHost("smtp.postmarkapp.com");
+                    setRelayUsername("");
+                  } else if (p === "ses") {
+                    setRelayHost("email-smtp.us-east-1.amazonaws.com");
+                  } else if (p === "sendgrid") {
+                    setRelayHost("smtp.sendgrid.net");
+                    setRelayUsername("apikey");
+                  }
+                }}
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs"
+              >
+                <option value="resend">Resend (smtp.resend.com)</option>
+                <option value="postmark">Postmark (smtp.postmarkapp.com)</option>
+                <option value="ses">Amazon SES</option>
+                <option value="sendgrid">SendGrid</option>
+                <option value="custom">Custom SMTP Server</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <div className="col-span-2 space-y-1">
+                <Label>SMTP Host</Label>
+                <Input value={relayHost} onChange={(e) => setRelayHost(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <Label>Port</Label>
+                <Input type="number" value={relayPort} onChange={(e) => setRelayPort(Number(e.target.value))} />
+              </div>
+            </div>
+            <div className="space-y-1">
+              <Label>Username / API Key</Label>
+              <Input value={relayUsername} onChange={(e) => setRelayUsername(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Password / Secret</Label>
+              <Input type="password" placeholder="••••••••••••" value={relayPassword} onChange={(e) => setRelayPassword(e.target.value)} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddRelayOpen(false)}>Cancel</Button>
+            <Button onClick={handleSaveRelay}>Save Relay</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

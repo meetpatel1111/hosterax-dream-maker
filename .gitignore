@@ -38,6 +38,7 @@ dist-ssr
 hosterax/engine/*.db
 hosterax/engine/*.db-journal
 hosterax/engine/*.db-wal
+scratch/
 
 # Lockfiles (use bun.lock)
 package-lock.json

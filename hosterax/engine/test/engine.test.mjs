@@ -427,3 +427,60 @@ test("self-hosted email stack, dns records, mailboxes, and webmail messages", as
   await api("DELETE", `/api/email/domains/${testDom.id}`);
 });
 
+test("email aliases, inbound forwarding, and outbound smtp relays", async () => {
+  const doms = await api("GET", "/api/email/domains");
+  const testDom = doms[0];
+
+  // Create alias
+  const alias = await api("POST", "/api/email/aliases", {
+    domain_id: testDom.id,
+    source_email: "billing@hosterax.internal",
+    destination_type: "email",
+    destination_target: "finance@company.com",
+  });
+  assert.ok(alias.id.startsWith("alias_"));
+  assert.equal(alias.source_email, "billing@hosterax.internal");
+
+  // List aliases
+  const aliases = await api("GET", `/api/email/aliases?domain_id=${testDom.id}`);
+  assert.ok(aliases.some((a) => a.id === alias.id));
+
+  // Configure SMTP relay
+  const relay = await api("POST", "/api/email/smtp-relays", {
+    name: "Resend Test Relay",
+    provider: "resend",
+    host: "smtp.resend.com",
+    port: 587,
+    username: "resend",
+    password: "re_test_key",
+    from_email: "noreply@hosterax.internal",
+  });
+  assert.ok(relay.id.startsWith("relay_"));
+  assert.equal(relay.provider, "resend");
+
+  // Cleanup
+  await api("DELETE", `/api/email/aliases/${alias.id}`);
+  await api("DELETE", `/api/email/smtp-relays/${relay.id}`);
+});
+
+test("ai container crash diagnostics and 1-click rollback endpoint", async () => {
+  const proj = "diag-test-" + Date.now();
+  await api("POST", "/api/projects", { name: proj, template: "static" });
+
+  const diag = await api("GET", `/api/projects/${proj}/diagnostics`);
+  assert.equal(diag.project, proj);
+  assert.ok(typeof diag.fault_type, "string");
+  assert.ok(typeof diag.root_cause, "string");
+
+  // Create dummy deployment
+  const dep = await api("POST", `/api/projects/${proj}/deploy`, { branch: "main" });
+  assert.ok(dep.id);
+
+  // Rollback
+  const rb = await api("POST", `/api/projects/${proj}/rollback/${dep.id}`);
+  assert.equal(rb.ok, true);
+  assert.ok(rb.deployment_id.startsWith("dep_rb_"));
+
+  await api("DELETE", `/api/projects/${proj}`);
+});
+

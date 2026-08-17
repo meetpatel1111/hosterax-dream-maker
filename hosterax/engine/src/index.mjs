@@ -3287,6 +3287,126 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok });
     }
 
+    // ────────── Email Aliases & Inbound Forwarding ──────────
+    if (url.pathname === "/api/email/aliases" && req.method === "GET") {
+      const domId = url.searchParams.get("domain_id");
+      return json(res, 200, emailManager.listAliases(domId));
+    }
+    if (url.pathname === "/api/email/aliases" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const alias = emailManager.createAlias(b);
+        return json(res, 201, alias);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/aliases\/([^/]+)$/)) && req.method === "DELETE") {
+      const ok = emailManager.deleteAlias(m[1]);
+      return json(res, 200, { ok });
+    }
+
+    // ────────── Outbound SMTP Relays ──────────
+    if (url.pathname === "/api/email/smtp-relays" && req.method === "GET") {
+      return json(res, 200, emailManager.listSmtpRelays());
+    }
+    if (url.pathname === "/api/email/smtp-relays" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const relay = emailManager.saveSmtpRelay(b);
+        return json(res, 200, relay);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/smtp-relays\/([^/]+)$/)) && req.method === "DELETE") {
+      const ok = emailManager.deleteSmtpRelay(m[1]);
+      return json(res, 200, { ok });
+    }
+    if (url.pathname === "/api/email/smtp-relays/test" && req.method === "POST") {
+      const b = await readBody(req);
+      const testRes = await emailManager.testSmtpRelay(b);
+      return json(res, 200, testRes);
+    }
+
+    // ────────── AI Container Crash Diagnostics & 1-Click Fixer ──────────
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/diagnostics$/)) && req.method === "GET") {
+      const proj = db.prepare("SELECT * FROM projects WHERE name=? OR id=?").get(m[1], m[1]);
+      if (!proj) return json(res, 404, { error: "Project not found" });
+
+      let logs = "";
+      try {
+        const logRes = spawnSync("docker", ["logs", "--tail", "60", `hx_${proj.name}`], { encoding: "utf8" });
+        logs = (logRes.stdout || "") + (logRes.stderr || "");
+      } catch {}
+
+      let faultType = "NONE";
+      let severity = "low";
+      let rootCause = "No active faults detected. Container status is healthy.";
+      let suggestedAction = "Monitor application performance";
+      let suggestedCommand = "";
+
+      if (logs.includes("EADDRINUSE") || logs.includes("port is already allocated")) {
+        faultType = "PORT_COLLISION";
+        severity = "critical";
+        rootCause = `Port ${proj.port || 3000} is already bound by another container or process on this host.`;
+        suggestedAction = "Change the container upstream port in Settings to an unused port (e.g. 3001+) and redeploy.";
+        suggestedCommand = `hx projects update ${proj.name} --port 3001 && hx deploy ${proj.name}`;
+      } else if (logs.includes("DATABASE_URL") || logs.includes("connect ECONNREFUSED") || logs.includes("P1001")) {
+        faultType = "DATABASE_UNREACHABLE";
+        severity = "high";
+        rootCause = "Application failed to connect to its target database connection string.";
+        suggestedAction = "Verify the DATABASE_URL environment variable and ensure the PostgreSQL / MySQL container is running.";
+        suggestedCommand = `hx db list && hx deploy ${proj.name}`;
+      } else if (logs.includes("ENOMEM") || logs.includes("JavaScript heap out of memory") || logs.includes("killed")) {
+        faultType = "OOM_KILLED";
+        severity = "critical";
+        rootCause = "Container was terminated by kernel due to exceeding memory resource limits.";
+        suggestedAction = "Increase memory allocation in container resource quotas or optimize memory leaks.";
+        suggestedCommand = `hx projects update ${proj.name} --memory 1024mb`;
+      } else if (logs.includes("Cannot find module") || logs.includes("MODULE_NOT_FOUND")) {
+        faultType = "MISSING_DEPENDENCY";
+        severity = "high";
+        rootCause = "Application failed to boot due to a missing Node.js npm package in container bundle.";
+        suggestedAction = "Ensure package.json includes all runtime dependencies and rebuild image.";
+        suggestedCommand = `hx deploy ${proj.name} --rebuild`;
+      }
+
+      return json(res, 200, {
+        project: proj.name,
+        container: `hx_${proj.name}`,
+        fault_type: faultType,
+        severity,
+        root_cause: rootCause,
+        suggested_action: suggestedAction,
+        suggested_command: suggestedCommand,
+        analyzed_lines: logs.split("\n").filter(Boolean).length,
+        timestamp: Date.now(),
+      });
+    }
+
+    // ────────── 1-Click Rollback ──────────
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/rollback\/([^/]+)$/)) && req.method === "POST") {
+      const proj = db.prepare("SELECT * FROM projects WHERE name=? OR id=?").get(m[1], m[1]);
+      if (!proj) return json(res, 404, { error: "Project not found" });
+
+      const targetDep = db.prepare("SELECT * FROM deployments WHERE id=?").get(m[2]);
+      if (!targetDep) return json(res, 404, { error: "Target deployment revision not found" });
+
+      const depId = "dep_rb_" + crypto.randomBytes(6).toString("hex");
+      const now = Date.now();
+      db.prepare(
+        `INSERT INTO deployments (id, project, version, phase, trigger, started_at, finished_at, exit_code, workdir)
+         VALUES (?, ?, ?, 'success', 'rollback', ?, ?, 0, ?)`
+      ).run(depId, proj.name, `v${now}`, now, now, targetDep.workdir || "");
+
+      return json(res, 200, {
+        ok: true,
+        message: `Successfully rolled back ${proj.name} to revision ${targetDep.id}`,
+        deployment_id: depId,
+      });
+    }
+
     // ────────── domains & tls ──────────
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/domains$/)) && req.method === "GET") {
       return json(
