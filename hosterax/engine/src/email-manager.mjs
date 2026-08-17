@@ -394,7 +394,12 @@ export class EmailManager {
 
   // ────────── Outbound SMTP Relays ──────────
   listSmtpRelays() {
-    return this.db.prepare("SELECT * FROM email_smtp_relays ORDER BY created_at ASC").all();
+    const relays = this.db.prepare("SELECT * FROM email_smtp_relays ORDER BY created_at ASC").all();
+    return relays.map((r) => ({
+      ...r,
+      password: r.password ? "••••••••••••" : "",
+      has_password: !!r.password,
+    }));
   }
 
   saveSmtpRelay({ id, name, provider = "custom", host, port = 587, username = "", password = "", from_email = "", is_default = 0 }) {

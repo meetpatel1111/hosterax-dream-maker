@@ -3325,7 +3325,18 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/email/smtp-relays/test" && req.method === "POST") {
       const b = await readBody(req);
-      const testRes = await emailManager.testSmtpRelay(b);
+      let relayConfig = b;
+      if (b.id) {
+        const stored = emailManager.db.prepare("SELECT * FROM email_smtp_relays WHERE id=?").get(b.id);
+        if (stored) {
+          relayConfig = {
+            ...stored,
+            ...b,
+            password: b.password && !b.password.includes("••") ? b.password : stored.password,
+          };
+        }
+      }
+      const testRes = await emailManager.testSmtpRelay(relayConfig);
       return json(res, 200, testRes);
     }
 
