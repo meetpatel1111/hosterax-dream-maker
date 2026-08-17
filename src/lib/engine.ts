@@ -610,3 +610,173 @@ export function useProjectWebhookConfig(projectName?: string) {
   });
 }
 
+// ────────── Multi-Tenant Organizations & RBAC ──────────
+export type OrganizationMember = {
+  id: string;
+  org_id: string;
+  user_email: string;
+  user_name: string;
+  role: "owner" | "admin" | "member" | "viewer";
+  joined_at: number;
+};
+
+export type OrganizationInvite = {
+  id: string;
+  org_id: string;
+  email: string;
+  role: string;
+  token: string;
+  status: "pending" | "accepted" | "revoked";
+  expires_at: number;
+  created_at: number;
+};
+
+export type Organization = {
+  id: string;
+  name: string;
+  slug: string;
+  avatar_url?: string | null;
+  plan: string;
+  is_default: number;
+  member_count?: number;
+  members?: OrganizationMember[];
+  invites?: OrganizationInvite[];
+  created_at: number;
+  updated_at: number;
+};
+
+export function useOrganizations() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<Organization[]>({
+    queryKey: ["organizations", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<Organization[]>("GET", "/api/orgs");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 6000,
+  });
+}
+
+export function useOrganization(idOrSlug?: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<Organization>({
+    queryKey: ["organization", eng.url, eng.token, idOrSlug],
+    queryFn: async () => {
+      if (!idOrSlug) return null as any;
+      try {
+        return await eng.call<Organization>("GET", `/api/orgs/${idOrSlug}`);
+      } catch {
+        return null as any;
+      }
+    },
+    enabled: !!health.data?.ok && !!idOrSlug,
+  });
+}
+
+// ────────── Self-Hosted Email Stack & Webmail ──────────
+export type DnsRecord = {
+  type: string;
+  host: string;
+  value: string;
+  priority?: number;
+  purpose: string;
+  status: string;
+};
+
+export type EmailDomain = {
+  id: string;
+  domain: string;
+  spf_status: string;
+  dkim_status: string;
+  dmarc_status: string;
+  mx_status: string;
+  dkim_selector: string;
+  dkim_public_key: string;
+  mailbox_count?: number;
+  dns_records?: DnsRecord[];
+  mailboxes?: Mailbox[];
+  created_at: number;
+};
+
+export type Mailbox = {
+  id: string;
+  domain_id: string;
+  email: string;
+  name: string;
+  quota_mb: number;
+  used_mb: number;
+  created_at: number;
+};
+
+export type EmailMessage = {
+  id: string;
+  mailbox_id: string;
+  from_address: string;
+  to_address: string;
+  subject: string;
+  body_text?: string;
+  body_html?: string;
+  folder: "inbox" | "sent" | "trash" | "drafts";
+  is_read: number;
+  is_starred: number;
+  created_at: number;
+};
+
+export function useEmailDomains() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<EmailDomain[]>({
+    queryKey: ["email-domains", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<EmailDomain[]>("GET", "/api/email/domains");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 6000,
+  });
+}
+
+export function useMailboxes(domainId?: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<Mailbox[]>({
+    queryKey: ["mailboxes", eng.url, eng.token, domainId],
+    queryFn: async () => {
+      try {
+        const path = domainId ? `/api/email/mailboxes?domain_id=${domainId}` : "/api/email/mailboxes";
+        return await eng.call<Mailbox[]>("GET", path);
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+  });
+}
+
+export function useEmailMessages(mailboxId?: string, folder = "inbox") {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<EmailMessage[]>({
+    queryKey: ["email-messages", eng.url, eng.token, mailboxId, folder],
+    queryFn: async () => {
+      if (!mailboxId) return [];
+      try {
+        return await eng.call<EmailMessage[]>("GET", `/api/email/mailboxes/${mailboxId}/messages?folder=${folder}`);
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok && !!mailboxId,
+    refetchInterval: 4000,
+  });
+}
+

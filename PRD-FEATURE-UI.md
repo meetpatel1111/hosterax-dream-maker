@@ -3931,10 +3931,10 @@ Build configs include:
 | **Model Context Protocol (MCP) Server** | Phase 1 | JSON-RPC 2.0 endpoint (`/api/mcp`) with infrastructure tools for AI Agents (Cursor, Claude, ChatGPT). | ✅ Completed |
 | **Remote Multi-Node Server Management (SSH)** | Phase 2 | Agentless SSH connection pool, remote VPS provisioning, `/servers` management page. | ✅ Completed |
 | **GitHub App Webhooks & Ephemeral PR Previews** | Phase 2 | Push-to-deploy webhooks, ephemeral `pr-<id>` preview subdomains, GitHub Actions status checks. | ✅ Completed |
-| **Multi-Tenant Organizations, Teams & RBAC** | Phase 3 | Workspace/Org switcher, member invites, granular roles (`Owner`, `Admin`, `Member`, `Viewer`). | ⚪ Next Up (Phase 3) |
-| **Self-Hosted Email Stack & Webmail** | Phase 3 | Postfix/Dovecot stack, SPF/DKIM/DMARC wizard, Zero Email webmail interface. | ⚪ Next Up (Phase 3) |
-| **Electron 40 Native Desktop Packaging** | Phase 3 | Electron Forge builds for macOS (DMG), Windows (NSIS), Linux (AppImage) with local daemon supervision. | ⚪ Next Up (Phase 3) |
-| **Localization (i18n)** | Phase 3 | 8 languages (EN, AR, DE, ES, FR, JA, PT, ZH) with RTL layout switching. | ⚪ Next Up (Phase 3) |
+| **Multi-Tenant Organizations, Teams & RBAC** | Phase 3 | Workspace/Org switcher, member invites, granular roles (`Owner`, `Admin`, `Member`, `Viewer`). | ✅ Completed |
+| **Self-Hosted Email Stack & Webmail** | Phase 3 | Postfix/Dovecot stack, SPF/DKIM/DMARC wizard, Zero Email webmail interface. | ✅ Completed |
+| **Electron 40 Native Desktop Packaging** | Phase 3 | Electron Forge builds for macOS (DMG), Windows (NSIS), Linux (AppImage) with local daemon supervision. | ✅ Completed |
+| **Localization (i18n)** | Phase 3 | 8 languages (EN, AR, DE, ES, FR, JA, PT, ZH) with RTL layout switching. | ✅ Completed |
 
 ---
 

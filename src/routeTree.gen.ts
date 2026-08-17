@@ -21,10 +21,12 @@ import { Route as AppDockerhubRouteImport } from './routes/_app.dockerhub'
 import { Route as AppDomainsRouteImport } from './routes/_app.domains'
 import { Route as AppJobsRouteImport } from './routes/_app.jobs'
 import { Route as AppLocalRouteImport } from './routes/_app.local'
+import { Route as AppMailRouteImport } from './routes/_app.mail'
 import { Route as AppNewRouteImport } from './routes/_app.new'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
 import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
+import { Route as AppTeamRouteImport } from './routes/_app.team'
 import { Route as AppTokensRouteImport } from './routes/_app.tokens'
 import { Route as AppPSlugRouteImport } from './routes/_app.p.$slug'
 
@@ -87,6 +89,11 @@ const AppLocalRoute = AppLocalRouteImport.update({
   path: '/local',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMailRoute = AppMailRouteImport.update({
+  id: '/mail',
+  path: '/mail',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppNewRoute = AppNewRouteImport.update({
   id: '/new',
   path: '/new',
@@ -105,6 +112,11 @@ const AppServersRoute = AppServersRouteImport.update({
 const AppSettingsRoute = AppSettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTeamRoute = AppTeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => AppRoute,
 } as any)
 const AppTokensRoute = AppTokensRouteImport.update({
@@ -130,10 +142,12 @@ export interface FileRoutesByFullPath {
   '/domains': typeof AppDomainsRoute
   '/jobs': typeof AppJobsRoute
   '/local': typeof AppLocalRoute
+  '/mail': typeof AppMailRoute
   '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
+  '/team': typeof AppTeamRoute
   '/tokens': typeof AppTokensRoute
   '/p/$slug': typeof AppPSlugRoute
 }
@@ -149,10 +163,12 @@ export interface FileRoutesByTo {
   '/domains': typeof AppDomainsRoute
   '/jobs': typeof AppJobsRoute
   '/local': typeof AppLocalRoute
+  '/mail': typeof AppMailRoute
   '/new': typeof AppNewRoute
   '/oauth': typeof AppOauthRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
+  '/team': typeof AppTeamRoute
   '/tokens': typeof AppTokensRoute
   '/p/$slug': typeof AppPSlugRoute
 }
@@ -170,10 +186,12 @@ export interface FileRoutesById {
   '/_app/domains': typeof AppDomainsRoute
   '/_app/jobs': typeof AppJobsRoute
   '/_app/local': typeof AppLocalRoute
+  '/_app/mail': typeof AppMailRoute
   '/_app/new': typeof AppNewRoute
   '/_app/oauth': typeof AppOauthRoute
   '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
+  '/_app/team': typeof AppTeamRoute
   '/_app/tokens': typeof AppTokensRoute
   '/_app/p/$slug': typeof AppPSlugRoute
 }
@@ -191,10 +209,12 @@ export interface FileRouteTypes {
     | '/domains'
     | '/jobs'
     | '/local'
+    | '/mail'
     | '/new'
     | '/oauth'
     | '/servers'
     | '/settings'
+    | '/team'
     | '/tokens'
     | '/p/$slug'
   fileRoutesByTo: FileRoutesByTo
@@ -210,10 +230,12 @@ export interface FileRouteTypes {
     | '/domains'
     | '/jobs'
     | '/local'
+    | '/mail'
     | '/new'
     | '/oauth'
     | '/servers'
     | '/settings'
+    | '/team'
     | '/tokens'
     | '/p/$slug'
   id:
@@ -230,10 +252,12 @@ export interface FileRouteTypes {
     | '/_app/domains'
     | '/_app/jobs'
     | '/_app/local'
+    | '/_app/mail'
     | '/_app/new'
     | '/_app/oauth'
     | '/_app/servers'
     | '/_app/settings'
+    | '/_app/team'
     | '/_app/tokens'
     | '/_app/p/$slug'
   fileRoutesById: FileRoutesById
@@ -330,6 +354,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLocalRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/mail': {
+      id: '/_app/mail'
+      path: '/mail'
+      fullPath: '/mail'
+      preLoaderRoute: typeof AppMailRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/new': {
       id: '/_app/new'
       path: '/new'
@@ -356,6 +387,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/team': {
+      id: '/_app/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof AppTeamRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/tokens': {
@@ -385,10 +423,12 @@ interface AppRouteChildren {
   AppDomainsRoute: typeof AppDomainsRoute
   AppJobsRoute: typeof AppJobsRoute
   AppLocalRoute: typeof AppLocalRoute
+  AppMailRoute: typeof AppMailRoute
   AppNewRoute: typeof AppNewRoute
   AppOauthRoute: typeof AppOauthRoute
   AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
+  AppTeamRoute: typeof AppTeamRoute
   AppTokensRoute: typeof AppTokensRoute
   AppPSlugRoute: typeof AppPSlugRoute
 }
@@ -403,10 +443,12 @@ const AppRouteChildren: AppRouteChildren = {
   AppDomainsRoute: AppDomainsRoute,
   AppJobsRoute: AppJobsRoute,
   AppLocalRoute: AppLocalRoute,
+  AppMailRoute: AppMailRoute,
   AppNewRoute: AppNewRoute,
   AppOauthRoute: AppOauthRoute,
   AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,
+  AppTeamRoute: AppTeamRoute,
   AppTokensRoute: AppTokensRoute,
   AppPSlugRoute: AppPSlugRoute,
 }

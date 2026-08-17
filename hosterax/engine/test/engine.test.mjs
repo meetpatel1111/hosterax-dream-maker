@@ -345,3 +345,85 @@ test("github webhooks and ephemeral pr previews lifecycle", async () => {
   await api("DELETE", `/api/projects/${proj}`);
 });
 
+test("multi-tenant organizations and rbac member management", async () => {
+  const orgs = await api("GET", "/api/orgs");
+  assert.ok(Array.isArray(orgs));
+  assert.ok(orgs.length >= 1);
+
+  const newOrg = await api("POST", "/api/orgs", { name: "Acme Cloud Engineering", slug: "acme-cloud" });
+  assert.ok(newOrg.id.startsWith("org_"));
+  assert.equal(newOrg.name, "Acme Cloud Engineering");
+  assert.equal(newOrg.slug, "acme-cloud");
+
+  // Add member
+  const memberRes = await api("POST", `/api/orgs/${newOrg.id}/members`, {
+    user_email: "dev@acme.com",
+    user_name: "Lead Developer",
+    role: "member",
+  });
+  const devMember = memberRes.members.find((m) => m.user_email === "dev@acme.com");
+  assert.ok(devMember);
+  assert.equal(devMember.role, "member");
+
+  // Update role to admin
+  const updateRes = await api("PATCH", `/api/orgs/${newOrg.id}/members/${devMember.id}`, { role: "admin" });
+  const updatedDev = updateRes.members.find((m) => m.id === devMember.id);
+  assert.equal(updatedDev.role, "admin");
+
+  // Generate invite
+  const inv = await api("POST", `/api/orgs/${newOrg.id}/invites`, {
+    email: "designer@acme.com",
+    role: "viewer",
+  });
+  assert.ok(inv.id.startsWith("inv_"));
+  assert.ok(inv.invite_url.includes("token="));
+
+  // Delete org
+  const del = await api("DELETE", `/api/orgs/${newOrg.id}`);
+  assert.equal(del.ok, true);
+});
+
+test("self-hosted email stack, dns records, mailboxes, and webmail messages", async () => {
+  const doms = await api("GET", "/api/email/domains");
+  assert.ok(Array.isArray(doms));
+  assert.ok(doms.length >= 1);
+
+  const testDom = await api("POST", "/api/email/domains", { domain: "mailtest.internal" });
+  assert.ok(testDom.id.startsWith("edom_"));
+  assert.equal(testDom.domain, "mailtest.internal");
+  assert.ok(Array.isArray(testDom.dns_records));
+  assert.equal(testDom.dns_records.length, 4); // MX, SPF, DKIM, DMARC
+
+  const spf = testDom.dns_records.find((r) => r.purpose.includes("SPF"));
+  assert.ok(spf && spf.value.includes("v=spf1"));
+
+  const dkim = testDom.dns_records.find((r) => r.purpose.includes("DKIM"));
+  assert.ok(dkim && dkim.value.includes("v=DKIM1"));
+
+  // Create mailbox
+  const mbox = await api("POST", "/api/email/mailboxes", {
+    domain_id: testDom.id,
+    email: "support@mailtest.internal",
+    name: "Customer Support",
+  });
+  assert.ok(mbox.id.startsWith("mbox_"));
+  assert.equal(mbox.email, "support@mailtest.internal");
+
+  // Send message
+  const msg = await api("POST", "/api/email/send", {
+    mailbox_id: mbox.id,
+    to: "client@example.com",
+    subject: "Ticket #1042 Resolved",
+    body_text: "Your support request has been completed successfully.",
+  });
+  assert.ok(msg.id.startsWith("msg_"));
+  assert.equal(msg.subject, "Ticket #1042 Resolved");
+
+  // List sent messages
+  const sentMsgs = await api("GET", `/api/email/mailboxes/${mbox.id}/messages?folder=sent`);
+  assert.ok(sentMsgs.some((m) => m.id === msg.id));
+
+  // Cleanup
+  await api("DELETE", `/api/email/domains/${testDom.id}`);
+});
+

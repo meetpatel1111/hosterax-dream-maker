@@ -26,6 +26,8 @@ import { CronManager } from "./cron-manager.mjs";
 import { MCPServer } from "./mcp-server.mjs";
 import { ServerManager } from "./server-manager.mjs";
 import { WebhookManager } from "./webhook-manager.mjs";
+import { OrgManager } from "./org-manager.mjs";
+import { EmailManager } from "./email-manager.mjs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -694,6 +696,8 @@ const cronManager = new CronManager({ db, backupManager });
 cronManager.startScheduler();
 const serverManager = new ServerManager({ db, HOME });
 const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
+const orgManager = new OrgManager({ db });
+const emailManager = new EmailManager({ db, HOME });
 
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
@@ -3033,6 +3037,147 @@ const server = http.createServer(async (req, res) => {
     }
     if ((m = url.pathname.match(/^\/api\/previews\/([^/]+)$/)) && req.method === "DELETE") {
       const ok = webhookManager.deletePreview(m[1]);
+      return json(res, 200, { ok });
+    }
+
+    // ────────── Multi-Tenant Organizations & RBAC ──────────
+    if (url.pathname === "/api/orgs" && req.method === "GET") {
+      return json(res, 200, orgManager.listOrganizations());
+    }
+    if (url.pathname === "/api/orgs" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const org = orgManager.createOrganization(b);
+        return json(res, 201, org);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members$/)) && req.method === "GET") {
+      return json(res, 200, orgManager.listMembers(m[1]));
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members$/)) && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const updated = orgManager.addMember(m[1], b);
+        return json(res, 201, updated);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members\/([^/]+)$/)) && req.method === "PATCH") {
+      const b = await readBody(req);
+      try {
+        const updated = orgManager.updateMemberRole(m[1], m[2], b.role);
+        return json(res, 200, updated);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members\/([^/]+)$/)) && req.method === "DELETE") {
+      try {
+        const ok = orgManager.removeMember(m[1], m[2]);
+        return json(res, 200, { ok });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/invites$/)) && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const invite = orgManager.createInvite(m[1], b);
+        return json(res, 201, invite);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/invites\/([^/]+)$/)) && req.method === "DELETE") {
+      const ok = orgManager.revokeInvite(m[1], m[2]);
+      return json(res, 200, { ok });
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)$/)) && req.method === "GET") {
+      const org = orgManager.getOrganization(m[1]);
+      if (!org) return json(res, 404, { error: "Organization not found" });
+      return json(res, 200, org);
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)$/)) && req.method === "PATCH") {
+      const b = await readBody(req);
+      try {
+        const updated = orgManager.updateOrganization(m[1], b);
+        return json(res, 200, updated);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)$/)) && req.method === "DELETE") {
+      try {
+        const ok = orgManager.deleteOrganization(m[1]);
+        return json(res, 200, { ok });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+
+    // ────────── Self-Hosted Email Stack & Webmail ──────────
+    if (url.pathname === "/api/email/domains" && req.method === "GET") {
+      return json(res, 200, emailManager.listDomains());
+    }
+    if (url.pathname === "/api/email/domains" && req.method === "POST") {
+      const b = await readBody(req);
+      if (!b.domain) return json(res, 400, { error: "domain required" });
+      const dom = emailManager.addDomain(b.domain);
+      return json(res, 201, dom);
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/domains\/([^/]+)$/)) && req.method === "GET") {
+      const dom = emailManager.getDomain(m[1]);
+      if (!dom) return json(res, 404, { error: "Domain not found" });
+      return json(res, 200, dom);
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/domains\/([^/]+)$/)) && req.method === "DELETE") {
+      try {
+        const ok = emailManager.deleteDomain(m[1]);
+        return json(res, 200, { ok });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if (url.pathname === "/api/email/mailboxes" && req.method === "GET") {
+      const domId = url.searchParams.get("domain_id");
+      return json(res, 200, emailManager.listMailboxes(domId));
+    }
+    if (url.pathname === "/api/email/mailboxes" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const mbox = emailManager.createMailbox(b);
+        return json(res, 201, mbox);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/mailboxes\/([^/]+)$/)) && req.method === "DELETE") {
+      const ok = emailManager.deleteMailbox(m[1]);
+      return json(res, 200, { ok });
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/mailboxes\/([^/]+)\/messages$/)) && req.method === "GET") {
+      const folder = url.searchParams.get("folder") || "inbox";
+      return json(res, 200, emailManager.listMessages(m[1], folder));
+    }
+    if (url.pathname === "/api/email/send" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const msg = emailManager.sendMessage(b);
+        return json(res, 201, msg);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/read$/)) && req.method === "PATCH") {
+      const b = await readBody(req);
+      const ok = emailManager.markMessageRead(m[1], b.is_read !== false);
+      return json(res, 200, { ok });
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)$/)) && req.method === "DELETE") {
+      const ok = emailManager.deleteMessage(m[1]);
       return json(res, 200, { ok });
     }
 
