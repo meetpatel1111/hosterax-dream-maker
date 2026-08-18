@@ -20,7 +20,7 @@ RUN npm run build
 FROM node:24-alpine AS runner
 WORKDIR /app
 
-# Install runtime dependencies: Docker CLI, Git, OpenSSL, CA-Certificates, SQLite
+# Install runtime dependencies & native build tools
 RUN apk add --no-cache \
     docker-cli \
     docker-cli-compose \
@@ -29,16 +29,20 @@ RUN apk add --no-cache \
     ca-certificates \
     curl \
     sqlite \
-    tini
+    tini \
+    python3 \
+    make \
+    g++
 
 ENV NODE_ENV=production \
     HOSTERAX_PORT=7777 \
     HOSTERAX_HOME=/root/.hosterax \
     PORT=8080
 
-# Install engine production dependencies
+# Install engine production dependencies (compiling better-sqlite3 with native musl toolchain)
 COPY hosterax/engine/package.json ./hosterax/engine/
-RUN cd hosterax/engine && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund
+RUN cd hosterax/engine && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund \
+    && apk del make g++
 
 # Copy engine source and CLI
 COPY hosterax/engine ./hosterax/engine
