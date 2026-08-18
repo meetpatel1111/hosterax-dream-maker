@@ -1,6 +1,6 @@
 {
   "name": "hosterax",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "HosteraX - Autonomous Self-Hosted Cloud Control Plane with Universal Model Context Protocol (MCP)",
   "private": true,
   "license": "Apache-2.0",

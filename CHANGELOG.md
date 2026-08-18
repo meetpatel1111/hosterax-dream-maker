@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] — 2026-08-19 (Autonomous Live Translation & 100% MCP Subsystem Suite)
+
+### 🚀 Highlights
+
+- **Dynamic Real-Time Live Translation Library**: Autonomous Full-DOM live translation engine in `src/lib/live-translator.ts` supporting Spanish, Arabic (RTL), German, French, Japanese, Portuguese, and Chinese with LRU caching.
+- **100% Full MCP & CLI Subsystem Coverage**: Added 12 new MCP tools and CLI command bindings for self-hosted email mailboxes/aliases, GitHub webhooks & ephemeral PR previews, and multi-tenant organization RBAC.
+- **Lime-Green `[Hx]` Official Branding**: Updated vector `public/favicon.svg`, `public/logo.svg`, multi-resolution `public/favicon.ico`, and desktop/mobile headers with the lime-green rounded emblem and modern typography.
+- **Dual GHCR Container Distribution**: Automated multi-arch builds published under both `ghcr.io/meetpatel1111/hosterax` and `ghcr.io/meetpatel1111/hosterax-dream-maker`.
+
+---
+
 ## [1.0.0] — 2026-08-18 (General Availability Launch & Production Milestone)
 
 ### 🚀 Highlights

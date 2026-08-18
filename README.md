@@ -80,7 +80,7 @@ docker compose up -d
 
 ## 📥 Native Desktop Installers & Downloads
 
-Download the official standalone application packages from the **[GitHub Releases Page](https://github.com/meetpatel1111/hosterax-dream-maker/releases/tag/v1.0.0)**:
+Download the official standalone application packages from the **[GitHub Releases Page](https://github.com/meetpatel1111/hosterax-dream-maker/releases/tag/v1.1.0)**:
 
 | Platform | Format | Description |
 | :--- | :--- | :--- |

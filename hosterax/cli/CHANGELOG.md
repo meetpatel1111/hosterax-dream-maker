@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-19
+
+### Added
+
+- **Full MCP & CLI Subsystem Coverage**:
+  - `htx mail:domains`, `htx mail:domain:add`, `htx mail:boxes`, `htx mail:box:new`, `htx mail:aliases`, `htx mail:alias:new`.
+  - `htx webhooks`, `htx previews`, `htx preview:delete`.
+  - `htx orgs`, `htx org:new`, `htx org:members`, `htx org:member:add`.
+  - 12 new MCP tools for Cursor IDE, Claude Desktop, and Devin.
+
+---
+
 ## [1.0.0] - 2026-08-18
 
 ### Added

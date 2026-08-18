@@ -2481,7 +2481,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/health" || url.pathname === "/api/health")
-    return json(res, 200, { ok: true, version: "1.0.0" });
+    return json(res, 200, { ok: true, version: "1.1.0" });
   // Rate limit: 120 req/min for auth endpoints, 600/min for others
   const isAuthEndpoint = url.pathname.startsWith("/api/auth") || url.pathname === "/api/token";
   if (rateLimit(req, isAuthEndpoint ? 120 : 600)) {
@@ -3313,7 +3313,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         mcp: "2024-11-05",
         server: "HosteraX Autonomous Engine",
-        version: "1.0.0",
+        version: "1.1.0",
         endpoint: "/api/mcp",
         transport: "JSON-RPC 2.0 (HTTP POST)",
         capabilities: { tools: true, resources: true, prompts: true },

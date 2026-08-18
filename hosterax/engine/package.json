@@ -1,6 +1,7 @@
 {
   "name": "hosterax-engine",
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "description": "HosteraX Autonomous Control Plane Engine & Self-Healing Daemon",
   "type": "module",
   "private": true,
   "bin": {
