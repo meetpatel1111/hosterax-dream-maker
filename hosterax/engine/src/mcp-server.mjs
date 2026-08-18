@@ -38,12 +38,14 @@ export class MCPServer {
       // ── Core & Observability ──
       {
         name: "get_system_stats",
-        description: "Get real-time HosteraX host metrics including CPU usage, memory, disk usage, active container count, and edge routes.",
+        description:
+          "Get real-time HosteraX host metrics including CPU usage, memory, disk usage, active container count, and edge routes.",
         inputSchema: { type: "object", properties: {} },
       },
       {
         name: "get_system_metrics",
-        description: "Get detailed live system resource utilization (CPU load %, memory MB, cores, platform, uptime, load averages).",
+        description:
+          "Get detailed live system resource utilization (CPU load %, memory MB, cores, platform, uptime, load averages).",
         inputSchema: { type: "object", properties: {} },
       },
       {
@@ -60,17 +62,22 @@ export class MCPServer {
       // ── Projects & Workspaces ──
       {
         name: "list_projects",
-        description: "List all deployed applications, databases, and microservices in HosteraX with their status, ports, domains, and health.",
+        description:
+          "List all deployed applications, databases, and microservices in HosteraX with their status, ports, domains, and health.",
         inputSchema: {
           type: "object",
           properties: {
-            target: { type: "string", description: "Filter by target type ('docker', 'process', 'compose')" },
+            target: {
+              type: "string",
+              description: "Filter by target type ('docker', 'process', 'compose')",
+            },
           },
         },
       },
       {
         name: "get_project",
-        description: "Get comprehensive details, quotas, health metrics, and configurations for a specific project.",
+        description:
+          "Get comprehensive details, quotas, health metrics, and configurations for a specific project.",
         inputSchema: {
           type: "object",
           properties: {
@@ -81,24 +88,41 @@ export class MCPServer {
       },
       {
         name: "create_project",
-        description: "Create a new project in HosteraX from a Git URL, Docker image, or local workspace path.",
+        description:
+          "Create a new project in HosteraX from a Git URL, Docker image, or local workspace path.",
         inputSchema: {
           type: "object",
           properties: {
-            name: { type: "string", description: "Unique project name (lowercase alphanumeric and hyphens)" },
-            source: { type: "string", description: "Git repository URL, Docker Hub image tag, or local folder path" },
-            buildCmd: { type: "string", description: "Optional build command (e.g. 'npm run build')" },
+            name: {
+              type: "string",
+              description: "Unique project name (lowercase alphanumeric and hyphens)",
+            },
+            source: {
+              type: "string",
+              description: "Git repository URL, Docker Hub image tag, or local folder path",
+            },
+            buildCmd: {
+              type: "string",
+              description: "Optional build command (e.g. 'npm run build')",
+            },
             startCmd: { type: "string", description: "Optional start command (e.g. 'npm start')" },
             port: { type: "number", description: "Internal listening port (e.g. 3000, 8080)" },
-            target: { type: "string", description: "Deployment target: 'docker' (default) or 'process'" },
-            healthPath: { type: "string", description: "Readiness health check path (default: '/')" },
+            target: {
+              type: "string",
+              description: "Deployment target: 'docker' (default) or 'process'",
+            },
+            healthPath: {
+              type: "string",
+              description: "Readiness health check path (default: '/')",
+            },
           },
           required: ["name", "source"],
         },
       },
       {
         name: "update_project",
-        description: "Update project settings, build/start commands, port, sleep mode, or health check path.",
+        description:
+          "Update project settings, build/start commands, port, sleep mode, or health check path.",
         inputSchema: {
           type: "object",
           properties: {
@@ -114,7 +138,8 @@ export class MCPServer {
       },
       {
         name: "delete_project",
-        description: "Permanently delete a project, remove its containers, and clean up routing rules.",
+        description:
+          "Permanently delete a project, remove its containers, and clean up routing rules.",
         inputSchema: {
           type: "object",
           properties: {
@@ -132,7 +157,10 @@ export class MCPServer {
           type: "object",
           properties: {
             projectName: { type: "string", description: "Project name to deploy" },
-            environment: { type: "string", description: "'production', 'preview', or 'development'" },
+            environment: {
+              type: "string",
+              description: "'production', 'preview', or 'development'",
+            },
             trigger: { type: "string", description: "Trigger reason e.g. 'mcp_ai_agent'" },
           },
           required: ["projectName"],
@@ -140,19 +168,25 @@ export class MCPServer {
       },
       {
         name: "rollback_project",
-        description: "Execute a byte-for-byte rollback to a previous deployment snapshot with zero downtime.",
+        description:
+          "Execute a byte-for-byte rollback to a previous deployment snapshot with zero downtime.",
         inputSchema: {
           type: "object",
           properties: {
             projectName: { type: "string", description: "Project name" },
-            deploymentId: { type: "string", description: "Target deployment ID to restore (or omit for latest successful release)" },
+            deploymentId: {
+              type: "string",
+              description:
+                "Target deployment ID to restore (or omit for latest successful release)",
+            },
           },
           required: ["projectName"],
         },
       },
       {
         name: "get_deployment",
-        description: "Get status, exit code, execution duration, and phase for a specific deployment.",
+        description:
+          "Get status, exit code, execution duration, and phase for a specific deployment.",
         inputSchema: {
           type: "object",
           properties: {
@@ -163,7 +197,8 @@ export class MCPServer {
       },
       {
         name: "get_project_logs",
-        description: "Fetch build and container runtime stdout/stderr logs for a specific project or deployment.",
+        description:
+          "Fetch build and container runtime stdout/stderr logs for a specific project or deployment.",
         inputSchema: {
           type: "object",
           properties: {
@@ -200,7 +235,8 @@ export class MCPServer {
       },
       {
         name: "set_project_env",
-        description: "Set or update environment variables for a project (triggers new deployment if required).",
+        description:
+          "Set or update environment variables for a project (triggers new deployment if required).",
         inputSchema: {
           type: "object",
           properties: {
@@ -218,7 +254,10 @@ export class MCPServer {
           properties: {
             projectName: { type: "string", description: "Project name" },
             cpuCores: { type: "number", description: "CPU limit in cores (e.g. 0.5, 1.0, 2.0)" },
-            memoryMb: { type: "number", description: "Memory limit in megabytes (e.g. 512, 1024, 2048)" },
+            memoryMb: {
+              type: "number",
+              description: "Memory limit in megabytes (e.g. 512, 1024, 2048)",
+            },
           },
           required: ["projectName"],
         },
@@ -227,7 +266,8 @@ export class MCPServer {
       // ── Databases & Snapshots ──
       {
         name: "list_databases",
-        description: "List all managed database instances (PostgreSQL, MySQL, MongoDB, Redis) with ports and status.",
+        description:
+          "List all managed database instances (PostgreSQL, MySQL, MongoDB, Redis) with ports and status.",
         inputSchema: {
           type: "object",
           properties: {
@@ -237,13 +277,17 @@ export class MCPServer {
       },
       {
         name: "provision_database",
-        description: "Provision a new managed database container (PostgreSQL, MySQL, MongoDB, Redis).",
+        description:
+          "Provision a new managed database container (PostgreSQL, MySQL, MongoDB, Redis).",
         inputSchema: {
           type: "object",
           properties: {
             projectName: { type: "string", description: "Project to attach database to" },
             name: { type: "string", description: "Database instance name (e.g. 'postgres-main')" },
-            engine: { type: "string", description: "Engine type: 'postgres', 'mysql', 'mongodb', 'redis'" },
+            engine: {
+              type: "string",
+              description: "Engine type: 'postgres', 'mysql', 'mongodb', 'redis'",
+            },
             sizeMb: { type: "number", description: "Storage allocation in MB (default: 1024)" },
           },
           required: ["projectName", "name", "engine"],
@@ -251,7 +295,8 @@ export class MCPServer {
       },
       {
         name: "list_backups",
-        description: "List all database snapshots and backups with SHA-256 checksums and file sizes.",
+        description:
+          "List all database snapshots and backups with SHA-256 checksums and file sizes.",
         inputSchema: {
           type: "object",
           properties: {
@@ -261,19 +306,28 @@ export class MCPServer {
       },
       {
         name: "create_backup",
-        description: "Create an instant point-in-time database snapshot for a running database or persistent container.",
+        description:
+          "Create an instant point-in-time database snapshot for a running database or persistent container.",
         inputSchema: {
           type: "object",
           properties: {
-            databaseName: { type: "string", description: "Target database container or name (e.g. 'mongo', 'postgres', 'it-tools')" },
-            dbType: { type: "string", description: "Database type: 'mongodb', 'postgres', 'mysql', 'redis', or 'volume'" },
+            databaseName: {
+              type: "string",
+              description:
+                "Target database container or name (e.g. 'mongo', 'postgres', 'it-tools')",
+            },
+            dbType: {
+              type: "string",
+              description: "Database type: 'mongodb', 'postgres', 'mysql', 'redis', or 'volume'",
+            },
           },
           required: ["databaseName"],
         },
       },
       {
         name: "restore_backup",
-        description: "Verify SHA-256 checksum and instantly restore a database snapshot to its container.",
+        description:
+          "Verify SHA-256 checksum and instantly restore a database snapshot to its container.",
         inputSchema: {
           type: "object",
           properties: {
@@ -286,7 +340,8 @@ export class MCPServer {
       // ── Domains & Edge Routing ──
       {
         name: "list_domains",
-        description: "List custom domains, SSL certificate statuses, and primary hostnames for a project.",
+        description:
+          "List custom domains, SSL certificate statuses, and primary hostnames for a project.",
         inputSchema: {
           type: "object",
           properties: {
@@ -310,7 +365,8 @@ export class MCPServer {
       },
       {
         name: "verify_domain_ssl",
-        description: "Verify DNS records and trigger Let's Encrypt SSL certificate provisioning for a domain.",
+        description:
+          "Verify DNS records and trigger Let's Encrypt SSL certificate provisioning for a domain.",
         inputSchema: {
           type: "object",
           properties: {
@@ -321,7 +377,8 @@ export class MCPServer {
       },
       {
         name: "get_edge_status",
-        description: "Inspect active edge reverse proxy (OpenResty Lua vs Caddy 2) and routing table.",
+        description:
+          "Inspect active edge reverse proxy (OpenResty Lua vs Caddy 2) and routing table.",
         inputSchema: { type: "object", properties: {} },
       },
 
@@ -367,14 +424,16 @@ export class MCPServer {
       },
       {
         name: "trigger_s3_sync",
-        description: "Trigger an immediate remote backup sync of all database snapshots to AWS S3 or Cloudflare R2.",
+        description:
+          "Trigger an immediate remote backup sync of all database snapshots to AWS S3 or Cloudflare R2.",
         inputSchema: { type: "object", properties: {} },
       },
 
       // ── AI Self-Healing & Catalog ──
       {
         name: "diagnose_project_crash",
-        description: "Run automated AI diagnostics on a failed/crashed project container, identify root cause from logs, and get recommended fix.",
+        description:
+          "Run automated AI diagnostics on a failed/crashed project container, identify root cause from logs, and get recommended fix.",
         inputSchema: {
           type: "object",
           properties: {
@@ -389,8 +448,14 @@ export class MCPServer {
         inputSchema: {
           type: "object",
           properties: {
-            query: { type: "string", description: "Search query e.g. 'analytics', 'redis', 'vaultwarden'" },
-            category: { type: "string", description: "Category filter e.g. 'Database', 'AI', 'Security'" },
+            query: {
+              type: "string",
+              description: "Search query e.g. 'analytics', 'redis', 'vaultwarden'",
+            },
+            category: {
+              type: "string",
+              description: "Category filter e.g. 'Database', 'AI', 'Security'",
+            },
           },
           required: ["query"],
         },
@@ -401,7 +466,10 @@ export class MCPServer {
         inputSchema: {
           type: "object",
           properties: {
-            appName: { type: "string", description: "Name of the catalog app (e.g. 'vaultwarden', 'ghost', 'it-tools')" },
+            appName: {
+              type: "string",
+              description: "Name of the catalog app (e.g. 'vaultwarden', 'ghost', 'it-tools')",
+            },
             customName: { type: "string", description: "Optional custom project name" },
           },
           required: ["appName"],
@@ -508,13 +576,29 @@ export class MCPServer {
           let jobsCount = 0;
           let serversCount = 0;
           let edgeProxy = "Caddy 2 (On-Demand TLS)";
-          try { projsCount = this.db.prepare("SELECT COUNT(*) as count FROM projects").get()?.count || 0; } catch {}
-          try { backupsCount = this.db.prepare("SELECT COUNT(*) as count FROM backups").get()?.count || 0; } catch {}
-          try { jobsCount = this.db.prepare("SELECT COUNT(*) as count FROM cron_jobs WHERE enabled=1").get()?.count || 0; } catch {}
-          try { serversCount = this.db.prepare("SELECT COUNT(*) as count FROM servers").get()?.count || 0; } catch {}
+          try {
+            projsCount =
+              this.db.prepare("SELECT COUNT(*) as count FROM projects").get()?.count || 0;
+          } catch {}
+          try {
+            backupsCount =
+              this.db.prepare("SELECT COUNT(*) as count FROM backups").get()?.count || 0;
+          } catch {}
+          try {
+            jobsCount =
+              this.db.prepare("SELECT COUNT(*) as count FROM cron_jobs WHERE enabled=1").get()
+                ?.count || 0;
+          } catch {}
+          try {
+            serversCount =
+              this.db.prepare("SELECT COUNT(*) as count FROM servers").get()?.count || 0;
+          } catch {}
           try {
             if (this.edgeManager?.settings?.provider) {
-              edgeProxy = this.edgeManager.settings.provider === "openresty" ? "OpenResty 1.27 (Lua Edge)" : "Caddy 2 (On-Demand TLS)";
+              edgeProxy =
+                this.edgeManager.settings.provider === "openresty"
+                  ? "OpenResty 1.27 (Lua Edge)"
+                  : "Caddy 2 (On-Demand TLS)";
             }
           } catch {}
           return formatResponse({
@@ -569,7 +653,8 @@ export class MCPServer {
 
         // ── Projects & Workspaces ──
         case "list_projects": {
-          let query = "SELECT id, name, slug, source, target, port, health_path, status, sleep_mode, created_at FROM projects";
+          let query =
+            "SELECT id, name, slug, source, target, port, health_path, status, sleep_mode, created_at FROM projects";
           const queryParams = [];
           if (args.target) {
             query += " WHERE target=?";
@@ -581,14 +666,22 @@ export class MCPServer {
         }
 
         case "get_project": {
-          const p = this.db.prepare("SELECT * FROM projects WHERE name=? OR slug=?").get(args.projectName, args.projectName);
+          const p = this.db
+            .prepare("SELECT * FROM projects WHERE name=? OR slug=?")
+            .get(args.projectName, args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
           let health = null;
           let domains = [];
           let route = null;
-          try { if (this.selfHeal) health = this.selfHeal.getProjectHealth(p.name); } catch {}
-          try { domains = this.db.prepare("SELECT * FROM domains WHERE project=?").all(p.name); } catch {}
-          try { route = this.db.prepare("SELECT * FROM routes WHERE project=?").get(p.name); } catch {}
+          try {
+            if (this.selfHeal) health = this.selfHeal.getProjectHealth(p.name);
+          } catch {}
+          try {
+            domains = this.db.prepare("SELECT * FROM domains WHERE project=?").all(p.name);
+          } catch {}
+          try {
+            route = this.db.prepare("SELECT * FROM routes WHERE project=?").get(p.name);
+          } catch {}
           return formatResponse({
             ...p,
             env: JSON.parse(p.env_json || "{}"),
@@ -636,12 +729,28 @@ export class MCPServer {
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
           const sets = [];
           const vals = [];
-          if (args.buildCmd !== undefined) { sets.push("build_cmd=?"); vals.push(args.buildCmd); }
-          if (args.startCmd !== undefined) { sets.push("start_cmd=?"); vals.push(args.startCmd); }
-          if (args.port !== undefined) { sets.push("port=?"); vals.push(Number(args.port)); }
-          if (args.healthPath !== undefined) { sets.push("health_path=?"); vals.push(args.healthPath); }
-          if (args.sleepMode !== undefined) { sets.push("sleep_mode=?"); vals.push(args.sleepMode); }
-          sets.push("updated_at=?"); vals.push(Date.now());
+          if (args.buildCmd !== undefined) {
+            sets.push("build_cmd=?");
+            vals.push(args.buildCmd);
+          }
+          if (args.startCmd !== undefined) {
+            sets.push("start_cmd=?");
+            vals.push(args.startCmd);
+          }
+          if (args.port !== undefined) {
+            sets.push("port=?");
+            vals.push(Number(args.port));
+          }
+          if (args.healthPath !== undefined) {
+            sets.push("health_path=?");
+            vals.push(args.healthPath);
+          }
+          if (args.sleepMode !== undefined) {
+            sets.push("sleep_mode=?");
+            vals.push(args.sleepMode);
+          }
+          sets.push("updated_at=?");
+          vals.push(Date.now());
           vals.push(p.name);
           this.db.prepare(`UPDATE projects SET ${sets.join(", ")} WHERE name=?`).run(...vals);
           return formatResponse({ ok: true, message: `Updated project '${args.projectName}'` });
@@ -650,38 +759,61 @@ export class MCPServer {
         case "delete_project": {
           const p = this.db.prepare("SELECT * FROM projects WHERE name=?").get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
-          try { this.db.prepare("DELETE FROM projects WHERE name=?").run(p.name); } catch {}
-          try { this.db.prepare("DELETE FROM domains WHERE project=?").run(p.name); } catch {}
-          try { this.db.prepare("DELETE FROM routes WHERE project=?").run(p.name); } catch {}
-          try { this.db.prepare("DELETE FROM deployments WHERE project=?").run(p.name); } catch {}
-          return formatResponse({ ok: true, message: `Deleted project '${args.projectName}' and associated resources` });
+          try {
+            this.db.prepare("DELETE FROM projects WHERE name=?").run(p.name);
+          } catch {}
+          try {
+            this.db.prepare("DELETE FROM domains WHERE project=?").run(p.name);
+          } catch {}
+          try {
+            this.db.prepare("DELETE FROM routes WHERE project=?").run(p.name);
+          } catch {}
+          try {
+            this.db.prepare("DELETE FROM deployments WHERE project=?").run(p.name);
+          } catch {}
+          return formatResponse({
+            ok: true,
+            message: `Deleted project '${args.projectName}' and associated resources`,
+          });
         }
 
         // ── Deployments & Rollbacks ──
         case "deploy_project": {
-          if (!this.runDeployment) return formatResponse({ error: "Deployment runner unavailable" }, true);
+          if (!this.runDeployment)
+            return formatResponse({ error: "Deployment runner unavailable" }, true);
           const p = this.db.prepare("SELECT * FROM projects WHERE name=?").get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
           const res = await this.runDeployment(p.name, {
             environment: args.environment || "production",
             trigger: args.trigger || "mcp_ai_agent",
           });
-          return formatResponse({ ok: true, deploymentId: res.id, version: res.version, environment: res.environment });
+          return formatResponse({
+            ok: true,
+            deploymentId: res.id,
+            version: res.version,
+            environment: res.environment,
+          });
         }
 
         case "rollback_project": {
-          if (!this.runDeployment) return formatResponse({ error: "Deployment runner unavailable" }, true);
+          if (!this.runDeployment)
+            return formatResponse({ error: "Deployment runner unavailable" }, true);
           const p = this.db.prepare("SELECT * FROM projects WHERE name=?").get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
           let targetDeploy;
           if (args.deploymentId) {
-            targetDeploy = this.db.prepare("SELECT * FROM deployments WHERE id=?").get(args.deploymentId);
+            targetDeploy = this.db
+              .prepare("SELECT * FROM deployments WHERE id=?")
+              .get(args.deploymentId);
           } else {
             targetDeploy = this.db
-              .prepare("SELECT * FROM deployments WHERE project=? AND phase='ready' ORDER BY started_at DESC LIMIT 1 OFFSET 1")
+              .prepare(
+                "SELECT * FROM deployments WHERE project=? AND phase='ready' ORDER BY started_at DESC LIMIT 1 OFFSET 1",
+              )
               .get(p.name);
           }
-          if (!targetDeploy) return formatResponse({ error: "No rollback candidate deployment found" }, true);
+          if (!targetDeploy)
+            return formatResponse({ error: "No rollback candidate deployment found" }, true);
           const snap = targetDeploy.snapshot_json ? JSON.parse(targetDeploy.snapshot_json) : null;
           const res = await this.runDeployment(p.name, {
             rollbackFrom: { version: targetDeploy.version, workdir: targetDeploy.workdir },
@@ -697,58 +829,94 @@ export class MCPServer {
         }
 
         case "get_deployment": {
-          const deploy = this.db.prepare("SELECT * FROM deployments WHERE id=?").get(args.deploymentId);
-          if (!deploy) return formatResponse({ error: `Deployment '${args.deploymentId}' not found` }, true);
+          const deploy = this.db
+            .prepare("SELECT * FROM deployments WHERE id=?")
+            .get(args.deploymentId);
+          if (!deploy)
+            return formatResponse({ error: `Deployment '${args.deploymentId}' not found` }, true);
           return formatResponse(deploy);
         }
 
         case "get_project_logs": {
           let deploy;
           if (args.deploymentId) {
-            deploy = this.db.prepare("SELECT logs FROM deployments WHERE id=?").get(args.deploymentId);
+            deploy = this.db
+              .prepare("SELECT logs FROM deployments WHERE id=?")
+              .get(args.deploymentId);
           } else {
             deploy = this.db
-              .prepare("SELECT logs FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
+              .prepare(
+                "SELECT logs FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1",
+              )
               .get(args.projectName);
           }
           const logText = deploy?.logs || `[no logs found for ${args.projectName}]`;
-          const lines = logText.split("\n").slice(-(args.lines || 50)).join("\n");
+          const lines = logText
+            .split("\n")
+            .slice(-(args.lines || 50))
+            .join("\n");
           return formatResponse(lines);
         }
 
         case "restart_project": {
-          if (!this.selfHeal) return formatResponse({ error: "Self-healing subsystem unavailable" }, true);
+          if (!this.selfHeal)
+            return formatResponse({ error: "Self-healing subsystem unavailable" }, true);
           const p = this.db.prepare("SELECT * FROM projects WHERE name=?").get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
           const res = await this.selfHeal.autoRestartService(p);
-          return formatResponse({ ok: res, message: `Restart command executed for ${args.projectName}` });
+          return formatResponse({
+            ok: res,
+            message: `Restart command executed for ${args.projectName}`,
+          });
         }
 
         // ── Environment Variables & Quotas ──
         case "get_project_env": {
-          const p = this.db.prepare("SELECT env_json FROM projects WHERE name=?").get(args.projectName);
+          const p = this.db
+            .prepare("SELECT env_json FROM projects WHERE name=?")
+            .get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
           return formatResponse(JSON.parse(p.env_json || "{}"));
         }
 
         case "set_project_env": {
-          const p = this.db.prepare("SELECT env_json FROM projects WHERE name=?").get(args.projectName);
+          const p = this.db
+            .prepare("SELECT env_json FROM projects WHERE name=?")
+            .get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
           const current = JSON.parse(p.env_json || "{}");
           const merged = { ...current, ...(args.env || {}) };
-          this.db.prepare("UPDATE projects SET env_json=?, updated_at=? WHERE name=?").run(JSON.stringify(merged), Date.now(), p.name);
-          return formatResponse({ ok: true, keys: Object.keys(merged), count: Object.keys(merged).length });
+          this.db
+            .prepare("UPDATE projects SET env_json=?, updated_at=? WHERE name=?")
+            .run(JSON.stringify(merged), Date.now(), p.name);
+          return formatResponse({
+            ok: true,
+            keys: Object.keys(merged),
+            count: Object.keys(merged).length,
+          });
         }
 
         case "set_project_quotas": {
-          const p = this.db.prepare("SELECT resources_json FROM projects WHERE name=?").get(args.projectName);
+          const p = this.db
+            .prepare("SELECT resources_json FROM projects WHERE name=?")
+            .get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
-          const current = JSON.parse(p.resources_json || '{"production":{"cpuCores":1,"memoryMb":512}}');
+          const current = JSON.parse(
+            p.resources_json || '{"production":{"cpuCores":1,"memoryMb":512}}',
+          );
           if (args.cpuCores !== undefined) current.production.cpuCores = Number(args.cpuCores);
           if (args.memoryMb !== undefined) current.production.memoryMb = Number(args.memoryMb);
           this.db
-            .prepare("UPDATE projects SET resources_json=?, cpu_limit=?, memory_mb_limit=?, updated_at=? WHERE name=?")
-            .run(JSON.stringify(current), current.production.cpuCores, current.production.memoryMb, Date.now(), p.name);
+            .prepare(
+              "UPDATE projects SET resources_json=?, cpu_limit=?, memory_mb_limit=?, updated_at=? WHERE name=?",
+            )
+            .run(
+              JSON.stringify(current),
+              current.production.cpuCores,
+              current.production.memoryMb,
+              Date.now(),
+              p.name,
+            );
           return formatResponse({ ok: true, quotas: current.production });
         }
 
@@ -787,7 +955,15 @@ export class MCPServer {
                 `INSERT INTO managed_dbs (id, project, name, engine, size_mb, status, connection_string, created_at)
                 VALUES (?,?,?,?,?,'running',?,?)`,
               )
-              .run(id, args.projectName, args.name, engine, args.sizeMb || 1024, connStr, Date.now());
+              .run(
+                id,
+                args.projectName,
+                args.name,
+                engine,
+                args.sizeMb || 1024,
+                connStr,
+                Date.now(),
+              );
           } catch {
             this.db
               .prepare(
@@ -796,7 +972,13 @@ export class MCPServer {
               )
               .run(id, args.projectName, args.name, engine, args.sizeMb || 1024, Date.now());
           }
-          return formatResponse({ ok: true, id, name: args.name, engine, connectionString: connStr });
+          return formatResponse({
+            ok: true,
+            id,
+            name: args.name,
+            engine,
+            connectionString: connStr,
+          });
         }
 
         case "list_backups": {
@@ -806,7 +988,8 @@ export class MCPServer {
         }
 
         case "create_backup": {
-          if (!this.backupManager) return formatResponse({ error: "Backup manager unavailable" }, true);
+          if (!this.backupManager)
+            return formatResponse({ error: "Backup manager unavailable" }, true);
           const res = await this.backupManager.createBackup({
             databaseName: args.databaseName,
             dbType: args.dbType || "volume",
@@ -815,21 +998,26 @@ export class MCPServer {
         }
 
         case "restore_backup": {
-          if (!this.backupManager) return formatResponse({ error: "Backup manager unavailable" }, true);
+          if (!this.backupManager)
+            return formatResponse({ error: "Backup manager unavailable" }, true);
           const res = await this.backupManager.restoreBackup(args.backupId);
           return formatResponse(res);
         }
 
         // ── Domains & Edge Routing ──
         case "list_domains": {
-          const rows = this.db.prepare("SELECT * FROM domains WHERE project=?").all(args.projectName);
+          const rows = this.db
+            .prepare("SELECT * FROM domains WHERE project=?")
+            .all(args.projectName);
           return formatResponse(rows);
         }
 
         case "add_domain": {
           const id = "dom_" + crypto.randomBytes(6).toString("hex");
           if (args.isPrimary) {
-            this.db.prepare("UPDATE domains SET is_primary=0 WHERE project=?").run(args.projectName);
+            this.db
+              .prepare("UPDATE domains SET is_primary=0 WHERE project=?")
+              .run(args.projectName);
           }
           this.db
             .prepare(
@@ -837,14 +1025,27 @@ export class MCPServer {
               VALUES (?,?,?,?,0,'none',?)
               ON CONFLICT(hostname) DO UPDATE SET project=excluded.project, is_primary=excluded.is_primary`,
             )
-            .run(id, args.projectName, args.hostname.toLowerCase(), args.isPrimary ? 1 : 0, Date.now());
-          return formatResponse({ ok: true, id, hostname: args.hostname, isPrimary: !!args.isPrimary });
+            .run(
+              id,
+              args.projectName,
+              args.hostname.toLowerCase(),
+              args.isPrimary ? 1 : 0,
+              Date.now(),
+            );
+          return formatResponse({
+            ok: true,
+            id,
+            hostname: args.hostname,
+            isPrimary: !!args.isPrimary,
+          });
         }
 
         case "verify_domain_ssl": {
           const dom = this.db.prepare("SELECT * FROM domains WHERE id=?").get(args.domainId);
           if (!dom) return formatResponse({ error: `Domain '${args.domainId}' not found` }, true);
-          this.db.prepare("UPDATE domains SET verified=1, ssl_status='active' WHERE id=?").run(dom.id);
+          this.db
+            .prepare("UPDATE domains SET verified=1, ssl_status='active' WHERE id=?")
+            .run(dom.id);
           return formatResponse({ ok: true, hostname: dom.hostname, sslStatus: "active" });
         }
 
@@ -856,7 +1057,9 @@ export class MCPServer {
             }
           } catch {}
           let routes = [];
-          try { routes = this.db.prepare("SELECT * FROM routes").all(); } catch {}
+          try {
+            routes = this.db.prepare("SELECT * FROM routes").all();
+          } catch {}
           return formatResponse({
             activeProvider: provider,
             totalRoutes: routes.length,
@@ -871,7 +1074,8 @@ export class MCPServer {
         }
 
         case "test_server_connection": {
-          if (!this.serverManager) return formatResponse({ error: "Server manager unavailable" }, true);
+          if (!this.serverManager)
+            return formatResponse({ error: "Server manager unavailable" }, true);
           const res = await this.serverManager.testServerConnection(args.serverId);
           return formatResponse(res);
         }
@@ -891,20 +1095,26 @@ export class MCPServer {
         case "get_s3_storage_status": {
           if (!this.s3Storage) {
             const row = this.db.prepare("SELECT * FROM s3_config LIMIT 1").get();
-            return formatResponse({ configured: !!row, bucket: row?.bucket || null, provider: row?.provider || "aws" });
+            return formatResponse({
+              configured: !!row,
+              bucket: row?.bucket || null,
+              provider: row?.provider || "aws",
+            });
           }
           return formatResponse(this.s3Storage.getStatus());
         }
 
         case "trigger_s3_sync": {
-          if (!this.s3Storage) return formatResponse({ ok: true, message: "S3 remote sync triggered" });
+          if (!this.s3Storage)
+            return formatResponse({ ok: true, message: "S3 remote sync triggered" });
           const res = await this.s3Storage.syncRemote();
           return formatResponse(res);
         }
 
         // ── AI Self-Healing & Catalog ──
         case "diagnose_project_crash": {
-          if (!this.selfHeal) return formatResponse({ error: "Self-healing engine unavailable" }, true);
+          if (!this.selfHeal)
+            return formatResponse({ error: "Self-healing engine unavailable" }, true);
           const p = this.db.prepare("SELECT * FROM projects WHERE name=?").get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
           const diag = await this.selfHeal.diagnoseContainerCrash(p.name);
@@ -916,19 +1126,19 @@ export class MCPServer {
           const tokens = rawQ ? rawQ.split(/\s+/).filter(Boolean) : [];
           const cat = (args.category || "").toLowerCase().trim();
           const list = this.catalogApps || [];
-          
+
           let results = list.filter((a) => {
             const name = (a.name || "").toLowerCase();
             const desc = (a.desc || a.description || "").toLowerCase();
             const tag = (a.tag || a.category || "").toLowerCase();
             const allText = `${name} ${desc} ${tag}`;
-            
+
             const matchesCat = !cat || tag.includes(cat);
             if (!matchesCat) return false;
             if (tokens.length === 0) return true;
             return tokens.some((tok) => allText.includes(tok));
           });
-          
+
           // Sort by exact name match first, then term matches
           results.sort((a, b) => {
             const aName = (a.name || "").toLowerCase();
@@ -944,15 +1154,23 @@ export class MCPServer {
         case "deploy_catalog_app": {
           const target = (args.appName || "").toLowerCase().trim();
           const list = this.catalogApps || [];
-          const app = list.find((a) => 
-            (a.name && a.name.toLowerCase() === target) ||
-            (a.slug && a.slug.toLowerCase() === target) ||
-            (a.id && a.id.toLowerCase() === target)
-          ) || list.find((a) => 
-            (a.name && a.name.toLowerCase().includes(target)) ||
-            (a.slug && a.slug.toLowerCase().includes(target))
-          );
-          if (!app) return formatResponse({ error: `Catalog app '${args.appName}' not found in catalog` }, true);
+          const app =
+            list.find(
+              (a) =>
+                (a.name && a.name.toLowerCase() === target) ||
+                (a.slug && a.slug.toLowerCase() === target) ||
+                (a.id && a.id.toLowerCase() === target),
+            ) ||
+            list.find(
+              (a) =>
+                (a.name && a.name.toLowerCase().includes(target)) ||
+                (a.slug && a.slug.toLowerCase().includes(target)),
+            );
+          if (!app)
+            return formatResponse(
+              { error: `Catalog app '${args.appName}' not found in catalog` },
+              true,
+            );
           const projName = (args.customName || app.name).toLowerCase().replace(/[^a-z0-9]+/g, "-");
           const id = "proj_" + crypto.randomBytes(8).toString("hex");
           this.db
@@ -961,7 +1179,16 @@ export class MCPServer {
               VALUES (?,?,?,?,'','','{}','docker',?,?,?,?)
               ON CONFLICT(name) DO UPDATE SET source=excluded.source`,
             )
-            .run(id, projName, projName, app.dockerImage || app.image || `${app.name}:latest`, app.port || 80, "/", Date.now(), Date.now());
+            .run(
+              id,
+              projName,
+              projName,
+              app.dockerImage || app.image || `${app.name}:latest`,
+              app.port || 80,
+              "/",
+              Date.now(),
+              Date.now(),
+            );
           if (this.runDeployment) {
             await this.runDeployment(projName, { trigger: "mcp_catalog_deploy" });
           }

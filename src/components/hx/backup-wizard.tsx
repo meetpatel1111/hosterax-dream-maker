@@ -229,7 +229,8 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                 Database Backup, S3 Multi-Cloud Sync & Instant Restore
               </h3>
               <p className="text-xs text-muted-foreground">
-                Automated database snapshots, SHA-256 verification, S3/Cloudflare R2 sync, and point-in-time recovery
+                Automated database snapshots, SHA-256 verification, S3/Cloudflare R2 sync, and
+                point-in-time recovery
               </p>
             </div>
           </div>
@@ -292,11 +293,18 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                 <label className="text-xs font-medium text-foreground">Backup Storage Target</label>
                 <div className="grid grid-cols-2 gap-3">
                   {[
-                    { id: "local", name: "Local Disk", desc: "~/.hosterax/backups", icon: HardDrive },
+                    {
+                      id: "local",
+                      name: "Local Disk",
+                      desc: "~/.hosterax/backups",
+                      icon: HardDrive,
+                    },
                     {
                       id: "s3",
                       name: "S3 / Cloudflare R2",
-                      desc: s3Config?.configured ? `Bucket: ${s3Config.bucket}` : "Configure in Storage tab",
+                      desc: s3Config?.configured
+                        ? `Bucket: ${s3Config.bucket}`
+                        : "Configure in Storage tab",
                       icon: Cloud,
                     },
                   ].map((dest) => (
@@ -321,7 +329,8 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
 
               <div className="rounded-lg border border-border/80 bg-surface/40 p-4 text-xs text-muted-foreground space-y-2">
                 <div className="flex items-center gap-2 text-foreground font-medium">
-                  <ShieldCheck className="h-4 w-4 text-success" /> Integrated Integrity Checks & S3 Streaming
+                  <ShieldCheck className="h-4 w-4 text-success" /> Integrated Integrity Checks & S3
+                  Streaming
                 </div>
                 <p>
                   Every snapshot is compressed with gzip and verified with SHA-256 checksums before
@@ -407,7 +416,9 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                             className="inline-flex items-center gap-1 rounded-md border border-border bg-sky-500/10 text-sky-400 px-2.5 py-1.5 text-xs font-medium hover:bg-sky-500/20 transition-colors"
                             title="Push snapshot to remote S3 bucket"
                           >
-                            <UploadCloud className={`h-3.5 w-3.5 ${syncingId === b.id ? "animate-spin" : ""}`} />
+                            <UploadCloud
+                              className={`h-3.5 w-3.5 ${syncingId === b.id ? "animate-spin" : ""}`}
+                            />
                             Sync S3
                           </button>
                         )}
@@ -496,7 +507,11 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                   <label className="text-xs font-medium">Endpoint URL (Optional for AWS S3)</label>
                   <input
                     type="text"
-                    placeholder={s3Provider === "r2" ? "https://<account_id>.r2.cloudflarestorage.com" : "https://s3.us-east-1.amazonaws.com"}
+                    placeholder={
+                      s3Provider === "r2"
+                        ? "https://<account_id>.r2.cloudflarestorage.com"
+                        : "https://s3.us-east-1.amazonaws.com"
+                    }
                     value={s3Endpoint}
                     onChange={(e) => setS3Endpoint(e.target.value)}
                     className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-xs shadow-sm font-mono"
@@ -539,9 +554,12 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
 
               <div className="flex items-center justify-between p-3 rounded-lg border bg-muted/20">
                 <div>
-                  <div className="text-xs font-semibold text-foreground">Automatic S3 Snapshot Replication</div>
+                  <div className="text-xs font-semibold text-foreground">
+                    Automatic S3 Snapshot Replication
+                  </div>
                   <div className="text-[11px] text-muted-foreground">
-                    Automatically stream new database snapshots to your remote S3 bucket upon creation.
+                    Automatically stream new database snapshots to your remote S3 bucket upon
+                    creation.
                   </div>
                 </div>
                 <input
@@ -576,14 +594,22 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
               {/* Remote S3 Objects List */}
               {remoteBackups.length > 0 && (
                 <div className="space-y-2 pt-4 border-t border-border">
-                  <div className="text-xs font-semibold">Remote Snapshots in S3 Bucket ({remoteBackups.length})</div>
+                  <div className="text-xs font-semibold">
+                    Remote Snapshots in S3 Bucket ({remoteBackups.length})
+                  </div>
                   <div className="divide-y divide-border/40 border border-border/60 rounded-lg overflow-hidden max-h-48 overflow-y-auto">
                     {remoteBackups.map((rb) => (
-                      <div key={rb.key} className="p-2.5 flex items-center justify-between text-xs bg-muted/10">
+                      <div
+                        key={rb.key}
+                        className="p-2.5 flex items-center justify-between text-xs bg-muted/10"
+                      >
                         <div className="space-y-0.5">
-                          <div className="font-mono text-[11px] font-medium text-foreground">{rb.filename}</div>
+                          <div className="font-mono text-[11px] font-medium text-foreground">
+                            {rb.filename}
+                          </div>
                           <div className="text-[10px] text-muted-foreground">
-                            Key: {rb.key} · {(rb.sizeBytes / 1048576).toFixed(2)} MB · {new Date(rb.lastModified).toLocaleString()}
+                            Key: {rb.key} · {(rb.sizeBytes / 1048576).toFixed(2)} MB ·{" "}
+                            {new Date(rb.lastModified).toLocaleString()}
                           </div>
                         </div>
                         <Cloud className="w-4 h-4 text-sky-400" />

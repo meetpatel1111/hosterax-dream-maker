@@ -98,7 +98,10 @@ export class EmailManager {
   generateDkimPublicKey() {
     const pub =
       "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC3w0jK6mXQkFfV9V18L1uXj" +
-      crypto.randomBytes(32).toString("base64").replace(/[^a-zA-Z0-9]/g, "") +
+      crypto
+        .randomBytes(32)
+        .toString("base64")
+        .replace(/[^a-zA-Z0-9]/g, "") +
       "IDAQAB";
     return pub;
   }
@@ -116,7 +119,7 @@ export class EmailManager {
           `
         INSERT INTO email_domains (id, domain, spf_status, dkim_status, dmarc_status, mx_status, dkim_selector, dkim_public_key, last_verified_at, created_at)
         VALUES (?, ?, 'verified', 'verified', 'verified', 'verified', 'mail', ?, ?, ?)
-      `
+      `,
         )
         .run(id, domain, pubKey, now, now);
 
@@ -127,7 +130,7 @@ export class EmailManager {
           `
         INSERT INTO mailboxes (id, domain_id, email, name, quota_mb, used_mb, created_at)
         VALUES (?, ?, 'admin@hosterax.internal', 'System Administrator', 10240, 24, ?)
-      `
+      `,
         )
         .run(mboxId, id, now);
 
@@ -139,7 +142,7 @@ export class EmailManager {
         'Your HosteraX Mail Server is fully configured with automated SPF, DKIM, DMARC, and MX routing.',
         '<h3>Welcome to HosteraX Mail!</h3><p>Your self-hosted mailserver is configured with SPF, DKIM, and DMARC enforcement.</p>',
         'inbox', 0, 1, ?)
-      `
+      `,
         )
         .run(`msg_${crypto.randomBytes(6).toString("hex")}`, mboxId, now);
 
@@ -149,7 +152,7 @@ export class EmailManager {
           `
         INSERT INTO email_aliases (id, domain_id, source_email, destination_type, destination_target, is_active, created_at)
         VALUES ('alias_support', ?, 'support@hosterax.internal', 'email', 'admin@hosterax.internal', 1, ?)
-      `
+      `,
         )
         .run(id, now);
     }
@@ -158,12 +161,12 @@ export class EmailManager {
   listDomains() {
     const domains = this.db.prepare("SELECT * FROM email_domains ORDER BY created_at ASC").all();
     return domains.map((d) => {
-      const mailboxCount = this.db
-        .prepare("SELECT COUNT(*) as count FROM mailboxes WHERE domain_id=?")
-        .get(d.id)?.count || 0;
-      const aliasCount = this.db
-        .prepare("SELECT COUNT(*) as count FROM email_aliases WHERE domain_id=?")
-        .get(d.id)?.count || 0;
+      const mailboxCount =
+        this.db.prepare("SELECT COUNT(*) as count FROM mailboxes WHERE domain_id=?").get(d.id)
+          ?.count || 0;
+      const aliasCount =
+        this.db.prepare("SELECT COUNT(*) as count FROM email_aliases WHERE domain_id=?").get(d.id)
+          ?.count || 0;
       return {
         ...d,
         mailbox_count: mailboxCount,
@@ -243,7 +246,9 @@ export class EmailManager {
 
       // 2. Check live DKIM TXT record
       try {
-        const dkimTxt = await dns.promises.resolveTxt(`${d.dkim_selector || "mail"}._domainkey.${domain}`);
+        const dkimTxt = await dns.promises.resolveTxt(
+          `${d.dkim_selector || "mail"}._domainkey.${domain}`,
+        );
         const flatDkim = dkimTxt.map((chunk) => chunk.join(""));
         if (flatDkim.some((t) => t.includes("v=DKIM1") || t.includes("k=rsa"))) {
           dkimStatus = "verified";
@@ -275,7 +280,7 @@ export class EmailManager {
       UPDATE email_domains SET
         spf_status=?, dkim_status=?, dmarc_status=?, mx_status=?, last_verified_at=?
       WHERE id=?
-    `
+    `,
       )
       .run(spfStatus, dkimStatus, dmarcStatus, mxStatus, now, d.id);
 
@@ -296,7 +301,7 @@ export class EmailManager {
         `
       INSERT INTO email_domains (id, domain, spf_status, dkim_status, dmarc_status, mx_status, dkim_selector, dkim_public_key, last_verified_at, created_at)
       VALUES (?, ?, 'configured', 'configured', 'configured', 'configured', 'mail', ?, ?, ?)
-    `
+    `,
       )
       .run(id, cleanDomain, pubKey, now, now);
 
@@ -327,7 +332,9 @@ export class EmailManager {
   // ────────── Mailboxes ──────────
   listMailboxes(domainId = null) {
     if (domainId) {
-      return this.db.prepare("SELECT * FROM mailboxes WHERE domain_id=? ORDER BY email ASC").all(domainId);
+      return this.db
+        .prepare("SELECT * FROM mailboxes WHERE domain_id=? ORDER BY email ASC")
+        .all(domainId);
     }
     return this.db.prepare("SELECT * FROM mailboxes ORDER BY created_at DESC").all();
   }
@@ -346,9 +353,17 @@ export class EmailManager {
         `
       INSERT INTO mailboxes (id, domain_id, email, name, quota_mb, used_mb, password_hash, created_at)
       VALUES (?, ?, ?, ?, ?, 0, ?, ?)
-    `
+    `,
       )
-      .run(id, domain_id, cleanEmail, (name || cleanEmail.split("@")[0]).trim(), Number(quota_mb), pwHash, now);
+      .run(
+        id,
+        domain_id,
+        cleanEmail,
+        (name || cleanEmail.split("@")[0]).trim(),
+        Number(quota_mb),
+        pwHash,
+        now,
+      );
 
     return this.db.prepare("SELECT * FROM mailboxes WHERE id=?").get(id);
   }
@@ -362,14 +377,18 @@ export class EmailManager {
   // ────────── Aliases & Inbound Forwarding ──────────
   listAliases(domainId = null) {
     if (domainId) {
-      return this.db.prepare("SELECT * FROM email_aliases WHERE domain_id=? ORDER BY source_email ASC").all(domainId);
+      return this.db
+        .prepare("SELECT * FROM email_aliases WHERE domain_id=? ORDER BY source_email ASC")
+        .all(domainId);
     }
     return this.db.prepare("SELECT * FROM email_aliases ORDER BY created_at DESC").all();
   }
 
   createAlias({ domain_id, source_email, destination_type = "email", destination_target }) {
     const cleanSource = source_email.toLowerCase().trim();
-    const existing = this.db.prepare("SELECT * FROM email_aliases WHERE source_email=?").get(cleanSource);
+    const existing = this.db
+      .prepare("SELECT * FROM email_aliases WHERE source_email=?")
+      .get(cleanSource);
     if (existing) throw new Error(`Alias "${cleanSource}" already exists.`);
 
     const id = `alias_${crypto.randomBytes(6).toString("hex")}`;
@@ -380,7 +399,7 @@ export class EmailManager {
         `
       INSERT INTO email_aliases (id, domain_id, source_email, destination_type, destination_target, is_active, created_at)
       VALUES (?, ?, ?, ?, ?, 1, ?)
-    `
+    `,
       )
       .run(id, domain_id, cleanSource, destination_type, destination_target.trim(), now);
 
@@ -402,7 +421,17 @@ export class EmailManager {
     }));
   }
 
-  saveSmtpRelay({ id, name, provider = "custom", host, port = 587, username = "", password = "", from_email = "", is_default = 0 }) {
+  saveSmtpRelay({
+    id,
+    name,
+    provider = "custom",
+    host,
+    port = 587,
+    username = "",
+    password = "",
+    from_email = "",
+    is_default = 0,
+  }) {
     const now = Date.now();
     const relayId = id || `relay_${crypto.randomBytes(6).toString("hex")}`;
 
@@ -418,18 +447,39 @@ export class EmailManager {
         UPDATE email_smtp_relays SET
           name=?, provider=?, host=?, port=?, username=?, password=?, from_email=?, is_default=?
         WHERE id=?
-      `
+      `,
         )
-        .run(name, provider, host, Number(port), username, password, from_email, is_default ? 1 : 0, relayId);
+        .run(
+          name,
+          provider,
+          host,
+          Number(port),
+          username,
+          password,
+          from_email,
+          is_default ? 1 : 0,
+          relayId,
+        );
     } else {
       this.db
         .prepare(
           `
         INSERT INTO email_smtp_relays (id, name, provider, host, port, username, password, from_email, is_default, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `
+      `,
         )
-        .run(relayId, name, provider, host, Number(port), username, password, from_email, is_default ? 1 : 0, now);
+        .run(
+          relayId,
+          name,
+          provider,
+          host,
+          Number(port),
+          username,
+          password,
+          from_email,
+          is_default ? 1 : 0,
+          now,
+        );
     }
 
     return this.db.prepare("SELECT * FROM email_smtp_relays WHERE id=?").get(relayId);
@@ -467,16 +517,26 @@ export class EmailManager {
     }
 
     return new Promise((resolve) => {
-      const socket = net.createConnection({ host: relayConfig.host, port: Number(relayConfig.port), timeout: 5000 });
+      const socket = net.createConnection({
+        host: relayConfig.host,
+        port: Number(relayConfig.port),
+        timeout: 5000,
+      });
 
       socket.on("connect", () => {
         socket.end();
-        resolve({ ok: true, message: `Connected successfully to ${relayConfig.host}:${relayConfig.port}` });
+        resolve({
+          ok: true,
+          message: `Connected successfully to ${relayConfig.host}:${relayConfig.port}`,
+        });
       });
 
       socket.on("timeout", () => {
         socket.destroy();
-        resolve({ ok: false, error: `Connection timed out to ${relayConfig.host}:${relayConfig.port}` });
+        resolve({
+          ok: false,
+          error: `Connection timed out to ${relayConfig.host}:${relayConfig.port}`,
+        });
       });
 
       socket.on("error", (err) => {
@@ -488,7 +548,9 @@ export class EmailManager {
   // ────────── Messages & Webmail ──────────
   listMessages(mailboxId, folder = "inbox") {
     return this.db
-      .prepare("SELECT * FROM email_messages WHERE mailbox_id=? AND folder=? ORDER BY created_at DESC")
+      .prepare(
+        "SELECT * FROM email_messages WHERE mailbox_id=? AND folder=? ORDER BY created_at DESC",
+      )
       .all(mailboxId, folder);
   }
 
@@ -504,7 +566,7 @@ export class EmailManager {
         `
       INSERT INTO email_messages (id, mailbox_id, from_address, to_address, subject, body_text, body_html, folder, is_read, is_starred, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, 'sent', 1, 0, ?)
-    `
+    `,
       )
       .run(
         id,
@@ -514,7 +576,7 @@ export class EmailManager {
         subject.trim(),
         body_text || "",
         body_html || `<p>${body_text || ""}</p>`,
-        now
+        now,
       );
 
     // Check if there is an active SMTP relay configured to transmit this to the internet (e.g. Gmail / Outlook / Yahoo)
@@ -538,7 +600,9 @@ export class EmailManager {
         const fromSender =
           defaultRelay.from_email ||
           (!mbox.email.endsWith(".internal") && !mbox.email.endsWith(".local")
-            ? (mbox.name ? `"${mbox.name}" <${mbox.email}>` : mbox.email)
+            ? mbox.name
+              ? `"${mbox.name}" <${mbox.email}>`
+              : mbox.email
             : defaultRelay.provider === "resend" || defaultRelay.host?.includes("resend")
               ? "onboarding@resend.dev"
               : mbox.email);
@@ -566,8 +630,14 @@ export class EmailManager {
     }
 
     // If destination matches any local alias with webhook, trigger webhook in background
-    const alias = this.db.prepare("SELECT * FROM email_aliases WHERE source_email=? AND is_active=1").get(to.trim().toLowerCase());
-    if (alias && alias.destination_type === "webhook" && alias.destination_target.startsWith("http")) {
+    const alias = this.db
+      .prepare("SELECT * FROM email_aliases WHERE source_email=? AND is_active=1")
+      .get(to.trim().toLowerCase());
+    if (
+      alias &&
+      alias.destination_type === "webhook" &&
+      alias.destination_target.startsWith("http")
+    ) {
       fetch(alias.destination_target, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -665,11 +735,27 @@ export class EmailManager {
   }
 
   getMailboxStats(mailboxId) {
-    const total = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=?").get(mailboxId)?.c || 0;
-    const unread = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='inbox' AND is_read=0").get(mailboxId)?.c || 0;
-    const starred = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND is_starred=1").get(mailboxId)?.c || 0;
-    const sent = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='sent'").get(mailboxId)?.c || 0;
-    const trash = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='trash'").get(mailboxId)?.c || 0;
+    const total =
+      this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=?").get(mailboxId)
+        ?.c || 0;
+    const unread =
+      this.db
+        .prepare(
+          "SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='inbox' AND is_read=0",
+        )
+        .get(mailboxId)?.c || 0;
+    const starred =
+      this.db
+        .prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND is_starred=1")
+        .get(mailboxId)?.c || 0;
+    const sent =
+      this.db
+        .prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='sent'")
+        .get(mailboxId)?.c || 0;
+    const trash =
+      this.db
+        .prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='trash'")
+        .get(mailboxId)?.c || 0;
 
     return { total, unread, starred, sent, trash, storage_mb: (total * 0.04).toFixed(2) };
   }

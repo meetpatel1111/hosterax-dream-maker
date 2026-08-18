@@ -144,13 +144,18 @@ function MailboxesPage() {
   const { data: domains = [], refetch: refetchDomains } = useEmailDomains();
   const [selectedDomainId, setSelectedDomainId] = useState<string | null>(null);
 
-  const activeDomain = domains.find((d) => (selectedDomainId ? d.id === selectedDomainId : true)) || domains[0];
+  const activeDomain =
+    domains.find((d) => (selectedDomainId ? d.id === selectedDomainId : true)) || domains[0];
   const { data: mailboxes = [], refetch: refetchMailboxes } = useMailboxes(activeDomain?.id);
   const [selectedMailboxId, setSelectedMailboxId] = useState<string | null>(null);
 
-  const activeMailbox = mailboxes.find((m) => (selectedMailboxId ? m.id === selectedMailboxId : true)) || mailboxes[0];
+  const activeMailbox =
+    mailboxes.find((m) => (selectedMailboxId ? m.id === selectedMailboxId : true)) || mailboxes[0];
   const [folder, setFolder] = useState<"inbox" | "sent" | "trash">("inbox");
-  const { data: messages = [], refetch: refetchMessages } = useEmailMessages(activeMailbox?.id, folder);
+  const { data: messages = [], refetch: refetchMessages } = useEmailMessages(
+    activeMailbox?.id,
+    folder,
+  );
   const [selectedMessage, setSelectedMessage] = useState<EmailMessage | null>(null);
 
   const { data: aliases = [], refetch: refetchAliases } = useEmailAliases(activeDomain?.id);
@@ -182,7 +187,9 @@ function MailboxesPage() {
   // Relay modal
   const [addRelayOpen, setAddRelayOpen] = useState(false);
   const [relayName, setRelayName] = useState("");
-  const [relayProvider, setRelayProvider] = useState<"direct" | "resend" | "postmark" | "ses" | "sendgrid" | "custom">("resend");
+  const [relayProvider, setRelayProvider] = useState<
+    "direct" | "resend" | "postmark" | "ses" | "sendgrid" | "custom"
+  >("resend");
   const [relayHost, setRelayHost] = useState("smtp.resend.com");
   const [relayPort, setRelayPort] = useState(587);
   const [relayUsername, setRelayUsername] = useState("resend");
@@ -207,8 +214,13 @@ function MailboxesPage() {
     if (!activeDomain) return;
     setVerifyingDns(true);
     try {
-      const res: any = await engine.call("POST", `/api/email/domains/${activeDomain.id}/verify-dns`);
-      toast.success(`Live DNS verified! SPF: ${res.spf_status}, DKIM: ${res.dkim_status}, DMARC: ${res.dmarc_status}, MX: ${res.mx_status}`);
+      const res: any = await engine.call(
+        "POST",
+        `/api/email/domains/${activeDomain.id}/verify-dns`,
+      );
+      toast.success(
+        `Live DNS verified! SPF: ${res.spf_status}, DKIM: ${res.dkim_status}, DMARC: ${res.dmarc_status}, MX: ${res.mx_status}`,
+      );
       refetchDomains();
     } catch (e: any) {
       toast.error(e.message || "Failed to verify live DNS");
@@ -268,7 +280,9 @@ function MailboxesPage() {
       const res: any = await engine.call("POST", `/api/email/aliases/${aliasId}/test`);
       setAliasTestResult((prev) => ({ ...prev, [aliasId]: res }));
       if (res.ok) {
-        toast.success(`Webhook test passed (${res.status} ${res.statusText || "OK"} in ${res.latency_ms}ms)`);
+        toast.success(
+          `Webhook test passed (${res.status} ${res.statusText || "OK"} in ${res.latency_ms}ms)`,
+        );
       } else {
         toast.error(`Webhook test failed: ${res.error || `HTTP ${res.status}`}`);
       }
@@ -349,7 +363,9 @@ function MailboxesPage() {
       });
 
       if (res?.delivery_report?.sent_via_relay) {
-        toast.success(`Delivered to ${composeTo.trim()} via ${res.delivery_report.provider || "SMTP Relay"}!`);
+        toast.success(
+          `Delivered to ${composeTo.trim()} via ${res.delivery_report.provider || "SMTP Relay"}!`,
+        );
       } else if (res?.delivery_report?.error) {
         toast.error(`Relay Error: ${res.delivery_report.error}`);
       } else {
@@ -416,7 +432,10 @@ function MailboxesPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/50 pb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-mono">
+            <Badge
+              variant="outline"
+              className="bg-primary/10 text-primary border-primary/20 text-xs font-mono"
+            >
               <Mail className="w-3 h-3 mr-1" /> Self-Hosted Email Stack
             </Badge>
             <span className="text-xs text-muted-foreground">Production Engine</span>
@@ -425,7 +444,8 @@ function MailboxesPage() {
             Mailboxes & Email Stack
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Domain mailboxes, DNS anti-spam verification, inbound webhook piping, and outbound SMTP relays.
+            Domain mailboxes, DNS anti-spam verification, inbound webhook piping, and outbound SMTP
+            relays.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -433,7 +453,11 @@ function MailboxesPage() {
             <Globe className="w-4 h-4 mr-2" />
             Add Email Domain
           </Button>
-          <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm" onClick={() => setComposeOpen(true)}>
+          <Button
+            size="sm"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+            onClick={() => setComposeOpen(true)}
+          >
             <Send className="w-4 h-4 mr-2" />
             Compose Email
           </Button>
@@ -445,7 +469,9 @@ function MailboxesPage() {
         <button
           onClick={() => setActiveTab("webmail")}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            activeTab === "webmail" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            activeTab === "webmail"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
           }`}
         >
           <Inbox className="w-3.5 h-3.5" /> Mailboxes & Webmail
@@ -453,7 +479,9 @@ function MailboxesPage() {
         <button
           onClick={() => setActiveTab("aliases")}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            activeTab === "aliases" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            activeTab === "aliases"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
           }`}
         >
           <Forward className="w-3.5 h-3.5" /> Aliases & Inbound Webhooks ({aliases.length})
@@ -461,7 +489,9 @@ function MailboxesPage() {
         <button
           onClick={() => setActiveTab("relays")}
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            activeTab === "relays" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+            activeTab === "relays"
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
           }`}
         >
           <Server className="w-3.5 h-3.5" /> Outbound SMTP Relays ({relays.length})
@@ -544,7 +574,11 @@ function MailboxesPage() {
                     onClick={() => handleCopy(record.value, `dns_${i}`)}
                     className="text-muted-foreground hover:text-foreground shrink-0"
                   >
-                    {copiedKey === `dns_${i}` ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                    {copiedKey === `dns_${i}` ? (
+                      <Check className="w-3 h-3 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3 h-3" />
+                    )}
                   </button>
                 </div>
               </div>
@@ -560,8 +594,15 @@ function MailboxesPage() {
           <div className="lg:col-span-3 rounded-xl border bg-card/60 p-4 shadow-sm space-y-5">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Mailboxes</span>
-                <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setAddMailboxOpen(true)}>
+                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Mailboxes
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0"
+                  onClick={() => setAddMailboxOpen(true)}
+                >
                   <Plus className="w-3.5 h-3.5" />
                 </Button>
               </div>
@@ -575,7 +616,9 @@ function MailboxesPage() {
                       setSelectedMessage(null);
                     }}
                     className={`w-full text-left p-2.5 rounded-lg text-xs transition-colors flex items-center justify-between ${
-                      activeMailbox?.id === mbox.id ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-foreground"
+                      activeMailbox?.id === mbox.id
+                        ? "bg-primary/10 text-primary font-medium"
+                        : "hover:bg-muted/40 text-foreground"
                     }`}
                   >
                     <div className="truncate">
@@ -592,7 +635,9 @@ function MailboxesPage() {
 
             {/* Folders */}
             <div>
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Folders</span>
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block mb-2">
+                Folders
+              </span>
               <div className="space-y-1">
                 <button
                   onClick={() => {
@@ -600,7 +645,9 @@ function MailboxesPage() {
                     setSelectedMessage(null);
                   }}
                   className={`w-full flex items-center justify-between p-2 rounded-lg text-xs transition-colors ${
-                    folder === "inbox" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/40 text-muted-foreground"
+                    folder === "inbox"
+                      ? "bg-primary text-primary-foreground font-medium"
+                      : "hover:bg-muted/40 text-muted-foreground"
                   }`}
                 >
                   <div className="flex items-center gap-2">
@@ -618,7 +665,9 @@ function MailboxesPage() {
                     setSelectedMessage(null);
                   }}
                   className={`w-full flex items-center gap-2 p-2 rounded-lg text-xs transition-colors ${
-                    folder === "sent" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/40 text-muted-foreground"
+                    folder === "sent"
+                      ? "bg-primary text-primary-foreground font-medium"
+                      : "hover:bg-muted/40 text-muted-foreground"
                   }`}
                 >
                   <Send className="w-3.5 h-3.5" /> Sent Messages
@@ -629,7 +678,9 @@ function MailboxesPage() {
                     setSelectedMessage(null);
                   }}
                   className={`w-full flex items-center gap-2 p-2 rounded-lg text-xs transition-colors ${
-                    folder === "trash" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/40 text-muted-foreground"
+                    folder === "trash"
+                      ? "bg-primary text-primary-foreground font-medium"
+                      : "hover:bg-muted/40 text-muted-foreground"
                   }`}
                 >
                   <Trash2 className="w-3.5 h-3.5" /> Trash
@@ -643,12 +694,16 @@ function MailboxesPage() {
                 <span className="flex items-center gap-1.5">
                   <HardDrive className="w-3.5 h-3.5" /> Storage Used
                 </span>
-                <span className="font-mono text-[11px]">{storageMb} MB / {activeMailbox?.quota_mb || 1024} MB</span>
+                <span className="font-mono text-[11px]">
+                  {storageMb} MB / {activeMailbox?.quota_mb || 1024} MB
+                </span>
               </div>
               <div className="w-full bg-muted/40 rounded-full h-1.5 overflow-hidden">
                 <div
                   className="bg-primary h-full transition-all duration-300"
-                  style={{ width: `${Math.min(100, (Number(storageMb) / (activeMailbox?.quota_mb || 1024)) * 100)}%` }}
+                  style={{
+                    width: `${Math.min(100, (Number(storageMb) / (activeMailbox?.quota_mb || 1024)) * 100)}%`,
+                  }}
                 />
               </div>
             </div>
@@ -660,7 +715,12 @@ function MailboxesPage() {
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground capitalize">
                 {folder} ({messages.length})
               </span>
-              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => refetchMessages()}>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={() => refetchMessages()}
+              >
                 <RefreshCw className="w-3.5 h-3.5" />
               </Button>
             </div>
@@ -677,11 +737,17 @@ function MailboxesPage() {
                     key={msg.id}
                     onClick={() => setSelectedMessage(msg)}
                     className={`p-3 text-xs cursor-pointer transition-colors relative ${
-                      selectedMessage?.id === msg.id ? "bg-primary/10" : msg.is_read ? "hover:bg-muted/30 opacity-75" : "hover:bg-muted/30 font-medium"
+                      selectedMessage?.id === msg.id
+                        ? "bg-primary/10"
+                        : msg.is_read
+                          ? "hover:bg-muted/30 opacity-75"
+                          : "hover:bg-muted/30 font-medium"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold truncate text-foreground">{folder === "sent" ? msg.to_address : msg.from_address}</span>
+                      <span className="font-semibold truncate text-foreground">
+                        {folder === "sent" ? msg.to_address : msg.from_address}
+                      </span>
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={(e) => {
@@ -693,12 +759,17 @@ function MailboxesPage() {
                           <Star className="w-3.5 h-3.5 fill-current" />
                         </button>
                         <span className="text-[10px] text-muted-foreground font-mono">
-                          {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                          {new Date(msg.created_at).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                         </span>
                       </div>
                     </div>
                     <div className="text-foreground truncate font-medium">{msg.subject}</div>
-                    <div className="text-muted-foreground text-[11px] truncate mt-0.5">{msg.body_text}</div>
+                    <div className="text-muted-foreground text-[11px] truncate mt-0.5">
+                      {msg.body_text}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -711,10 +782,17 @@ function MailboxesPage() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between border-b border-border/40 pb-3">
                   <div>
-                    <h3 className="text-base font-bold text-foreground">{selectedMessage.subject}</h3>
+                    <h3 className="text-base font-bold text-foreground">
+                      {selectedMessage.subject}
+                    </h3>
                     <div className="text-xs text-muted-foreground mt-1 space-y-0.5 font-mono">
-                      <div>From: <span className="text-foreground">{selectedMessage.from_address}</span></div>
-                      <div>To: <span className="text-foreground">{selectedMessage.to_address}</span></div>
+                      <div>
+                        From:{" "}
+                        <span className="text-foreground">{selectedMessage.from_address}</span>
+                      </div>
+                      <div>
+                        To: <span className="text-foreground">{selectedMessage.to_address}</span>
+                      </div>
                       <div>Date: {new Date(selectedMessage.created_at).toLocaleString()}</div>
                     </div>
                   </div>
@@ -725,7 +803,12 @@ function MailboxesPage() {
                     >
                       <Star className="w-4 h-4 fill-current" />
                     </button>
-                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleMoveToTrash(selectedMessage.id)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleMoveToTrash(selectedMessage.id)}
+                    >
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
@@ -739,7 +822,9 @@ function MailboxesPage() {
               <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground my-auto">
                 <FileText className="w-8 h-8 opacity-20 mb-2" />
                 <p className="text-xs font-medium">Select an email to read its contents</p>
-                <p className="text-[11px] text-muted-foreground mt-1">Or click Compose Email to transmit outbound mail.</p>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  Or click Compose Email to transmit outbound mail.
+                </p>
               </div>
             )}
           </div>
@@ -753,7 +838,8 @@ function MailboxesPage() {
             <div>
               <h3 className="text-base font-semibold">Email Aliases & Webhook Forwarders</h3>
               <p className="text-xs text-muted-foreground">
-                Route incoming emails to external addresses or pipe raw email payloads directly into HTTP Webhook endpoints.
+                Route incoming emails to external addresses or pipe raw email payloads directly into
+                HTTP Webhook endpoints.
               </p>
             </div>
             <Button size="sm" onClick={() => setAddAliasOpen(true)}>
@@ -779,10 +865,14 @@ function MailboxesPage() {
                       {aliasTestResult[al.id] && (
                         <Badge
                           className={`text-[10px] font-mono ${
-                            aliasTestResult[al.id].ok ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-destructive/10 text-destructive"
+                            aliasTestResult[al.id].ok
+                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                              : "bg-destructive/10 text-destructive"
                           }`}
                         >
-                          {aliasTestResult[al.id].ok ? `HTTP ${aliasTestResult[al.id].status} (${aliasTestResult[al.id].latency_ms}ms)` : "Webhook Fail"}
+                          {aliasTestResult[al.id].ok
+                            ? `HTTP ${aliasTestResult[al.id].status} (${aliasTestResult[al.id].latency_ms}ms)`
+                            : "Webhook Fail"}
                         </Badge>
                       )}
                     </div>
@@ -799,11 +889,20 @@ function MailboxesPage() {
                         disabled={testingAliasId === al.id}
                         onClick={() => handleTestWebhook(al.id)}
                       >
-                        {testingAliasId === al.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1 text-primary" />}
+                        {testingAliasId === al.id ? (
+                          <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                        ) : (
+                          <Zap className="w-3 h-3 mr-1 text-primary" />
+                        )}
                         Test Webhook
                       </Button>
                     )}
-                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteAlias(al.id)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDeleteAlias(al.id)}
+                    >
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
@@ -821,7 +920,8 @@ function MailboxesPage() {
             <div>
               <h3 className="text-base font-semibold">Outbound SMTP Relays</h3>
               <p className="text-xs text-muted-foreground">
-                Connect Resend, Gmail, Brevo, AWS SES, Postmark, or SendGrid for 100% inbox deliverability.
+                Connect Resend, Gmail, Brevo, AWS SES, Postmark, or SendGrid for 100% inbox
+                deliverability.
               </p>
             </div>
             <Button size="sm" onClick={() => setAddRelayOpen(true)}>
@@ -856,7 +956,9 @@ function MailboxesPage() {
           {relays.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground">
               <Server className="w-8 h-8 opacity-20 mx-auto mb-2" />
-              <p className="text-xs">No external SMTP relays configured. Click a preset above or connect a custom relay.</p>
+              <p className="text-xs">
+                No external SMTP relays configured. Click a preset above or connect a custom relay.
+              </p>
             </div>
           ) : (
             <div className="divide-y divide-border/30">
@@ -886,10 +988,19 @@ function MailboxesPage() {
                       disabled={testingRelayId === rel.id}
                       onClick={() => handleTestRelay(rel)}
                     >
-                      {testingRelayId === rel.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
+                      {testingRelayId === rel.id ? (
+                        <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                      ) : (
+                        <Zap className="w-3 h-3 mr-1" />
+                      )}
                       Test Authentication
                     </Button>
-                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteRelay(rel.id)}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDeleteRelay(rel.id)}
+                    >
                       <Trash2 className="w-4 h-4" />
                     </Button>
                   </div>
@@ -906,7 +1017,8 @@ function MailboxesPage() {
           <DialogHeader>
             <DialogTitle>Add Email Domain</DialogTitle>
             <DialogDescription>
-              Register a domain to provision self-hosted mailboxes and calculate DNS anti-spam records.
+              Register a domain to provision self-hosted mailboxes and calculate DNS anti-spam
+              records.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -918,7 +1030,9 @@ function MailboxesPage() {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddDomainOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setAddDomainOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={handleAddDomain}>Add Domain</Button>
           </DialogFooter>
         </DialogContent>
@@ -942,7 +1056,9 @@ function MailboxesPage() {
                   value={newMailboxEmail}
                   onChange={(e) => setNewMailboxEmail(e.target.value)}
                 />
-                <span className="text-xs font-mono text-muted-foreground">@{activeDomain?.domain}</span>
+                <span className="text-xs font-mono text-muted-foreground">
+                  @{activeDomain?.domain}
+                </span>
               </div>
             </div>
             <div className="space-y-1.5">
@@ -955,7 +1071,9 @@ function MailboxesPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddMailboxOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setAddMailboxOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={handleCreateMailbox}>Create Mailbox</Button>
           </DialogFooter>
         </DialogContent>
@@ -979,7 +1097,9 @@ function MailboxesPage() {
                   value={newAliasSource}
                   onChange={(e) => setNewAliasSource(e.target.value)}
                 />
-                <span className="text-xs font-mono text-muted-foreground">@{activeDomain?.domain}</span>
+                <span className="text-xs font-mono text-muted-foreground">
+                  @{activeDomain?.domain}
+                </span>
               </div>
             </div>
             <div className="space-y-1.5">
@@ -996,14 +1116,20 @@ function MailboxesPage() {
             <div className="space-y-1.5">
               <Label>Destination Target</Label>
               <Input
-                placeholder={newAliasType === "email" ? "user@example.com" : "https://api.mycompany.com/webhooks/inbound-mail"}
+                placeholder={
+                  newAliasType === "email"
+                    ? "user@example.com"
+                    : "https://api.mycompany.com/webhooks/inbound-mail"
+                }
                 value={newAliasTarget}
                 onChange={(e) => setNewAliasTarget(e.target.value)}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddAliasOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setAddAliasOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={handleCreateAlias}>Create Alias</Button>
           </DialogFooter>
         </DialogContent>
@@ -1021,7 +1147,11 @@ function MailboxesPage() {
           <div className="space-y-3 py-2 text-xs">
             <div className="space-y-1">
               <Label>Configuration Name</Label>
-              <Input placeholder="Resend Production Relay" value={relayName} onChange={(e) => setRelayName(e.target.value)} />
+              <Input
+                placeholder="Resend Production Relay"
+                value={relayName}
+                onChange={(e) => setRelayName(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
               <Label>Provider</Label>
@@ -1060,7 +1190,11 @@ function MailboxesPage() {
               </div>
               <div className="space-y-1">
                 <Label>Port</Label>
-                <Input type="number" value={relayPort} onChange={(e) => setRelayPort(Number(e.target.value))} />
+                <Input
+                  type="number"
+                  value={relayPort}
+                  onChange={(e) => setRelayPort(Number(e.target.value))}
+                />
               </div>
             </div>
             <div className="space-y-1">
@@ -1069,15 +1203,26 @@ function MailboxesPage() {
             </div>
             <div className="space-y-1">
               <Label>Password / Secret</Label>
-              <Input type="password" placeholder="••••••••••••" value={relayPassword} onChange={(e) => setRelayPassword(e.target.value)} />
+              <Input
+                type="password"
+                placeholder="••••••••••••"
+                value={relayPassword}
+                onChange={(e) => setRelayPassword(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
               <Label>From Email (Optional envelope override)</Label>
-              <Input placeholder="onboarding@resend.dev or verified domain" value={relayFromEmail} onChange={(e) => setRelayFromEmail(e.target.value)} />
+              <Input
+                placeholder="onboarding@resend.dev or verified domain"
+                value={relayFromEmail}
+                onChange={(e) => setRelayFromEmail(e.target.value)}
+              />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setAddRelayOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setAddRelayOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={handleSaveRelay}>Save Relay</Button>
           </DialogFooter>
         </DialogContent>
@@ -1094,7 +1239,9 @@ function MailboxesPage() {
                   type="button"
                   onClick={() => setComposeMode("edit")}
                   className={`px-2 py-1 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
-                    composeMode === "edit" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    composeMode === "edit"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   <Edit3 className="w-3 h-3" /> Edit
@@ -1103,7 +1250,9 @@ function MailboxesPage() {
                   type="button"
                   onClick={() => setComposeMode("preview")}
                   className={`px-2 py-1 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
-                    composeMode === "preview" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                    composeMode === "preview"
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
                   }`}
                 >
                   <Eye className="w-3 h-3" /> Preview
@@ -1111,7 +1260,10 @@ function MailboxesPage() {
               </div>
             </div>
             <DialogDescription>
-              Sending from <span className="font-mono font-medium text-foreground">{activeMailbox?.email || "active mailbox"}</span>
+              Sending from{" "}
+              <span className="font-mono font-medium text-foreground">
+                {activeMailbox?.email || "active mailbox"}
+              </span>
             </DialogDescription>
           </DialogHeader>
 
@@ -1137,7 +1289,7 @@ function MailboxesPage() {
               <div className="space-y-1">
                 <Label>Recipient (To:)</Label>
                 <Input
-                  placeholder="pmeet464@gmail.com"
+                  placeholder="admin@example.com"
                   value={composeTo}
                   onChange={(e) => setComposeTo(e.target.value)}
                 />
@@ -1163,19 +1315,34 @@ function MailboxesPage() {
           ) : (
             <div className="space-y-3 py-2 text-xs border rounded-lg p-4 bg-muted/10">
               <div className="border-b border-border/40 pb-2 space-y-1 font-mono text-[11px]">
-                <div><span className="text-muted-foreground">To:</span> {composeTo || "<recipient>"}</div>
-                <div><span className="text-muted-foreground">Subject:</span> <span className="font-bold text-foreground">{composeSubject || "No Subject"}</span></div>
+                <div>
+                  <span className="text-muted-foreground">To:</span> {composeTo || "<recipient>"}
+                </div>
+                <div>
+                  <span className="text-muted-foreground">Subject:</span>{" "}
+                  <span className="font-bold text-foreground">
+                    {composeSubject || "No Subject"}
+                  </span>
+                </div>
               </div>
               <div className="whitespace-pre-wrap text-foreground leading-relaxed pt-1">
-                {composeBody || <span className="text-muted-foreground italic">Message body is empty...</span>}
+                {composeBody || (
+                  <span className="text-muted-foreground italic">Message body is empty...</span>
+                )}
               </div>
             </div>
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setComposeOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setComposeOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={handleSendMessage} disabled={sending}>
-              {sending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Send className="w-3.5 h-3.5 mr-1" />}
+              {sending ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <Send className="w-3.5 h-3.5 mr-1" />
+              )}
               {sending ? "Sending..." : "Send Email"}
             </Button>
           </DialogFooter>

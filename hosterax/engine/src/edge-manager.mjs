@@ -84,7 +84,10 @@ export class EdgeManager {
       const m = out.match(new RegExp(`--${flag}=([^\\s]+)`));
       return m ? m[1] : "";
     };
-    const confPath = pick("conf-path") || OPENRESTY_KNOWN_CONFS.find((p) => fs.existsSync(p)) || OPENRESTY_KNOWN_CONFS[0];
+    const confPath =
+      pick("conf-path") ||
+      OPENRESTY_KNOWN_CONFS.find((p) => fs.existsSync(p)) ||
+      OPENRESTY_KNOWN_CONFS[0];
     const paths = {
       installed: Boolean(out),
       sbinPath: pick("sbin-path") || "openresty",
@@ -95,7 +98,6 @@ export class EdgeManager {
     this._orPaths = paths;
     return paths;
   }
-
 
   ensureSchema() {
     this.db.exec(`
@@ -644,7 +646,9 @@ http {
           conf += `  ssl_certificate ${certs.cert.replace(/\\/g, "/")};\n`;
           conf += `  ssl_certificate_key ${certs.key.replace(/\\/g, "/")};\n`;
           conf += `  ssl_protocols TLSv1.2 TLSv1.3;\n  ssl_session_cache shared:SSL:10m;\n\n`;
-          if (settings.hsts_enabled && dom ? Boolean(dom.hsts_enabled ?? 1) : settings.hsts_enabled) {
+          if (
+            settings.hsts_enabled && dom ? Boolean(dom.hsts_enabled ?? 1) : settings.hsts_enabled
+          ) {
             conf += `  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;\n`;
           }
           conf += acmeBlock + upstreamBlock(r.port) + `}\n\n`;
@@ -661,14 +665,24 @@ http {
   async readEdgeMgmt(pathname = "/health") {
     const attempt = (host, port) =>
       new Promise((resolve) => {
-        const req = http.request({ hostname: host, port, path: pathname, method: "GET", timeout: 2500 }, (res) => {
-          let body = "";
-          res.on("data", (d) => (body += d.toString()));
-          res.on("end", () => {
-            try { resolve(JSON.parse(body)); } catch { resolve({ ok: false, raw: body }); }
-          });
+        const req = http.request(
+          { hostname: host, port, path: pathname, method: "GET", timeout: 2500 },
+          (res) => {
+            let body = "";
+            res.on("data", (d) => (body += d.toString()));
+            res.on("end", () => {
+              try {
+                resolve(JSON.parse(body));
+              } catch {
+                resolve({ ok: false, raw: body });
+              }
+            });
+          },
+        );
+        req.on("timeout", () => {
+          req.destroy();
+          resolve(null);
         });
-        req.on("timeout", () => { req.destroy(); resolve(null); });
         req.on("error", () => resolve(null));
         req.end();
       });
@@ -679,15 +693,24 @@ http {
     // Containerized edge: mgmt API is bound to the container's loopback.
     const out = await new Promise((resolve) => {
       let buf = "";
-      const child = spawn("docker", ["exec", "hx_edge", "curl", "-s", `http://127.0.0.1:${this.mgmtPort}${pathname}`]);
+      const child = spawn("docker", [
+        "exec",
+        "hx_edge",
+        "curl",
+        "-s",
+        `http://127.0.0.1:${this.mgmtPort}${pathname}`,
+      ]);
       child.stdout?.on("data", (d) => (buf += d.toString()));
       child.on("close", () => resolve(buf));
       child.on("error", () => resolve(""));
       setTimeout(() => resolve(buf), 3000);
     });
-    try { return JSON.parse(out); } catch { return { ok: false, error: "edge management API unreachable" }; }
+    try {
+      return JSON.parse(out);
+    } catch {
+      return { ok: false, error: "edge management API unreachable" };
+    }
   }
-
 
   /**
    * Hot-reload Caddy via Admin REST API or container

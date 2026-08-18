@@ -881,12 +881,7 @@ function generateZeroConfigDockerfile(workdir) {
  * @returns {{ healthy: boolean, attempts: number, latencyMs: number|null }}
  */
 async function waitForHealthy(deploymentId, containerPort, opts = {}) {
-  const {
-    healthPath = "/",
-    maxAttempts = 15,
-    intervalMs = 2000,
-    timeoutMs = 3000,
-  } = opts;
+  const { healthPath = "/", maxAttempts = 15, intervalMs = 2000, timeoutMs = 3000 } = opts;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const start = Date.now();
@@ -996,7 +991,10 @@ async function runPreDeployHooks(deploymentId, workdir, env, containerName) {
   }
   // TypeORM
   if (deps["typeorm"]) {
-    hooks.push({ name: "TypeORM", cmd: "npx typeorm migration:run -d dist/data-source.js 2>/dev/null || npx typeorm migration:run" });
+    hooks.push({
+      name: "TypeORM",
+      cmd: "npx typeorm migration:run -d dist/data-source.js 2>/dev/null || npx typeorm migration:run",
+    });
   }
   // Sequelize
   if (deps["sequelize-cli"]) {
@@ -1515,12 +1513,10 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       }
 
       publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
-      let bc = await runStep(
-        deploymentId,
-        workdir,
-        `docker build -t ${sanitizeImageTag(tag)} .`,
-        { ...env, DOCKER_BUILDKIT: "1" },
-      );
+      let bc = await runStep(deploymentId, workdir, `docker build -t ${sanitizeImageTag(tag)} .`, {
+        ...env,
+        DOCKER_BUILDKIT: "1",
+      });
 
       // Self-Healing Build Fallback: If original Dockerfile build failed, fallback to zero-config multi-stage build!
       if (bc !== 0 && !isZeroConfigGenerated) {
@@ -1536,12 +1532,10 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
           stream: "system",
           text: `docker build (self-healing retry) → ${tag}`,
         });
-        bc = await runStep(
-          deploymentId,
-          workdir,
-          `docker build -t ${sanitizeImageTag(tag)} .`,
-          { ...env, DOCKER_BUILDKIT: "1" },
-        );
+        bc = await runStep(deploymentId, workdir, `docker build -t ${sanitizeImageTag(tag)} .`, {
+          ...env,
+          DOCKER_BUILDKIT: "1",
+        });
       }
 
       if (bc !== 0) return bc;
@@ -1771,7 +1765,6 @@ pages:
     });
     return 0;
   }
-
 
   // Static SPA server mode
   if (cmd?.startsWith("serve-static:")) {
@@ -2411,7 +2404,8 @@ const mcpServer = new MCPServer({
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
-  if (url.pathname === "/health" || url.pathname === "/api/health") return json(res, 200, { ok: true, version: "0.2.0" });
+  if (url.pathname === "/health" || url.pathname === "/api/health")
+    return json(res, 200, { ok: true, version: "0.2.0" });
   // Rate limit: 120 req/min for auth endpoints, 600/min for others
   const isAuthEndpoint = url.pathname.startsWith("/api/auth") || url.pathname === "/api/token";
   if (rateLimit(req, isAuthEndpoint ? 120 : 600)) {
@@ -3299,7 +3293,11 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ────────── GitHub Webhooks & Ephemeral PR Previews ──────────
-    if ((url.pathname === "/api/webhooks/github" || (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhooks\/github$/))) && req.method === "POST") {
+    if (
+      (url.pathname === "/api/webhooks/github" ||
+        (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhooks\/github$/))) &&
+      req.method === "POST"
+    ) {
       const projectName = m ? m[1] : null;
       const event = req.headers["x-github-event"] || "push";
       const sig = req.headers["x-hub-signature-256"] || "";
@@ -3327,11 +3325,17 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook-config$/)) && req.method === "GET") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook-config$/)) &&
+      req.method === "GET"
+    ) {
       const cfg = webhookManager.getProjectWebhookConfig(m[1]);
       return json(res, 200, cfg);
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook-config$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhook-config$/)) &&
+      req.method === "POST"
+    ) {
       const b = await readBody(req);
       const updated = webhookManager.updateProjectWebhookConfig(m[1], b);
       return json(res, 200, updated);
@@ -3372,7 +3376,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members\/([^/]+)$/)) && req.method === "PATCH") {
+    if (
+      (m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members\/([^/]+)$/)) &&
+      req.method === "PATCH"
+    ) {
       const b = await readBody(req);
       try {
         const updated = orgManager.updateMemberRole(m[1], m[2], b.role);
@@ -3381,7 +3388,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members\/([^/]+)$/)) && req.method === "DELETE") {
+    if (
+      (m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/members\/([^/]+)$/)) &&
+      req.method === "DELETE"
+    ) {
       try {
         const ok = orgManager.removeMember(m[1], m[2]);
         return json(res, 200, { ok });
@@ -3398,7 +3408,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/invites\/([^/]+)$/)) && req.method === "DELETE") {
+    if (
+      (m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/invites\/([^/]+)$/)) &&
+      req.method === "DELETE"
+    ) {
       const ok = orgManager.revokeInvite(m[1], m[2]);
       return json(res, 200, { ok });
     }
@@ -3435,7 +3448,10 @@ const server = http.createServer(async (req, res) => {
       const dom = emailManager.addDomain(b.domain);
       return json(res, 201, dom);
     }
-    if ((m = url.pathname.match(/^\/api\/email\/domains\/([^/]+)\/verify-dns$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/email\/domains\/([^/]+)\/verify-dns$/)) &&
+      req.method === "POST"
+    ) {
       try {
         const dom = await emailManager.verifyLiveDns(m[1]);
         return json(res, 200, dom);
@@ -3473,7 +3489,10 @@ const server = http.createServer(async (req, res) => {
       const ok = emailManager.deleteMailbox(m[1]);
       return json(res, 200, { ok });
     }
-    if ((m = url.pathname.match(/^\/api\/email\/mailboxes\/([^/]+)\/messages$/)) && req.method === "GET") {
+    if (
+      (m = url.pathname.match(/^\/api\/email\/mailboxes\/([^/]+)\/messages$/)) &&
+      req.method === "GET"
+    ) {
       const folder = url.searchParams.get("folder") || "inbox";
       return json(res, 200, emailManager.listMessages(m[1], folder));
     }
@@ -3486,21 +3505,33 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/read$/)) && req.method === "PATCH") {
+    if (
+      (m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/read$/)) &&
+      req.method === "PATCH"
+    ) {
       const b = await readBody(req);
       const ok = emailManager.markMessageRead(m[1], b.is_read !== false);
       return json(res, 200, { ok });
     }
-    if ((m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/star$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/star$/)) &&
+      req.method === "POST"
+    ) {
       const resData = emailManager.toggleMessageStar(m[1]);
       return json(res, 200, resData);
     }
-    if ((m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/move$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/move$/)) &&
+      req.method === "POST"
+    ) {
       const b = await readBody(req);
       const ok = emailManager.moveMessage(m[1], b.folder || "trash");
       return json(res, 200, { ok });
     }
-    if ((m = url.pathname.match(/^\/api\/email\/mailboxes\/([^/]+)\/stats$/)) && req.method === "GET") {
+    if (
+      (m = url.pathname.match(/^\/api\/email\/mailboxes\/([^/]+)\/stats$/)) &&
+      req.method === "GET"
+    ) {
       const stats = emailManager.getMailboxStats(m[1]);
       return json(res, 200, stats);
     }
@@ -3523,7 +3554,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/email\/aliases\/([^/]+)\/test$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/email\/aliases\/([^/]+)\/test$/)) &&
+      req.method === "POST"
+    ) {
       try {
         const testRes = await emailManager.testWebhookAlias(m[1]);
         return json(res, 200, testRes);
@@ -3549,7 +3583,10 @@ const server = http.createServer(async (req, res) => {
         return json(res, 400, { error: err.message });
       }
     }
-    if ((m = url.pathname.match(/^\/api\/email\/smtp-relays\/([^/]+)$/)) && req.method === "DELETE") {
+    if (
+      (m = url.pathname.match(/^\/api\/email\/smtp-relays\/([^/]+)$/)) &&
+      req.method === "DELETE"
+    ) {
       const ok = emailManager.deleteSmtpRelay(m[1]);
       return json(res, 200, { ok });
     }
@@ -3557,7 +3594,9 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       let relayConfig = b;
       if (b.id) {
-        const stored = emailManager.db.prepare("SELECT * FROM email_smtp_relays WHERE id=?").get(b.id);
+        const stored = emailManager.db
+          .prepare("SELECT * FROM email_smtp_relays WHERE id=?")
+          .get(b.id);
         if (stored) {
           relayConfig = {
             ...stored,
@@ -3571,13 +3610,18 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ────────── AI Container Crash Diagnostics & 1-Click Fixer ──────────
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/diagnostics$/)) && req.method === "GET") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/diagnostics$/)) &&
+      req.method === "GET"
+    ) {
       const proj = db.prepare("SELECT * FROM projects WHERE name=? OR id=?").get(m[1], m[1]);
       if (!proj) return json(res, 404, { error: "Project not found" });
 
       let logs = "";
       try {
-        const logRes = spawnSync("docker", ["logs", "--tail", "60", `hx_${proj.name}`], { encoding: "utf8" });
+        const logRes = spawnSync("docker", ["logs", "--tail", "60", `hx_${proj.name}`], {
+          encoding: "utf8",
+        });
         logs = (logRes.stdout || "") + (logRes.stderr || "");
       } catch {}
 
@@ -3591,25 +3635,38 @@ const server = http.createServer(async (req, res) => {
         faultType = "PORT_COLLISION";
         severity = "critical";
         rootCause = `Port ${proj.port || 3000} is already bound by another container or process on this host.`;
-        suggestedAction = "Change the container upstream port in Settings to an unused port (e.g. 3001+) and redeploy.";
+        suggestedAction =
+          "Change the container upstream port in Settings to an unused port (e.g. 3001+) and redeploy.";
         suggestedCommand = `hx projects update ${proj.name} --port 3001 && hx deploy ${proj.name}`;
-      } else if (logs.includes("DATABASE_URL") || logs.includes("connect ECONNREFUSED") || logs.includes("P1001")) {
+      } else if (
+        logs.includes("DATABASE_URL") ||
+        logs.includes("connect ECONNREFUSED") ||
+        logs.includes("P1001")
+      ) {
         faultType = "DATABASE_UNREACHABLE";
         severity = "high";
         rootCause = "Application failed to connect to its target database connection string.";
-        suggestedAction = "Verify the DATABASE_URL environment variable and ensure the PostgreSQL / MySQL container is running.";
+        suggestedAction =
+          "Verify the DATABASE_URL environment variable and ensure the PostgreSQL / MySQL container is running.";
         suggestedCommand = `hx db list && hx deploy ${proj.name}`;
-      } else if (logs.includes("ENOMEM") || logs.includes("JavaScript heap out of memory") || logs.includes("killed")) {
+      } else if (
+        logs.includes("ENOMEM") ||
+        logs.includes("JavaScript heap out of memory") ||
+        logs.includes("killed")
+      ) {
         faultType = "OOM_KILLED";
         severity = "critical";
         rootCause = "Container was terminated by kernel due to exceeding memory resource limits.";
-        suggestedAction = "Increase memory allocation in container resource quotas or optimize memory leaks.";
+        suggestedAction =
+          "Increase memory allocation in container resource quotas or optimize memory leaks.";
         suggestedCommand = `hx projects update ${proj.name} --memory 1024mb`;
       } else if (logs.includes("Cannot find module") || logs.includes("MODULE_NOT_FOUND")) {
         faultType = "MISSING_DEPENDENCY";
         severity = "high";
-        rootCause = "Application failed to boot due to a missing Node.js npm package in container bundle.";
-        suggestedAction = "Ensure package.json includes all runtime dependencies and rebuild image.";
+        rootCause =
+          "Application failed to boot due to a missing Node.js npm package in container bundle.";
+        suggestedAction =
+          "Ensure package.json includes all runtime dependencies and rebuild image.";
         suggestedCommand = `hx deploy ${proj.name} --rebuild`;
       }
 
@@ -3627,7 +3684,10 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ────────── 1-Click Rollback ──────────
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/rollback\/([^/]+)$/)) && req.method === "POST") {
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/rollback\/([^/]+)$/)) &&
+      req.method === "POST"
+    ) {
       const proj = db.prepare("SELECT * FROM projects WHERE name=? OR id=?").get(m[1], m[1]);
       if (!proj) return json(res, 404, { error: "Project not found" });
 
@@ -3638,7 +3698,7 @@ const server = http.createServer(async (req, res) => {
       const now = Date.now();
       db.prepare(
         `INSERT INTO deployments (id, project, version, phase, trigger, started_at, finished_at, exit_code, workdir)
-         VALUES (?, ?, ?, 'success', 'rollback', ?, ?, 0, ?)`
+         VALUES (?, ?, ?, 'success', 'rollback', ?, ?, 0, ?)`,
       ).run(depId, proj.name, `v${now}`, now, now, targetDep.workdir || "");
 
       return json(res, 200, {
@@ -3790,9 +3850,25 @@ const server = http.createServer(async (req, res) => {
             "mysql:8",
           ]);
         } else if (b.engine === "redis") {
-          spawnSync("docker", ["run", "-d", "--name", containerName, "-p", `${port}:${port}`, "redis:7-alpine"]);
+          spawnSync("docker", [
+            "run",
+            "-d",
+            "--name",
+            containerName,
+            "-p",
+            `${port}:${port}`,
+            "redis:7-alpine",
+          ]);
         } else if (b.engine === "mongodb") {
-          spawnSync("docker", ["run", "-d", "--name", containerName, "-p", `${port}:${port}`, "mongo:7"]);
+          spawnSync("docker", [
+            "run",
+            "-d",
+            "--name",
+            containerName,
+            "-p",
+            `${port}:${port}`,
+            "mongo:7",
+          ]);
         }
       } catch {}
 
@@ -3808,7 +3884,13 @@ const server = http.createServer(async (req, res) => {
         Date.now(),
       );
 
-      return json(res, 200, { id, name: cleanName, engine: b.engine, connection_string: conn, status: "running" });
+      return json(res, 200, {
+        id,
+        name: cleanName,
+        engine: b.engine,
+        connection_string: conn,
+        status: "running",
+      });
     }
     if (url.pathname === "/api/databases" && req.method === "GET") {
       return json(res, 200, db.prepare("SELECT * FROM managed_dbs ORDER BY created_at DESC").all());

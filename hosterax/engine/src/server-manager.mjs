@@ -65,7 +65,10 @@ export class ServerManager {
     `);
 
     // Migrate any missing columns in servers table
-    const cols = this.db.prepare("PRAGMA table_info(servers)").all().map((c) => c.name);
+    const cols = this.db
+      .prepare("PRAGMA table_info(servers)")
+      .all()
+      .map((c) => c.name);
     const needed = [
       ["type", "TEXT NOT NULL DEFAULT 'remote'"],
       ["host", "TEXT"],
@@ -107,7 +110,9 @@ export class ServerManager {
 
     let dockerVer = "Docker Engine 27.x";
     try {
-      const dRes = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], { encoding: "utf8" });
+      const dRes = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
+        encoding: "utf8",
+      });
       if (dRes.stdout && dRes.stdout.trim()) {
         dockerVer = `Docker v${dRes.stdout.trim()}`;
       }
@@ -125,7 +130,7 @@ export class ServerManager {
           'local', 'Local Master Node', 'local', '127.0.0.1', 0, 'hosterax', 'none', 'online',
           ?, ?, ?, ?, 1, ?, ?, ?
         )
-      `
+      `,
         )
         .run(dockerVer, osInfo, cpuCores, totalMem, now, now, now);
     } else {
@@ -135,7 +140,7 @@ export class ServerManager {
         UPDATE servers SET
           docker_version=?, os_info=?, cpu_cores=?, total_ram_mb=?, last_ping_at=?, updated_at=?
         WHERE id='local'
-      `
+      `,
         )
         .run(dockerVer, osInfo, cpuCores, totalMem, now, now);
     }
@@ -182,7 +187,7 @@ export class ServerManager {
         UPDATE servers SET
           cpu_usage_pct=?, ram_usage_pct=?, containers_count=?, last_ping_at=?
         WHERE id='local'
-      `
+      `,
         )
         .run(cpuUsage, ramUsage, contCount, Date.now());
     } catch {}
@@ -191,7 +196,8 @@ export class ServerManager {
   createServer(data) {
     const id = `srv_${crypto.randomBytes(6).toString("hex")}`;
     const now = Date.now();
-    const type = data.type || (data.host === "127.0.0.1" || data.host === "localhost" ? "local" : "remote");
+    const type =
+      data.type || (data.host === "127.0.0.1" || data.host === "localhost" ? "local" : "remote");
 
     const record = {
       id,
@@ -232,7 +238,7 @@ export class ServerManager {
         @ram_usage_pct, @disk_usage_pct, @containers_count, @is_default, @last_ping_at,
         @created_at, @updated_at
       )
-    `
+    `,
       )
       .run(record);
 
@@ -272,7 +278,7 @@ export class ServerManager {
         containers_count=@containers_count,
         updated_at=@updated_at
       WHERE id=@id
-    `
+    `,
       )
       .run(merged);
 
@@ -347,7 +353,8 @@ export class ServerManager {
    */
   getBootstrapScript(serverId) {
     const srv = this.getServer(serverId);
-    const token = this.db.prepare("SELECT token FROM tokens LIMIT 1").get()?.token || "hosterax_node_token";
+    const token =
+      this.db.prepare("SELECT token FROM tokens LIMIT 1").get()?.token || "hosterax_node_token";
 
     return `#!/usr/bin/env bash
 # HosteraX Autonomous Node Provisioner

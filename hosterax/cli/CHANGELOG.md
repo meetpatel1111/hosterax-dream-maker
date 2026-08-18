@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.0] - 2026-08-18
 
 ### Added
+
 - **Universal Model Context Protocol (MCP) Support**:
   - Full JSON-RPC 2.0 stdio transport (`htx mcp:stdio`) for Cursor IDE, Claude Desktop, Devin, and Windsurf.
   - Exposes 34 DevOps tools for container deployment, database provisioning, S3 backup sync, DNS/SSL verification, self-healing diagnostics, and cron scheduling.
@@ -22,4 +23,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Database provisioning (`htx db:new`), point-in-time snapshots (`htx backup:new`), remote S3 sync (`htx s3:sync`), and 2,502+ app catalog search (`htx catalog:search`).
 
 ## [0.1.0] - 2026-08-15
+
 - Initial release of HosteraX terminal interface and basic daemon communication.

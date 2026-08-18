@@ -14,7 +14,9 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "hosterax": "node ./hosterax/cli/src/cli.mjs",
-    "htx": "node ./hosterax/cli/src/cli.mjs"
+    "htx": "node ./hosterax/cli/src/cli.mjs",
+    "test:engine": "node --test hosterax/engine/test/engine.test.mjs",
+    "catalog:sync": "node ./scripts/sync-catalog.mjs"
   },
   "bin": {
     "hosterax": "./hosterax/cli/src/cli.mjs",

@@ -143,7 +143,7 @@ export class CronManager {
           `
         SELECT * FROM cron_jobs
         WHERE enabled=1 AND next_run_at IS NOT NULL AND next_run_at <= ?
-      `
+      `,
         )
         .all(now);
 
@@ -187,8 +187,12 @@ export class CronManager {
       command: data.command || "",
       http_url: data.http_url || "",
       http_method: data.http_method || "GET",
-      http_headers_json: typeof data.http_headers === "object" ? JSON.stringify(data.http_headers) : data.http_headers_json || "{}",
-      target_container: data.target_container || (data.project_name ? `hx_${data.project_name}` : null),
+      http_headers_json:
+        typeof data.http_headers === "object"
+          ? JSON.stringify(data.http_headers)
+          : data.http_headers_json || "{}",
+      target_container:
+        data.target_container || (data.project_name ? `hx_${data.project_name}` : null),
       timeout_seconds: data.timeout_seconds ? Number(data.timeout_seconds) : 300,
       max_retries: data.max_retries ? Number(data.max_retries) : 0,
       enabled: data.enabled !== undefined ? (data.enabled ? 1 : 0) : 1,
@@ -212,7 +216,7 @@ export class CronManager {
         @command, @http_url, @http_method, @http_headers_json, @target_container,
         @timeout_seconds, @max_retries, @enabled, @next_run_at, @created_at, @updated_at
       )
-    `
+    `,
       )
       .run(record);
 
@@ -224,8 +228,10 @@ export class CronManager {
     if (!job) throw new Error(`Job "${id}" not found.`);
 
     const now = Date.now();
-    const cronExpr = updates.cron_expression !== undefined ? updates.cron_expression.trim() : job.cron_expression;
-    const nextRun = updates.cron_expression !== undefined ? calculateNextCronRun(cronExpr, now) : job.next_run_at;
+    const cronExpr =
+      updates.cron_expression !== undefined ? updates.cron_expression.trim() : job.cron_expression;
+    const nextRun =
+      updates.cron_expression !== undefined ? calculateNextCronRun(cronExpr, now) : job.next_run_at;
 
     const merged = {
       ...job,
@@ -255,7 +261,7 @@ export class CronManager {
         next_run_at=@next_run_at,
         updated_at=@updated_at
       WHERE id=@id
-    `
+    `,
       )
       .run(merged);
 
@@ -300,7 +306,7 @@ export class CronManager {
       ) VALUES (
         ?, ?, ?, ?, ?, 'running', ?
       )
-    `
+    `,
       )
       .run(runId, job.id, job.name, job.project_name, triggerType, startedAt);
 
@@ -357,7 +363,7 @@ export class CronManager {
         UPDATE job_runs SET
           status=?, finished_at=?, duration_ms=?, exit_code=?, stdout=?, stderr=?, error_message=?
         WHERE id=?
-      `
+      `,
         )
         .run(status, finishedAt, durationMs, exitCode, stdout, stderr, errorMessage, runId);
 
@@ -367,7 +373,7 @@ export class CronManager {
         UPDATE cron_jobs SET
           last_run_at=?, last_status=?, last_duration_ms=?
         WHERE id=?
-      `
+      `,
         )
         .run(startedAt, status, durationMs, id);
     }
@@ -458,7 +464,7 @@ export class CronManager {
               bodyText: body.toString("utf8"),
             });
           });
-        }
+        },
       );
 
       req.on("error", reject);

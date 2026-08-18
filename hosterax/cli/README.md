@@ -24,6 +24,7 @@ Provides both `hosterax` and the shorthand command `htx`.
 ## 🔌 Use as MCP Server for Cursor, Claude Desktop & Devin
 
 ### 1. Cursor IDE (`.cursor/mcp.json`):
+
 ```json
 {
   "mcpServers": {
@@ -35,6 +36,7 @@ Provides both `hosterax` and the shorthand command `htx`.
 ```
 
 ### 2. Claude Desktop (`claude_desktop_config.json`):
+
 ```json
 {
   "mcpServers": {
@@ -81,6 +83,6 @@ htx mcp:stdio                         # Run stdio MCP transport
 ---
 
 ## 📄 License
+
 Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
 © 2026 HosteraX Contributors
-

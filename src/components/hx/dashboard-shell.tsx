@@ -84,7 +84,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                   ))}
                 </select>
               </div>
-              <span className="text-[10px] font-mono text-muted-foreground uppercase">{currentOrg?.plan || "Pro"}</span>
+              <span className="text-[10px] font-mono text-muted-foreground uppercase">
+                {currentOrg?.plan || "Pro"}
+              </span>
             </div>
           )}
         </div>

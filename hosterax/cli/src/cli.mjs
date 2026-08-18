@@ -116,7 +116,10 @@ try {
     // ────────── Workflow & Init ──────────
     case "init": {
       const cwd = process.cwd();
-      const name = path.basename(cwd).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      const name = path
+        .basename(cwd)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-");
       let stack = "node";
       let buildCmd = "";
       let startCmd = "";
@@ -125,14 +128,32 @@ try {
       if (fs.existsSync(path.join(cwd, "package.json"))) {
         try {
           const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
-          if (pkg.dependencies?.next) { stack = "nextjs"; buildCmd = "npm run build"; startCmd = "npm start"; }
-          else if (pkg.dependencies?.vite || pkg.devDependencies?.vite) { stack = "vite"; buildCmd = "npm run build"; startCmd = "serve-static:dist"; }
-          else if (pkg.dependencies?.express || pkg.dependencies?.fastify) { stack = "node"; startCmd = "node index.js"; }
+          if (pkg.dependencies?.next) {
+            stack = "nextjs";
+            buildCmd = "npm run build";
+            startCmd = "npm start";
+          } else if (pkg.dependencies?.vite || pkg.devDependencies?.vite) {
+            stack = "vite";
+            buildCmd = "npm run build";
+            startCmd = "serve-static:dist";
+          } else if (pkg.dependencies?.express || pkg.dependencies?.fastify) {
+            stack = "node";
+            startCmd = "node index.js";
+          }
         } catch {}
-      } else if (fs.existsSync(path.join(cwd, "requirements.txt")) || fs.existsSync(path.join(cwd, "pyproject.toml"))) {
+      } else if (
+        fs.existsSync(path.join(cwd, "requirements.txt")) ||
+        fs.existsSync(path.join(cwd, "pyproject.toml"))
+      ) {
         stack = "python";
-        if (fs.existsSync(path.join(cwd, "manage.py"))) { stack = "django"; startCmd = "python manage.py runserver 0.0.0.0:8000"; port = 8000; }
-        else { startCmd = "uvicorn main:app --host 0.0.0.0 --port 8000"; port = 8000; }
+        if (fs.existsSync(path.join(cwd, "manage.py"))) {
+          stack = "django";
+          startCmd = "python manage.py runserver 0.0.0.0:8000";
+          port = 8000;
+        } else {
+          startCmd = "uvicorn main:app --host 0.0.0.0 --port 8000";
+          port = 8000;
+        }
       } else if (fs.existsSync(path.join(cwd, "go.mod"))) {
         stack = "go";
         buildCmd = "go build -o app .";
@@ -173,7 +194,9 @@ try {
       try {
         const health = await (await fetch(`http://localhost:${port}/health`)).json();
         if (health.ok) {
-          console.log(`✓ Engine already running on http://localhost:${port} (version ${health.version})`);
+          console.log(
+            `✓ Engine already running on http://localhost:${port} (version ${health.version})`,
+          );
           break;
         }
       } catch {}
@@ -248,7 +271,14 @@ try {
       const start = flag("start") || "";
       const port = flag("port") ? Number(flag("port")) : undefined;
       const target = flag("target") || "docker";
-      await api("POST", "/api/projects", { name, source, buildCmd: build, startCmd: start, port, target });
+      await api("POST", "/api/projects", {
+        name,
+        source,
+        buildCmd: build,
+        startCmd: start,
+        port,
+        target,
+      });
       console.log("✓ created project", name);
       break;
     }
@@ -618,7 +648,11 @@ try {
         process.exit(1);
       }
       const r = await api("POST", `/api/domains/${domId}/verify`);
-      console.log(r.verified ? `✓ Domain ${r.hostname} verified.` : `✗ Verification pending for ${r.hostname}.`);
+      console.log(
+        r.verified
+          ? `✓ Domain ${r.hostname} verified.`
+          : `✗ Verification pending for ${r.hostname}.`,
+      );
       break;
     }
 
@@ -679,7 +713,9 @@ try {
         process.exit(1);
       }
       const r = await api("POST", `/api/servers/${srvId}/test`);
-      console.log(r.ok ? `✓ Server reachable (${r.latency_ms}ms)` : `✗ Connection failed: ${r.error}`);
+      console.log(
+        r.ok ? `✓ Server reachable (${r.latency_ms}ms)` : `✗ Connection failed: ${r.error}`,
+      );
       break;
     }
 
@@ -734,7 +770,7 @@ try {
       const tag = flag("category") || flag("tag");
       const url = `/api/catalog/apps?q=${encodeURIComponent(q)}${tag ? `&tag=${encodeURIComponent(tag)}` : ""}&limit=20`;
       const res = await api("GET", url);
-      const apps = Array.isArray(res) ? res : (res?.apps || []);
+      const apps = Array.isArray(res) ? res : res?.apps || [];
       if (!apps || apps.length === 0) {
         console.log("No matching catalog apps found.");
         break;
@@ -750,7 +786,11 @@ try {
     }
 
     case "mcp:tools": {
-      const rpc = await api("POST", "/api/mcp", { jsonrpc: "2.0", id: "cli_1", method: "tools/list" });
+      const rpc = await api("POST", "/api/mcp", {
+        jsonrpc: "2.0",
+        id: "cli_1",
+        method: "tools/list",
+      });
       const tools = rpc.result?.tools || [];
       console.log(`\nHosteraX Registered MCP Tools (${tools.length} available):`);
       console.table(
@@ -813,8 +853,8 @@ try {
           config: {
             mcpServers: {
               hosterax: {
-                command: "node",
-                args: [cliPath, "mcp:stdio"],
+                command: "npx",
+                args: ["-y", "hosterax", "mcp:stdio"],
               },
             },
           },
@@ -837,7 +877,7 @@ try {
         console.log(JSON.stringify(configs.devin.config, null, 2));
       } else {
         console.log(`\n╭─ HosteraX Model Context Protocol (MCP) Setup ─╮`);
-        console.log(`│ HTTP Endpoint: ${(httpEndpoint).padEnd(31)}│`);
+        console.log(`│ HTTP Endpoint: ${httpEndpoint.padEnd(31)}│`);
         console.log(`╰────────────────────────────────────────────────╯`);
         for (const val of Object.values(configs)) {
           console.log(`\n📌 ${val.name}:`);
@@ -911,7 +951,9 @@ try {
     case "ai": {
       const userPrompt = args[0];
       if (!userPrompt) {
-        console.error("Usage: htx ai \"<your prompt>\" [--provider openai|claude|gemini|ollama] [--model <modelName>] [--key <apiKey>]");
+        console.error(
+          'Usage: htx ai "<your prompt>" [--provider openai|claude|gemini|ollama] [--model <modelName>] [--key <apiKey>]',
+        );
         process.exit(1);
       }
 
@@ -922,7 +964,11 @@ try {
 
       if (!provider) {
         if (apiKey) {
-          provider = apiKey.startsWith("sk-ant") ? "anthropic" : apiKey.startsWith("sk-") ? "openai" : "gemini";
+          provider = apiKey.startsWith("sk-ant")
+            ? "anthropic"
+            : apiKey.startsWith("sk-")
+              ? "openai"
+              : "gemini";
         } else if (process.env.GEMINI_API_KEY || cfg.geminiApiKey) {
           provider = "gemini"; // Default
         } else if (process.env.ANTHROPIC_API_KEY || cfg.anthropicApiKey) {
@@ -937,17 +983,24 @@ try {
       }
 
       // 1. Fetch MCP Tools
-      const rpc = await api("POST", "/api/mcp", { jsonrpc: "2.0", id: "mcp_list", method: "tools/list" });
+      const rpc = await api("POST", "/api/mcp", {
+        jsonrpc: "2.0",
+        id: "mcp_list",
+        method: "tools/list",
+      });
       const mcpTools = rpc.result?.tools || [];
 
       // ── Provider: Anthropic (Claude) ──
       if (provider === "anthropic" || provider === "claude") {
         const key = apiKey || cfg.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
-        const modelName = customModel || process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022";
+        const modelName =
+          customModel || process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022";
         console.log(`\n🤖 HosteraX Autonomous Agent thinking (ANTHROPIC / ${modelName})...`);
 
         if (!key) {
-          console.error("Error: Anthropic API key not found. Set ANTHROPIC_API_KEY or run: htx ai:key <key> --provider anthropic");
+          console.error(
+            "Error: Anthropic API key not found. Set ANTHROPIC_API_KEY or run: htx ai:key <key> --provider anthropic",
+          );
           process.exit(1);
         }
         const claudeTools = mcpTools.map((t) => ({
@@ -970,7 +1023,8 @@ try {
             body: JSON.stringify({
               model: modelName,
               max_tokens: 1024,
-              system: "You are the HosteraX Autonomous Cloud Agent. You have direct access to 34 HosteraX MCP tools to inspect and manage infrastructure.",
+              system:
+                "You are the HosteraX Autonomous Cloud Agent. You have direct access to 34 HosteraX MCP tools to inspect and manage infrastructure.",
               messages,
               tools: claudeTools,
             }),
@@ -1027,12 +1081,23 @@ try {
 
       // ── Provider: OpenAI / Ollama ──
       if (provider === "openai" || provider === "ollama") {
-        const key = apiKey || cfg.openaiApiKey || process.env.OPENAI_API_KEY || (provider === "ollama" ? "ollama" : "");
-        const baseUrl = provider === "ollama"
-          ? (process.env.OLLAMA_HOST || "http://localhost:11434") + "/v1"
-          : (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
-        const modelName = customModel || (provider === "ollama" ? (process.env.OLLAMA_MODEL || "llama3") : (process.env.OPENAI_MODEL || "gpt-4o"));
-        console.log(`\n🤖 HosteraX Autonomous Agent thinking (${provider.toUpperCase()} / ${modelName})...`);
+        const key =
+          apiKey ||
+          cfg.openaiApiKey ||
+          process.env.OPENAI_API_KEY ||
+          (provider === "ollama" ? "ollama" : "");
+        const baseUrl =
+          provider === "ollama"
+            ? (process.env.OLLAMA_HOST || "http://localhost:11434") + "/v1"
+            : process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
+        const modelName =
+          customModel ||
+          (provider === "ollama"
+            ? process.env.OLLAMA_MODEL || "llama3"
+            : process.env.OPENAI_MODEL || "gpt-4o");
+        console.log(
+          `\n🤖 HosteraX Autonomous Agent thinking (${provider.toUpperCase()} / ${modelName})...`,
+        );
 
         const openAiTools = mcpTools.map((t) => ({
           type: "function",
@@ -1063,7 +1128,9 @@ try {
             });
           } catch (fetchErr) {
             if (provider === "ollama") {
-              console.error(`Ollama connection error: Could not reach Ollama at ${baseUrl}. Ensure Ollama is running ('ollama serve').`);
+              console.error(
+                `Ollama connection error: Could not reach Ollama at ${baseUrl}. Ensure Ollama is running ('ollama serve').`,
+              );
             } else {
               console.error(`Network error: ${fetchErr.message}`);
             }
@@ -1123,7 +1190,9 @@ try {
       const geminiKey = apiKey || cfg.geminiApiKey || process.env.GEMINI_API_KEY;
       if (!geminiKey) {
         console.error("Error: No AI provider API key found.");
-        console.error("Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY, or run: htx ai:key <key>");
+        console.error(
+          "Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY, or run: htx ai:key <key>",
+        );
         process.exit(1);
       }
 
@@ -1165,7 +1234,9 @@ try {
           const err = await res.json().catch(() => ({}));
           if (res.status === 429) {
             if (++rateLimitRetries > 2) {
-              console.error("Gemini API Rate Limit: Quota currently exhausted. Please try again in 1 minute or use a paid/custom API key.");
+              console.error(
+                "Gemini API Rate Limit: Quota currently exhausted. Please try again in 1 minute or use a paid/custom API key.",
+              );
               break;
             }
             const match = err.error?.message?.match(/retry in ([\d\.]+)s/i);

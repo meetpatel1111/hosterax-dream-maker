@@ -17,7 +17,12 @@ export class S3StorageClient {
     this.accessKeyId = (config.accessKeyId || "").trim();
     this.secretAccessKey = (config.secretAccessKey || "").trim();
     this.prefix = (config.prefix || "hosterax-backups").replace(/^\/+|\/+$/g, "");
-    this.forcePathStyle = Boolean(config.forcePathStyle || config.endpoint?.includes("localhost") || config.endpoint?.includes("127.0.0.1") || config.endpoint?.includes("minio"));
+    this.forcePathStyle = Boolean(
+      config.forcePathStyle ||
+      config.endpoint?.includes("localhost") ||
+      config.endpoint?.includes("127.0.0.1") ||
+      config.endpoint?.includes("minio"),
+    );
   }
 
   isConfigured() {
@@ -81,7 +86,10 @@ export class S3StorageClient {
     ].join("\n");
 
     // Signing Key Derivation
-    const kDate = crypto.createHmac("sha256", `AWS4${this.secretAccessKey}`).update(dateStamp).digest();
+    const kDate = crypto
+      .createHmac("sha256", `AWS4${this.secretAccessKey}`)
+      .update(dateStamp)
+      .digest();
     const kRegion = crypto.createHmac("sha256", kDate).update(this.region).digest();
     const kService = crypto.createHmac("sha256", kRegion).update("s3").digest();
     const kSigning = crypto.createHmac("sha256", kService).update("aws4_request").digest();
@@ -137,7 +145,11 @@ export class S3StorageClient {
    */
   async testConnection() {
     if (!this.isConfigured()) {
-      return { ok: false, message: "S3 storage is not fully configured (bucket, accessKeyId, secretAccessKey required)" };
+      return {
+        ok: false,
+        message:
+          "S3 storage is not fully configured (bucket, accessKeyId, secretAccessKey required)",
+      };
     }
     try {
       const res = await this.request({
@@ -147,10 +159,17 @@ export class S3StorageClient {
       });
 
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        return { ok: true, message: `Successfully connected to S3 bucket '${this.bucket}' (${this.region})` };
+        return {
+          ok: true,
+          message: `Successfully connected to S3 bucket '${this.bucket}' (${this.region})`,
+        };
       }
       if (res.statusCode === 403) {
-        return { ok: false, message: "Authentication failed (403 Forbidden). Check Access Key and Secret Key permissions." };
+        return {
+          ok: false,
+          message:
+            "Authentication failed (403 Forbidden). Check Access Key and Secret Key permissions.",
+        };
       }
       if (res.statusCode === 404) {
         return { ok: false, message: `Bucket '${this.bucket}' not found (404 Not Found).` };

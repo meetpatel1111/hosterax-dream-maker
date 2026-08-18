@@ -67,10 +67,13 @@ function createTray() {
     const contextMenu = Menu.buildFromTemplate([
       { label: "HosteraX Control Plane", click: () => mainWindow && mainWindow.show() },
       { type: "separator" },
-      { label: "Restart Engine Daemon", click: () => {
-        if (engineProcess) engineProcess.kill();
-        startEngineDaemon();
-      }},
+      {
+        label: "Restart Engine Daemon",
+        click: () => {
+          if (engineProcess) engineProcess.kill();
+          startEngineDaemon();
+        },
+      },
       { label: "Quit HosteraX", click: () => app.quit() },
     ]);
     tray.setToolTip("HosteraX Control Plane");

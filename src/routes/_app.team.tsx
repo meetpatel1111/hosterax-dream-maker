@@ -47,7 +47,8 @@ function TeamPage() {
   const { data: orgs = [], refetch: refetchOrgs } = useOrganizations();
   const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
 
-  const activeOrgSummary = orgs.find((o) => (selectedOrgId ? o.id === selectedOrgId : true)) || orgs[0];
+  const activeOrgSummary =
+    orgs.find((o) => (selectedOrgId ? o.id === selectedOrgId : true)) || orgs[0];
   const { data: activeOrg, refetch: refetchActiveOrg } = useOrganization(activeOrgSummary?.id);
 
   // Modals
@@ -127,7 +128,10 @@ function TeamPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/50 pb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-mono">
+            <Badge
+              variant="outline"
+              className="bg-primary/10 text-primary border-primary/20 text-xs font-mono"
+            >
               <Users className="w-3 h-3 mr-1" /> Multi-Tenant Workspaces
             </Badge>
             <span className="text-xs text-muted-foreground">Phase 3 Parity</span>
@@ -136,7 +140,8 @@ function TeamPage() {
             Teams & Role-Based Access Control
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Organize applications across isolated enterprise workspaces and enforce granular permissions (Owner, Admin, Member, Viewer).
+            Organize applications across isolated enterprise workspaces and enforce granular
+            permissions (Owner, Admin, Member, Viewer).
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -144,10 +149,14 @@ function TeamPage() {
             <Building className="w-4 h-4 mr-2" />
             New Organization
           </Button>
-          <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm" onClick={() => {
-            setGeneratedInviteLink(null);
-            setInviteOpen(true);
-          }}>
+          <Button
+            size="sm"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+            onClick={() => {
+              setGeneratedInviteLink(null);
+              setInviteOpen(true);
+            }}
+          >
             <Plus className="w-4 h-4 mr-2" />
             Invite Member
           </Button>
@@ -158,25 +167,39 @@ function TeamPage() {
       {activeOrg && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="rounded-xl border bg-card/60 p-4 shadow-sm space-y-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Organization</span>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Active Organization
+            </span>
             <div className="flex items-center justify-between">
               <div className="font-bold text-base text-foreground">{activeOrg.name}</div>
-              <Badge variant="secondary" className="text-[10px] font-mono capitalize">{activeOrg.plan}</Badge>
+              <Badge variant="secondary" className="text-[10px] font-mono capitalize">
+                {activeOrg.plan}
+              </Badge>
             </div>
           </div>
 
           <div className="rounded-xl border bg-card/60 p-4 shadow-sm space-y-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Members</span>
-            <div className="font-bold text-2xl font-mono text-foreground">{activeOrg.members?.length || 1}</div>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Total Members
+            </span>
+            <div className="font-bold text-2xl font-mono text-foreground">
+              {activeOrg.members?.length || 1}
+            </div>
           </div>
 
           <div className="rounded-xl border bg-card/60 p-4 shadow-sm space-y-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Pending Invitations</span>
-            <div className="font-bold text-2xl font-mono text-sky-400">{activeOrg.invites?.length || 0}</div>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Pending Invitations
+            </span>
+            <div className="font-bold text-2xl font-mono text-sky-400">
+              {activeOrg.invites?.length || 0}
+            </div>
           </div>
 
           <div className="rounded-xl border bg-card/60 p-4 shadow-sm space-y-2">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">RBAC Security Mode</span>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              RBAC Security Mode
+            </span>
             <div className="font-bold text-sm text-emerald-400 flex items-center gap-1.5 pt-1">
               <Lock className="w-4 h-4" /> Granular Roles Active
             </div>
@@ -187,7 +210,9 @@ function TeamPage() {
       {/* Members & Invitations Table */}
       <div className="rounded-xl border bg-card/60 shadow-sm overflow-hidden space-y-0">
         <div className="p-4 border-b border-border/40 flex items-center justify-between">
-          <h3 className="text-base font-semibold">Team Members ({activeOrg?.members?.length || 0})</h3>
+          <h3 className="text-base font-semibold">
+            Team Members ({activeOrg?.members?.length || 0})
+          </h3>
           {orgs.length > 1 && (
             <select
               value={activeOrg?.id}
@@ -205,7 +230,10 @@ function TeamPage() {
 
         <div className="divide-y divide-border/30">
           {activeOrg?.members?.map((member) => (
-            <div key={member.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/20 transition-colors">
+            <div
+              key={member.id}
+              className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-muted/20 transition-colors"
+            >
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary font-bold text-sm">
                   {member.user_name.slice(0, 2).toUpperCase()}
@@ -214,7 +242,12 @@ function TeamPage() {
                   <div className="font-semibold text-sm text-foreground flex items-center gap-2">
                     {member.user_name}
                     {member.role === "owner" && (
-                      <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20">Owner</Badge>
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-primary/10 text-primary border-primary/20"
+                      >
+                        Owner
+                      </Badge>
                     )}
                   </div>
                   <div className="text-xs text-muted-foreground font-mono">{member.user_email}</div>
@@ -254,7 +287,9 @@ function TeamPage() {
       {(activeOrg?.invites?.length ?? 0) > 0 && (
         <div className="rounded-xl border bg-card/60 shadow-sm overflow-hidden">
           <div className="p-4 border-b border-border/40">
-            <h3 className="text-sm font-semibold">Pending Invitations ({activeOrg?.invites?.length})</h3>
+            <h3 className="text-sm font-semibold">
+              Pending Invitations ({activeOrg?.invites?.length})
+            </h3>
           </div>
           <div className="divide-y divide-border/30">
             {activeOrg?.invites?.map((inv) => (
@@ -263,7 +298,9 @@ function TeamPage() {
                   <span className="font-medium">{inv.email}</span>
                   <span className="text-muted-foreground font-mono ml-2">Role: {inv.role}</span>
                 </div>
-                <Badge variant="outline" className="text-[10px]">Expires in 7 days</Badge>
+                <Badge variant="outline" className="text-[10px]">
+                  Expires in 7 days
+                </Badge>
               </div>
             ))}
           </div>
@@ -288,7 +325,9 @@ function TeamPage() {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOrgOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setCreateOrgOpen(false)}>
+              Cancel
+            </Button>
             <Button onClick={handleCreateOrg}>Create Organization</Button>
           </DialogFooter>
         </DialogContent>
@@ -313,7 +352,11 @@ function TeamPage() {
               <div className="flex items-center gap-2">
                 <Input readOnly value={generatedInviteLink} className="font-mono text-xs" />
                 <Button size="sm" onClick={handleCopyInvite}>
-                  {copiedLink ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                  {copiedLink ? (
+                    <Check className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <Copy className="w-4 h-4" />
+                  )}
                 </Button>
               </div>
             </div>
@@ -344,8 +387,12 @@ function TeamPage() {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setInviteOpen(false)}>Close</Button>
-            {!generatedInviteLink && <Button onClick={handleInviteMember}>Generate Invite Link</Button>}
+            <Button variant="outline" onClick={() => setInviteOpen(false)}>
+              Close
+            </Button>
+            {!generatedInviteLink && (
+              <Button onClick={handleInviteMember}>Generate Invite Link</Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

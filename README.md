@@ -23,16 +23,16 @@
 
 ## 🌟 Key Features
 
-* 🤖 **Universal Model Context Protocol (MCP) Server**: Exposes **34 enterprise-grade DevOps tools** over JSON-RPC 2.0 (`2024-11-05` spec) supporting both HTTP (`/api/mcp`) and stdio (`htx mcp:stdio`). Compatible with **Cursor**, **Claude Desktop**, **Devin**, **Windsurf**, and **VS Code (Cline / Roo Code)**.
-* 🧠 **Multi-Provider AI Copilot (`htx ai`)**: Autonomous infrastructure assistant supporting **Google Gemini** (default: `gemini-3.5-flash`), **Anthropic Claude** (`claude-3-5-sonnet`), **OpenAI** (`gpt-4o`), and **Ollama** (offline local LLMs) with parallel tool execution and rate-limit backoff.
-* 📦 **1-Click Open-Source App Store**: Instant search and zero-config deployment across **2,502+ curated open-source self-hosted applications** from Awesome-Selfhosted & Selfh.st (Ghost, Nextcloud, Plausible, Vaultwarden, Grafana, N8N, etc.).
-* 🔄 **Zero-Downtime Blue/Green Deployments**: Automated builds from Git repositories, Dockerfiles, or Docker Hub images with port conflict resolution and health check polling.
-* 🛡️ **Autonomous Self-Healing Supervisor**: Automated error diagnostics on failed containers with 1-click byte-for-byte snapshot rollbacks.
-* 🗄️ **Managed Databases & Instant Backups**: 1-click provisioning of PostgreSQL, MySQL, MongoDB, Redis, ClickHouse, and MariaDB with SHA-256 verified point-in-time snapshots and automated sync to **AWS S3 / Cloudflare R2**.
-* 🌐 **Edge Proxy & Automated SSL**: Dynamic routing with OpenResty Lua & Caddy 2, custom domains, wildcard SSL, and Magic DNS integration (`nip.io`, `sslip.io`).
-* ✉️ **Self-Hosted Email Stack**: Inbound/outbound email management with DKIM, SPF, DMARC validation, mailboxes, forwarding aliases, and external SMTP relay chaining.
-* 🖥️ **Multi-Node Fleet Management**: Add and orchestrate remote servers over SSH with live CPU/RAM load telemetry and latency pings.
-* ⏱️ **Distributed Cron Engine**: Schedule recurring tasks with human-readable crontab schedules, audit execution logs, and manual triggers.
+- 🤖 **Universal Model Context Protocol (MCP) Server**: Exposes **34 enterprise-grade DevOps tools** over JSON-RPC 2.0 (`2024-11-05` spec) supporting both HTTP (`/api/mcp`) and stdio (`htx mcp:stdio`). Compatible with **Cursor**, **Claude Desktop**, **Devin**, **Windsurf**, and **VS Code (Cline / Roo Code)**.
+- 🧠 **Multi-Provider AI Copilot (`htx ai`)**: Autonomous infrastructure assistant supporting **Google Gemini** (default: `gemini-3.5-flash`), **Anthropic Claude** (`claude-3-5-sonnet`), **OpenAI** (`gpt-4o`), and **Ollama** (offline local LLMs) with parallel tool execution and rate-limit backoff.
+- 📦 **1-Click Open-Source App Store**: Instant search and zero-config deployment across **2,502+ curated open-source self-hosted applications** from Awesome-Selfhosted & Selfh.st (Ghost, Nextcloud, Plausible, Vaultwarden, Grafana, N8N, etc.).
+- 🔄 **Zero-Downtime Blue/Green Deployments**: Automated builds from Git repositories, Dockerfiles, or Docker Hub images with port conflict resolution and health check polling.
+- 🛡️ **Autonomous Self-Healing Supervisor**: Automated error diagnostics on failed containers with 1-click byte-for-byte snapshot rollbacks.
+- 🗄️ **Managed Databases & Instant Backups**: 1-click provisioning of PostgreSQL, MySQL, MongoDB, Redis, ClickHouse, and MariaDB with SHA-256 verified point-in-time snapshots and automated sync to **AWS S3 / Cloudflare R2**.
+- 🌐 **Edge Proxy & Automated SSL**: Dynamic routing with OpenResty Lua & Caddy 2, custom domains, wildcard SSL, and Magic DNS integration (`nip.io`, `sslip.io`).
+- ✉️ **Self-Hosted Email Stack**: Inbound/outbound email management with DKIM, SPF, DMARC validation, mailboxes, forwarding aliases, and external SMTP relay chaining.
+- 🖥️ **Multi-Node Fleet Management**: Add and orchestrate remote servers over SSH with live CPU/RAM load telemetry and latency pings.
+- ⏱️ **Distributed Cron Engine**: Schedule recurring tasks with human-readable crontab schedules, audit execution logs, and manual triggers.
 
 ---
 
@@ -62,10 +62,12 @@
 ## 🚀 Quick Start
 
 ### 1. Prerequisites
+
 - **Node.js**: `v20.x` or higher
 - **Docker Engine**: Installed and running
 
 ### 2. Installation
+
 ```bash
 # Clone the repository
 git clone https://github.com/meetpatel1111/hosterax-dream-maker.git
@@ -79,6 +81,7 @@ cd hosterax/cli && npm link && cd ../..
 ```
 
 ### 3. Start HosteraX
+
 ```bash
 # Terminal 1: Start the Backend Engine Daemon (Port 7777)
 node hosterax/engine/src/index.mjs
@@ -132,6 +135,7 @@ htx mcp:stdio                            # Start JSON-RPC 2.0 stdio transport
 HosteraX can be controlled directly by AI assistants inside your favorite IDE:
 
 ### 1. Cursor IDE (`.cursor/mcp.json` or Settings → MCP)
+
 ```json
 {
   "mcpServers": {
@@ -143,21 +147,20 @@ HosteraX can be controlled directly by AI assistants inside your favorite IDE:
 ```
 
 ### 2. Claude Desktop (`claude_desktop_config.json`)
+
 ```json
 {
   "mcpServers": {
     "hosterax": {
-      "command": "node",
-      "args": [
-        "C:\\Users\\pmeet\\Downloads\\hosterax-dream-maker\\hosterax\\cli\\src\\cli.mjs",
-        "mcp:stdio"
-      ]
+      "command": "npx",
+      "args": ["-y", "hosterax", "mcp:stdio"]
     }
   }
 }
 ```
 
 ### 3. Devin / Windsurf / VS Code (Cline / Roo Code)
+
 - **Endpoint**: `http://localhost:7777/api/mcp`
 - **Transport**: HTTP or stdio (`htx mcp:stdio`)
 

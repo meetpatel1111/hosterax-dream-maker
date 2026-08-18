@@ -31,7 +31,9 @@ export class WebhookManager {
   }
 
   getProjectWebhookConfig(projectName) {
-    const row = this.db.prepare("SELECT * FROM webhook_secrets WHERE project_name=?").get(projectName);
+    const row = this.db
+      .prepare("SELECT * FROM webhook_secrets WHERE project_name=?")
+      .get(projectName);
     if (row) return row;
 
     const secret = crypto.randomBytes(20).toString("hex");
@@ -43,7 +45,7 @@ export class WebhookManager {
         `
       INSERT INTO webhook_secrets (project_name, secret, webhook_token, auto_deploy_push, auto_deploy_pr, tracked_branch, created_at, updated_at)
       VALUES (?, ?, ?, 1, 1, 'main', ?, ?)
-    `
+    `,
       )
       .run(projectName, secret, webhookToken, now, now);
 
@@ -65,7 +67,7 @@ export class WebhookManager {
         tracked_branch=@tracked_branch,
         updated_at=@updated_at
       WHERE project_name=@project_name
-    `
+    `,
       )
       .run(merged);
 
@@ -112,7 +114,10 @@ export class WebhookManager {
     const whConfig = this.getProjectWebhookConfig(project.name);
 
     // Optional signature check if signature header provided
-    if (signatureHeader && !this.verifyGitHubSignature(rawBodyText, signatureHeader, whConfig.secret)) {
+    if (
+      signatureHeader &&
+      !this.verifyGitHubSignature(rawBodyText, signatureHeader, whConfig.secret)
+    ) {
       throw new Error("Invalid GitHub webhook signature (HMAC-SHA256 mismatch).");
     }
 
@@ -214,7 +219,7 @@ export class WebhookManager {
         commit_sha=excluded.commit_sha,
         status='live',
         updated_at=excluded.updated_at
-    `
+    `,
       )
       .run({
         id,
@@ -279,7 +284,9 @@ export class WebhookManager {
     } catch {}
 
     this.db
-      .prepare("UPDATE pr_previews SET status='stopped', updated_at=? WHERE project_name=? AND pr_number=?")
+      .prepare(
+        "UPDATE pr_previews SET status='stopped', updated_at=? WHERE project_name=? AND pr_number=?",
+      )
       .run(Date.now(), projectName, prNumber);
 
     return {

@@ -30,13 +30,21 @@ function run(cmd, args, { timeout = 180000 } = {}) {
       return resolve({ code: -1, out: "", err: e.message });
     }
     const t = setTimeout(() => {
-      try { child.kill("SIGKILL"); } catch {}
+      try {
+        child.kill("SIGKILL");
+      } catch {}
       resolve({ code: -2, out, err: err + `\n[timeout after ${timeout}ms]` });
     }, timeout);
     child.stdout?.on("data", (d) => (out += d.toString()));
     child.stderr?.on("data", (d) => (err += d.toString()));
-    child.on("error", (e) => { clearTimeout(t); resolve({ code: -1, out, err: e.message }); });
-    child.on("close", (code) => { clearTimeout(t); resolve({ code, out, err }); });
+    child.on("error", (e) => {
+      clearTimeout(t);
+      resolve({ code: -1, out, err: e.message });
+    });
+    child.on("close", (code) => {
+      clearTimeout(t);
+      resolve({ code, out, err });
+    });
   });
 }
 
@@ -52,7 +60,6 @@ export class TLSManager {
     fs.mkdirSync(this.acmeWebrootDir, { recursive: true });
     this.ensureSchema();
   }
-
 
   ensureSchema() {
     try {
@@ -312,15 +319,31 @@ export class TLSManager {
     fs.writeFileSync(
       conf,
       `[req]\ndistinguished_name=dn\nx509_extensions=v3\nprompt=no\n[dn]\nCN=${hostname}\nO=HosteraX Bootstrap\n[v3]\nsubjectAltName=DNS:${hostname}\nbasicConstraints=critical,CA:FALSE\nkeyUsage=digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\n`,
-      "utf8"
+      "utf8",
     );
 
     const r = await run(
       "openssl",
-      ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "14", "-keyout", p.localKey, "-out", p.localCert, "-config", conf],
-      { timeout: 30000 }
+      [
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-days",
+        "14",
+        "-keyout",
+        p.localKey,
+        "-out",
+        p.localCert,
+        "-config",
+        conf,
+      ],
+      { timeout: 30000 },
     );
-    try { fs.unlinkSync(conf); } catch {}
+    try {
+      fs.unlinkSync(conf);
+    } catch {}
 
     if (r.code !== 0 || !fs.existsSync(p.localCert)) {
       return { ok: false, created: false, error: r.err?.trim() || "openssl unavailable", ...p };
@@ -363,15 +386,29 @@ export class TLSManager {
       r = await run(
         "docker",
         [
-          "run", "--rm", "--network", "host",
-          "-v", `${this.letsencryptDir}:/etc/letsencrypt`,
+          "run",
+          "--rm",
+          "--network",
+          "host",
+          "-v",
+          `${this.letsencryptDir}:/etc/letsencrypt`,
           "certbot/certbot:latest",
-          ...args.filter((a, i, arr) => !["--config-dir", "--work-dir", "--logs-dir"].includes(arr[i - 1]) && !["--config-dir", "--work-dir", "--logs-dir"].includes(a)),
+          ...args.filter(
+            (a, i, arr) =>
+              !["--config-dir", "--work-dir", "--logs-dir"].includes(arr[i - 1]) &&
+              !["--config-dir", "--work-dir", "--logs-dir"].includes(a),
+          ),
         ],
-        { timeout: 300000 }
+        { timeout: 300000 },
       );
     }
-    return { ok: r.code === 0, code: r.code, stdout: r.out, stderr: r.err, command: `certbot ${args.join(" ")}` };
+    return {
+      ok: r.code === 0,
+      code: r.code,
+      stdout: r.out,
+      stderr: r.err,
+      command: `certbot ${args.join(" ")}`,
+    };
   }
 
   /**
@@ -393,7 +430,9 @@ export class TLSManager {
       hostname === "localhost" ||
       hostname === "127.0.0.1";
 
-    this.db.prepare("UPDATE domains SET ssl_status='provisioning', challenge_type='http-01' WHERE id=?").run(domainId);
+    this.db
+      .prepare("UPDATE domains SET ssl_status='provisioning', challenge_type='http-01' WHERE id=?")
+      .run(domainId);
 
     // Always have a handshake-capable certificate first.
     const bootstrap = await this.ensureBootstrapCertificate(hostname);
@@ -402,12 +441,13 @@ export class TLSManager {
       const p = this.certPaths(hostname);
       let inspect = { ok: false };
       try {
-        if (p.hasAcme || p.hasLocal) inspect = this.inspectCertificate(fs.readFileSync(p.cert, "utf8"));
+        if (p.hasAcme || p.hasLocal)
+          inspect = this.inspectCertificate(fs.readFileSync(p.cert, "utf8"));
       } catch {}
       const expiresAt = inspect.ok ? inspect.validTo : 0;
       this.db
         .prepare(
-          `UPDATE domains SET ssl_status=?, ssl_issuer=?, ssl_expires_at=?, ssl_fingerprint=?, verified=? WHERE id=?`
+          `UPDATE domains SET ssl_status=?, ssl_issuer=?, ssl_expires_at=?, ssl_fingerprint=?, verified=? WHERE id=?`,
         )
         .run(
           status,
@@ -415,7 +455,7 @@ export class TLSManager {
           expiresAt,
           inspect.ok ? inspect.fingerprint256 : "",
           status === "active" ? 1 : dom.verified ? 1 : 0,
-          domainId
+          domainId,
         );
       return {
         ok: status === "active",
@@ -438,7 +478,9 @@ export class TLSManager {
       return finalize(
         "HosteraX Internal CA (self-signed, local/loopback host)",
         bootstrap.ok ? "active" : "failed",
-        { note: "Public CAs cannot validate loopback/Magic DNS hosts; a self-signed certificate is used." }
+        {
+          note: "Public CAs cannot validate loopback/Magic DNS hosts; a self-signed certificate is used.",
+        },
       );
     }
 
@@ -467,7 +509,9 @@ export class TLSManager {
   async renewExpiring(edgeProvider, withinDays = 30, email = "") {
     const cutoff = Date.now() + withinDays * 86400000;
     const rows = this.db
-      .prepare("SELECT id, hostname, ssl_expires_at FROM domains WHERE ssl_status IN ('active','pending')")
+      .prepare(
+        "SELECT id, hostname, ssl_expires_at FROM domains WHERE ssl_status IN ('active','pending')",
+      )
       .all()
       .filter((d) => !d.ssl_expires_at || d.ssl_expires_at < cutoff);
 
@@ -482,4 +526,3 @@ export class TLSManager {
     return { checked: rows.length, results };
   }
 }
-

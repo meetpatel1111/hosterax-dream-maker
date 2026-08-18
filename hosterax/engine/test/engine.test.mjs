@@ -421,7 +421,10 @@ test("multi-tenant organizations and rbac member management", async () => {
   assert.ok(Array.isArray(orgs));
   assert.ok(orgs.length >= 1);
 
-  const newOrg = await api("POST", "/api/orgs", { name: "Acme Cloud Engineering", slug: "acme-cloud" });
+  const newOrg = await api("POST", "/api/orgs", {
+    name: "Acme Cloud Engineering",
+    slug: "acme-cloud",
+  });
   assert.ok(newOrg.id.startsWith("org_"));
   assert.equal(newOrg.name, "Acme Cloud Engineering");
   assert.equal(newOrg.slug, "acme-cloud");
@@ -437,7 +440,9 @@ test("multi-tenant organizations and rbac member management", async () => {
   assert.equal(devMember.role, "member");
 
   // Update role to admin
-  const updateRes = await api("PATCH", `/api/orgs/${newOrg.id}/members/${devMember.id}`, { role: "admin" });
+  const updateRes = await api("PATCH", `/api/orgs/${newOrg.id}/members/${devMember.id}`, {
+    role: "admin",
+  });
   const updatedDev = updateRes.members.find((m) => m.id === devMember.id);
   assert.equal(updatedDev.role, "admin");
 
@@ -561,7 +566,10 @@ test("universal multi-framework zero-config dockerfile generation", async () => 
 
   // 1. Next.js detection
   const { writeFileSync } = await import("node:fs");
-  writeFileSync(join(testDir, "package.json"), JSON.stringify({ dependencies: { next: "14.0.0" } }));
+  writeFileSync(
+    join(testDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "14.0.0" } }),
+  );
   const nextDf = generateUniversalDockerfile(testDir);
   assert.ok(nextDf.includes("Next.js"));
   assert.ok(nextDf.includes("NEXT_TELEMETRY_DISABLED"));
@@ -638,4 +646,3 @@ test("project health_path configuration and persistence", async () => {
   // Clean up
   await api("DELETE", `/api/projects/${name}`);
 });
-

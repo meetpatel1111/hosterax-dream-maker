@@ -120,7 +120,8 @@ export default function JobsPage() {
   const activeJobs = jobs.filter((j) => j.enabled).length;
   const totalExecutions = allRuns.length;
   const successfulRuns = allRuns.filter((r) => r.status === "success").length;
-  const successRate = totalExecutions > 0 ? Math.round((successfulRuns / totalExecutions) * 100) : 100;
+  const successRate =
+    totalExecutions > 0 ? Math.round((successfulRuns / totalExecutions) * 100) : 100;
 
   function openCreateModal() {
     setSelectedJob(null);
@@ -188,7 +189,9 @@ export default function JobsPage() {
       if (res.status === "success") {
         toast.success(`Job "${job.name}" executed successfully in ${res.duration_ms}ms`);
       } else {
-        toast.error(`Job "${job.name}" execution failed: ${res.error_message || "Non-zero exit code"}`);
+        toast.error(
+          `Job "${job.name}" execution failed: ${res.error_message || "Non-zero exit code"}`,
+        );
       }
       refetchJobs();
       refetchRuns();
@@ -229,7 +232,10 @@ export default function JobsPage() {
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/50 pb-6">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-mono">
+            <Badge
+              variant="outline"
+              className="bg-primary/10 text-primary border-primary/20 text-xs font-mono"
+            >
               <Zap className="w-3 h-3 mr-1" /> Phase 1 Parity
             </Badge>
             <span className="text-xs text-muted-foreground">CRON & Scheduled Automation</span>
@@ -238,15 +244,27 @@ export default function JobsPage() {
             Jobs & Scheduled Automation
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Autonomous in-engine 5-field CRON scheduler, container execution runner, HTTP webhooks, and database backup triggers.
+            Autonomous in-engine 5-field CRON scheduler, container execution runner, HTTP webhooks,
+            and database backup triggers.
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button variant="outline" size="sm" onClick={() => { refetchJobs(); refetchRuns(); }}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              refetchJobs();
+              refetchRuns();
+            }}
+          >
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
           </Button>
-          <Button size="sm" className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm" onClick={openCreateModal}>
+          <Button
+            size="sm"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+            onClick={openCreateModal}
+          >
             <Plus className="w-4 h-4 mr-2" />
             Create Scheduled Job
           </Button>
@@ -257,7 +275,9 @@ export default function JobsPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-xl border bg-card/60 p-4 shadow-sm backdrop-blur-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Schedules</span>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Active Schedules
+            </span>
             <Clock className="w-4 h-4 text-primary" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -268,7 +288,9 @@ export default function JobsPage() {
 
         <div className="rounded-xl border bg-card/60 p-4 shadow-sm backdrop-blur-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Executions</span>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Total Executions
+            </span>
             <Play className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -279,7 +301,9 @@ export default function JobsPage() {
 
         <div className="rounded-xl border bg-card/60 p-4 shadow-sm backdrop-blur-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Success Rate</span>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Success Rate
+            </span>
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -290,7 +314,9 @@ export default function JobsPage() {
 
         <div className="rounded-xl border bg-card/60 p-4 shadow-sm backdrop-blur-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Engine Protocol</span>
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Engine Protocol
+            </span>
             <Calendar className="w-4 h-4 text-sky-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
@@ -306,7 +332,9 @@ export default function JobsPage() {
           <div className="flex items-center gap-2">
             <Layers className="w-4 h-4 text-muted-foreground" />
             <h2 className="font-semibold text-sm">Configured Cron Schedules</h2>
-            <Badge variant="secondary" className="text-xs font-mono">{jobs.length}</Badge>
+            <Badge variant="secondary" className="text-xs font-mono">
+              {jobs.length}
+            </Badge>
           </div>
         </div>
 
@@ -315,7 +343,8 @@ export default function JobsPage() {
             <Clock className="w-12 h-12 text-muted-foreground/40 mx-auto mb-3" />
             <h3 className="font-semibold text-base">No Scheduled Jobs Configured</h3>
             <p className="text-sm text-muted-foreground max-w-md mx-auto mt-1 mb-5">
-              Create your first scheduled task to run periodic database maintenance, container scripts, or HTTP webhook triggers.
+              Create your first scheduled task to run periodic database maintenance, container
+              scripts, or HTTP webhook triggers.
             </p>
             <Button onClick={openCreateModal} size="sm">
               <Plus className="w-4 h-4 mr-2" />
@@ -351,47 +380,73 @@ export default function JobsPage() {
                         <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono text-muted-foreground">
                           {job.cron_expression}
                         </code>
-                        <span className="text-xs text-muted-foreground">({humanizeCron(job.cron_expression)})</span>
+                        <span className="text-xs text-muted-foreground">
+                          ({humanizeCron(job.cron_expression)})
+                        </span>
                       </div>
                       {job.project_name && (
-                        <Badge variant="outline" className="mt-1 text-[10px] py-0 px-1.5 font-normal">
+                        <Badge
+                          variant="outline"
+                          className="mt-1 text-[10px] py-0 px-1.5 font-normal"
+                        >
                           {job.project_name}
                         </Badge>
                       )}
                     </td>
                     <td className="py-3 px-4">
                       {job.job_type === "command" && (
-                        <Badge variant="outline" className="bg-sky-500/10 text-sky-400 border-sky-500/20 text-xs">
+                        <Badge
+                          variant="outline"
+                          className="bg-sky-500/10 text-sky-400 border-sky-500/20 text-xs"
+                        >
                           <Terminal className="w-3 h-3 mr-1" /> Exec
                         </Badge>
                       )}
                       {job.job_type === "http" && (
-                        <Badge variant="outline" className="bg-purple-500/10 text-purple-400 border-purple-500/20 text-xs">
+                        <Badge
+                          variant="outline"
+                          className="bg-purple-500/10 text-purple-400 border-purple-500/20 text-xs"
+                        >
                           <Globe className="w-3 h-3 mr-1" /> HTTP
                         </Badge>
                       )}
                       {job.job_type === "backup" && (
-                        <Badge variant="outline" className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs">
+                        <Badge
+                          variant="outline"
+                          className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-xs"
+                        >
                           <Database className="w-3 h-3 mr-1" /> Backup
                         </Badge>
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <div className="max-w-xs truncate font-mono text-xs text-muted-foreground" title={job.command || job.http_url || "Automated DB Snapshot"}>
+                      <div
+                        className="max-w-xs truncate font-mono text-xs text-muted-foreground"
+                        title={job.command || job.http_url || "Automated DB Snapshot"}
+                      >
                         {job.command || job.http_url || "Automated Snapshot"}
                       </div>
                       {job.target_container && (
-                        <span className="text-[10px] text-muted-foreground/70">Container: {job.target_container}</span>
+                        <span className="text-[10px] text-muted-foreground/70">
+                          Container: {job.target_container}
+                        </span>
                       )}
                     </td>
                     <td className="py-3 px-4">
                       {job.last_status ? (
                         <div className="flex items-center gap-1.5">
-                          {job.last_status === "success" && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />}
-                          {job.last_status === "failed" && <XCircle className="w-3.5 h-3.5 text-rose-400" />}
-                          {job.last_status === "running" && <RefreshCw className="w-3.5 h-3.5 text-sky-400 animate-spin" />}
+                          {job.last_status === "success" && (
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                          )}
+                          {job.last_status === "failed" && (
+                            <XCircle className="w-3.5 h-3.5 text-rose-400" />
+                          )}
+                          {job.last_status === "running" && (
+                            <RefreshCw className="w-3.5 h-3.5 text-sky-400 animate-spin" />
+                          )}
                           <span className="text-xs text-muted-foreground">
-                            {formatRelativeTime(job.last_run_at)} {job.last_duration_ms ? `(${job.last_duration_ms}ms)` : ""}
+                            {formatRelativeTime(job.last_run_at)}{" "}
+                            {job.last_duration_ms ? `(${job.last_duration_ms}ms)` : ""}
                           </span>
                         </div>
                       ) : (
@@ -413,7 +468,9 @@ export default function JobsPage() {
                           onClick={() => handleRunNow(job)}
                           title="Run Job Now"
                         >
-                          <Play className={`w-3.5 h-3.5 mr-1 ${executingId === job.id ? "animate-spin" : ""}`} />
+                          <Play
+                            className={`w-3.5 h-3.5 mr-1 ${executingId === job.id ? "animate-spin" : ""}`}
+                          />
                           Run
                         </Button>
                         <Button
@@ -451,7 +508,9 @@ export default function JobsPage() {
           <div className="flex items-center gap-2">
             <Terminal className="w-4 h-4 text-muted-foreground" />
             <h2 className="font-semibold text-sm">Recent Execution Runs</h2>
-            <Badge variant="secondary" className="text-xs font-mono">{allRuns.length}</Badge>
+            <Badge variant="secondary" className="text-xs font-mono">
+              {allRuns.length}
+            </Badge>
           </div>
         </div>
 
@@ -477,7 +536,9 @@ export default function JobsPage() {
                 {allRuns.slice(0, 25).map((run) => (
                   <tr key={run.id} className="hover:bg-muted/20">
                     <td className="py-2 px-4 text-muted-foreground">{run.id}</td>
-                    <td className="py-2 px-4 font-sans font-medium text-foreground">{run.job_name}</td>
+                    <td className="py-2 px-4 font-sans font-medium text-foreground">
+                      {run.job_name}
+                    </td>
                     <td className="py-2 px-4">
                       <span className="text-muted-foreground capitalize">{run.trigger_type}</span>
                     </td>
@@ -498,8 +559,12 @@ export default function JobsPage() {
                         </span>
                       )}
                     </td>
-                    <td className="py-2 px-4 text-muted-foreground">{formatRelativeTime(run.started_at)}</td>
-                    <td className="py-2 px-4 text-muted-foreground">{run.duration_ms !== null ? `${run.duration_ms}ms` : "-"}</td>
+                    <td className="py-2 px-4 text-muted-foreground">
+                      {formatRelativeTime(run.started_at)}
+                    </td>
+                    <td className="py-2 px-4 text-muted-foreground">
+                      {run.duration_ms !== null ? `${run.duration_ms}ms` : "-"}
+                    </td>
                     <td className="py-2 px-4 text-muted-foreground">{run.exit_code ?? 0}</td>
                   </tr>
                 ))}
@@ -515,7 +580,8 @@ export default function JobsPage() {
           <DialogHeader>
             <DialogTitle>{selectedJob ? "Edit Scheduled Job" : "Create Scheduled Job"}</DialogTitle>
             <DialogDescription>
-              Configure autonomous periodic execution schedules inside containers or via HTTP webhooks.
+              Configure autonomous periodic execution schedules inside containers or via HTTP
+              webhooks.
             </DialogDescription>
           </DialogHeader>
 
@@ -663,8 +729,9 @@ export default function JobsPage() {
             {formType === "backup" && (
               <div className="p-3 rounded-lg border bg-muted/20 text-xs text-muted-foreground">
                 <p>
-                  Automatically triggers a point-in-time database snapshot for the associated project on schedule.
-                  Snapshots are verified with SHA-256 and will automatically stream to configured S3/R2 storage.
+                  Automatically triggers a point-in-time database snapshot for the associated
+                  project on schedule. Snapshots are verified with SHA-256 and will automatically
+                  stream to configured S3/R2 storage.
                 </p>
               </div>
             )}
@@ -711,23 +778,38 @@ export default function JobsPage() {
                 <div key={run.id} className="rounded-lg border bg-card p-4 space-y-3">
                   <div className="flex items-center justify-between text-xs border-b border-border/30 pb-2">
                     <div className="flex items-center gap-2">
-                      {run.status === "success" && <Badge className="bg-emerald-500/10 text-emerald-400">Success</Badge>}
+                      {run.status === "success" && (
+                        <Badge className="bg-emerald-500/10 text-emerald-400">Success</Badge>
+                      )}
                       {run.status === "failed" && <Badge variant="destructive">Failed</Badge>}
-                      {run.status === "running" && <Badge className="bg-sky-500/10 text-sky-400">Running</Badge>}
+                      {run.status === "running" && (
+                        <Badge className="bg-sky-500/10 text-sky-400">Running</Badge>
+                      )}
                       <span className="font-mono text-muted-foreground">{run.id}</span>
                     </div>
-                    <span className="text-muted-foreground">{new Date(run.started_at).toLocaleString()}</span>
+                    <span className="text-muted-foreground">
+                      {new Date(run.started_at).toLocaleString()}
+                    </span>
                   </div>
 
                   <div className="grid grid-cols-3 gap-2 text-xs font-mono bg-muted/20 p-2 rounded">
-                    <div>Duration: <span className="text-foreground">{run.duration_ms}ms</span></div>
-                    <div>Exit Code: <span className="text-foreground">{run.exit_code ?? 0}</span></div>
-                    <div>Trigger: <span className="text-foreground capitalize">{run.trigger_type}</span></div>
+                    <div>
+                      Duration: <span className="text-foreground">{run.duration_ms}ms</span>
+                    </div>
+                    <div>
+                      Exit Code: <span className="text-foreground">{run.exit_code ?? 0}</span>
+                    </div>
+                    <div>
+                      Trigger:{" "}
+                      <span className="text-foreground capitalize">{run.trigger_type}</span>
+                    </div>
                   </div>
 
                   {run.stdout && (
                     <div className="space-y-1">
-                      <span className="text-[11px] font-medium text-muted-foreground">Standard Output:</span>
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        Standard Output:
+                      </span>
                       <pre className="p-2.5 rounded bg-muted/40 text-emerald-400 font-mono text-[11px] overflow-x-auto whitespace-pre-wrap max-h-40">
                         {run.stdout}
                       </pre>

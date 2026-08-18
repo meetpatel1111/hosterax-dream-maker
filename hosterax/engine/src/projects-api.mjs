@@ -1341,7 +1341,12 @@ export function createProjectsApi(ctx) {
           production: { ...cur.production, ...(b.production || {}) },
           build: { ...cur.build, ...(b.build || {}) },
         };
-        const healthPathVal = b.healthPath !== undefined ? b.healthPath : (b.health_path !== undefined ? b.health_path : null);
+        const healthPathVal =
+          b.healthPath !== undefined
+            ? b.healthPath
+            : b.health_path !== undefined
+              ? b.health_path
+              : null;
         db.prepare(
           "UPDATE projects SET resources_json=?, cpu_limit=?, memory_mb_limit=?, disk_mb=?, sleep_mode=COALESCE(?, sleep_mode), port=COALESCE(?, port), health_path=COALESCE(?, health_path), updated_at=? WHERE name=?",
         ).run(

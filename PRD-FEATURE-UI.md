@@ -3922,19 +3922,20 @@ Build configs include:
 5. **No database UI** — No built-in database browser for Postgres/MySQL/MongoDB.
 6. **Incomplete i18n coverage** — Some locales have fewer namespace files (19-21) compared to English (23).
 7. **No mobile responsive dashboard** — Dashboard is desktop-only.
+
 ## 19. HosteraX vs. OpenShip Parity Roadmap & Implementation Tracking
 
-| Subsystem / Feature | Target Phase | Implementation Scope | Status |
-|---|---|---|---|
-| **Remote S3 / Cloudflare R2 / MinIO Backup Sync** | Phase 1 | Multi-cloud S3 streaming, storage providers DB table, automated bucket replication on snapshot completion. | ✅ Completed |
-| **Scheduled Cron Jobs Engine & UI** | Phase 1 | Native in-engine 5-field CRON runner, run history, execution logs, `/jobs` dashboard route. | ✅ Completed |
-| **Model Context Protocol (MCP) Server** | Phase 1 | JSON-RPC 2.0 endpoint (`/api/mcp`) with infrastructure tools for AI Agents (Cursor, Claude, ChatGPT). | ✅ Completed |
-| **Remote Multi-Node Server Management (SSH)** | Phase 2 | Agentless SSH connection pool, remote VPS provisioning, `/servers` management page. | ✅ Completed |
-| **GitHub App Webhooks & Ephemeral PR Previews** | Phase 2 | Push-to-deploy webhooks, ephemeral `pr-<id>` preview subdomains, GitHub Actions status checks. | ✅ Completed |
-| **Multi-Tenant Organizations, Teams & RBAC** | Phase 3 | Workspace/Org switcher, member invites, granular roles (`Owner`, `Admin`, `Member`, `Viewer`). | ✅ Completed |
-| **Self-Hosted Email Stack & Webmail** | Phase 3 | Postfix/Dovecot stack, SPF/DKIM/DMARC wizard, Zero Email webmail interface. | ✅ Completed |
-| **Electron 40 Native Desktop Packaging** | Phase 3 | Electron Forge builds for macOS (DMG), Windows (NSIS), Linux (AppImage) with local daemon supervision. | ✅ Completed |
-| **Localization (i18n)** | Phase 3 | 8 languages (EN, AR, DE, ES, FR, JA, PT, ZH) with RTL layout switching. | ✅ Completed |
+| Subsystem / Feature                               | Target Phase | Implementation Scope                                                                                       | Status       |
+| ------------------------------------------------- | ------------ | ---------------------------------------------------------------------------------------------------------- | ------------ |
+| **Remote S3 / Cloudflare R2 / MinIO Backup Sync** | Phase 1      | Multi-cloud S3 streaming, storage providers DB table, automated bucket replication on snapshot completion. | ✅ Completed |
+| **Scheduled Cron Jobs Engine & UI**               | Phase 1      | Native in-engine 5-field CRON runner, run history, execution logs, `/jobs` dashboard route.                | ✅ Completed |
+| **Model Context Protocol (MCP) Server**           | Phase 1      | JSON-RPC 2.0 endpoint (`/api/mcp`) with infrastructure tools for AI Agents (Cursor, Claude, ChatGPT).      | ✅ Completed |
+| **Remote Multi-Node Server Management (SSH)**     | Phase 2      | Agentless SSH connection pool, remote VPS provisioning, `/servers` management page.                        | ✅ Completed |
+| **GitHub App Webhooks & Ephemeral PR Previews**   | Phase 2      | Push-to-deploy webhooks, ephemeral `pr-<id>` preview subdomains, GitHub Actions status checks.             | ✅ Completed |
+| **Multi-Tenant Organizations, Teams & RBAC**      | Phase 3      | Workspace/Org switcher, member invites, granular roles (`Owner`, `Admin`, `Member`, `Viewer`).             | ✅ Completed |
+| **Self-Hosted Email Stack & Webmail**             | Phase 3      | Postfix/Dovecot stack, SPF/DKIM/DMARC wizard, Zero Email webmail interface.                                | ✅ Completed |
+| **Electron 40 Native Desktop Packaging**          | Phase 3      | Electron Forge builds for macOS (DMG), Windows (NSIS), Linux (AppImage) with local daemon supervision.     | ✅ Completed |
+| **Localization (i18n)**                           | Phase 3      | 8 languages (EN, AR, DE, ES, FR, JA, PT, ZH) with RTL layout switching.                                    | ✅ Completed |
 
 ---
 

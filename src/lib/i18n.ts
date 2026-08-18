@@ -256,7 +256,7 @@ export function useTranslation() {
       const dict = TRANSLATIONS[language] || TRANSLATIONS.en;
       return dict[key] || TRANSLATIONS.en[key] || fallback || key;
     },
-    [language]
+    [language],
   );
 
   return {

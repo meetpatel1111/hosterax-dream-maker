@@ -754,7 +754,9 @@ export function useMailboxes(domainId?: string) {
     queryKey: ["mailboxes", eng.url, eng.token, domainId],
     queryFn: async () => {
       try {
-        const path = domainId ? `/api/email/mailboxes?domain_id=${domainId}` : "/api/email/mailboxes";
+        const path = domainId
+          ? `/api/email/mailboxes?domain_id=${domainId}`
+          : "/api/email/mailboxes";
         return await eng.call<Mailbox[]>("GET", path);
       } catch {
         return [];
@@ -772,7 +774,10 @@ export function useEmailMessages(mailboxId?: string, folder = "inbox") {
     queryFn: async () => {
       if (!mailboxId) return [];
       try {
-        return await eng.call<EmailMessage[]>("GET", `/api/email/mailboxes/${mailboxId}/messages?folder=${folder}`);
+        return await eng.call<EmailMessage[]>(
+          "GET",
+          `/api/email/mailboxes/${mailboxId}/messages?folder=${folder}`,
+        );
       } catch {
         return [];
       }
@@ -860,7 +865,10 @@ export function useProjectDiagnostics(projectName?: string) {
     queryFn: async () => {
       if (!projectName) return null as any;
       try {
-        return await eng.call<ProjectDiagnostics>("GET", `/api/projects/${projectName}/diagnostics`);
+        return await eng.call<ProjectDiagnostics>(
+          "GET",
+          `/api/projects/${projectName}/diagnostics`,
+        );
       } catch {
         return null as any;
       }
@@ -869,4 +877,3 @@ export function useProjectDiagnostics(projectName?: string) {
     refetchInterval: 10000,
   });
 }
-

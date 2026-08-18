@@ -1,13 +1,5 @@
 import { useMemo } from "react";
-import {
-  Cpu,
-  MemoryStick,
-  Network,
-  HardDrive,
-  ShieldCheck,
-  Activity,
-  Box,
-} from "lucide-react";
+import { Cpu, MemoryStick, Network, HardDrive, ShieldCheck, Activity, Box } from "lucide-react";
 import { useEngineSystem, useProjectMetrics } from "@/lib/engine";
 
 type HealthMetricsProps = {
@@ -96,8 +88,7 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <Cpu className="h-4 w-4 text-primary" />{" "}
-              {docker ? "Container CPU" : "Host CPU Load"}
+              <Cpu className="h-4 w-4 text-primary" /> {docker ? "Container CPU" : "Host CPU Load"}
             </span>
             <span className="font-mono text-xs text-primary font-semibold">
               {metrics.cpu.toFixed(1)}%
@@ -171,18 +162,18 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-surface-2">
             <div
               className={`h-full transition-all duration-700 ${
-                metrics.disk > 90 ? "bg-destructive" : metrics.disk > 75 ? "bg-warning" : "bg-primary"
+                metrics.disk > 90
+                  ? "bg-destructive"
+                  : metrics.disk > 75
+                    ? "bg-warning"
+                    : "bg-primary"
               }`}
               style={{ width: `${Math.min(100, Math.max(2, metrics.disk))}%` }}
             />
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>
-              {sys?.disk?.used_gb != null ? `${sys.disk.used_gb} GB Used` : "--"}
-            </span>
-            <span>
-              {sys?.disk?.total_gb != null ? `${sys.disk.total_gb} GB Total` : "--"}
-            </span>
+            <span>{sys?.disk?.used_gb != null ? `${sys.disk.used_gb} GB Used` : "--"}</span>
+            <span>{sys?.disk?.total_gb != null ? `${sys.disk.total_gb} GB Total` : "--"}</span>
           </div>
         </div>
 

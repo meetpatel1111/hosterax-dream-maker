@@ -290,9 +290,7 @@ function ProjectPage() {
       {tab === "deployments" && (
         <DeploymentsTab projectId={project.id} projectName={project.name} />
       )}
-      {tab === "webhooks" && (
-        <WebhooksTab projectName={project.name} project={project} />
-      )}
+      {tab === "webhooks" && <WebhooksTab projectName={project.name} project={project} />}
       {tab === "self-heal" && <SelfHealingPanel projectName={project.name} />}
       {tab === "logs" && <LiveLogs projectName={project.name} />}
       {tab === "env" && <EnvVars projectId={project.id} projectName={project.name} />}
@@ -1159,7 +1157,9 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
   const { data: config, refetch: refetchConfig } = useProjectWebhookConfig(projectName);
   const { data: previews = [], refetch: refetchPreviews } = usePRPreviews(projectName);
 
-  const [trackedBranch, setTrackedBranch] = useState(config?.tracked_branch || project.branch || "main");
+  const [trackedBranch, setTrackedBranch] = useState(
+    config?.tracked_branch || project.branch || "main",
+  );
   const [autoDeployPush, setAutoDeployPush] = useState(config?.auto_deploy_push !== 0);
   const [autoDeployPr, setAutoDeployPr] = useState(config?.auto_deploy_pr !== 0);
   const [saving, setSaving] = useState(false);
@@ -1195,7 +1195,8 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
   }
 
   async function handleDestroyPreview(prId: string, prNumber: number) {
-    if (!confirm(`Are you sure you want to tear down preview environment for PR #${prNumber}?`)) return;
+    if (!confirm(`Are you sure you want to tear down preview environment for PR #${prNumber}?`))
+      return;
     try {
       await engine.call("DELETE", `/api/previews/${prId}`);
       toast.success(`Ephemeral preview for PR #${prNumber} torn down.`);
@@ -1229,7 +1230,8 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
             <div>
               <h3 className="text-base font-semibold">GitHub Webhook & Push-to-Deploy</h3>
               <p className="text-xs text-muted-foreground">
-                Automatically trigger zero-downtime builds on git push and spin up ephemeral PR previews.
+                Automatically trigger zero-downtime builds on git push and spin up ephemeral PR
+                previews.
               </p>
             </div>
           </div>
@@ -1241,7 +1243,9 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
           {/* Payload URL */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Payload URL (GitHub Webhook)</label>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Payload URL (GitHub Webhook)
+            </label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -1254,14 +1258,20 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
                 className="rounded-md border border-input bg-card p-2 hover:bg-muted"
                 title="Copy Webhook URL"
               >
-                {copiedUrl ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                {copiedUrl ? (
+                  <Check className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <Copy className="w-4 h-4" />
+                )}
               </button>
             </div>
           </div>
 
           {/* Webhook Secret */}
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Secret Token (HMAC-SHA256)</label>
+            <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Secret Token (HMAC-SHA256)
+            </label>
             <div className="flex items-center gap-2">
               <input
                 type="password"
@@ -1274,7 +1284,11 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
                 className="rounded-md border border-input bg-card p-2 hover:bg-muted"
                 title="Copy Secret"
               >
-                {copiedSecret ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+                {copiedSecret ? (
+                  <Check className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <Copy className="w-4 h-4" />
+                )}
               </button>
             </div>
           </div>
@@ -1283,7 +1297,9 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
         {/* Automation Toggles */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 border-t border-border/40">
           <div className="space-y-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Tracked Production Branch</label>
+            <label className="text-xs font-medium text-muted-foreground">
+              Tracked Production Branch
+            </label>
             <input
               type="text"
               value={trackedBranch}
@@ -1296,7 +1312,9 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
           <div className="flex items-center justify-between rounded-lg border p-3 bg-muted/20">
             <div>
               <div className="text-xs font-medium">Auto-Deploy on Push</div>
-              <div className="text-[11px] text-muted-foreground">Build on git push to {trackedBranch}</div>
+              <div className="text-[11px] text-muted-foreground">
+                Build on git push to {trackedBranch}
+              </div>
             </div>
             <input
               type="checkbox"
@@ -1354,15 +1372,23 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
           <div className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
             <GitPullRequest className="mb-2 h-10 w-10 opacity-20" />
             <p className="font-medium text-sm">No Active PR Previews</p>
-            <p className="text-xs mt-1">Open a GitHub Pull Request or send a webhook to automatically spin up an ephemeral preview environment.</p>
+            <p className="text-xs mt-1">
+              Open a GitHub Pull Request or send a webhook to automatically spin up an ephemeral
+              preview environment.
+            </p>
           </div>
         ) : (
           <div className="divide-y divide-border/40">
             {previews.map((pr) => (
-              <div key={pr.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3 hover:bg-muted/20 transition-colors">
+              <div
+                key={pr.id}
+                className="flex flex-col sm:flex-row sm:items-center justify-between p-4 gap-3 hover:bg-muted/20 transition-colors"
+              >
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs font-bold text-primary">PR #{pr.pr_number}</span>
+                    <span className="font-mono text-xs font-bold text-primary">
+                      PR #{pr.pr_number}
+                    </span>
                     <span className="text-sm font-semibold">{pr.pr_title}</span>
                     {pr.status === "live" ? (
                       <span className="inline-flex items-center gap-1 text-[11px] text-emerald-400 font-medium bg-emerald-500/10 px-2 py-0.5 rounded-full">

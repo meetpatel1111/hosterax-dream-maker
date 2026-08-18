@@ -60,7 +60,7 @@ export class OrgManager {
           `
         INSERT INTO organizations (id, name, slug, avatar_url, plan, is_default, created_at, updated_at)
         VALUES (?, 'Primary Workspace', 'primary', null, 'enterprise', 1, ?, ?)
-      `
+      `,
         )
         .run(id, now, now);
 
@@ -69,18 +69,21 @@ export class OrgManager {
           `
         INSERT INTO organization_members (id, org_id, user_email, user_name, role, joined_at)
         VALUES (?, ?, 'admin@hosterax.internal', 'System Admin', 'owner', ?)
-      `
+      `,
         )
         .run(`mem_${crypto.randomBytes(6).toString("hex")}`, id, now);
     }
   }
 
   listOrganizations() {
-    const orgs = this.db.prepare("SELECT * FROM organizations ORDER BY is_default DESC, created_at ASC").all();
+    const orgs = this.db
+      .prepare("SELECT * FROM organizations ORDER BY is_default DESC, created_at ASC")
+      .all();
     return orgs.map((org) => {
-      const memberCount = this.db
-        .prepare("SELECT COUNT(*) as count FROM organization_members WHERE org_id=?")
-        .get(org.id)?.count || 1;
+      const memberCount =
+        this.db
+          .prepare("SELECT COUNT(*) as count FROM organization_members WHERE org_id=?")
+          .get(org.id)?.count || 1;
       return { ...org, member_count: memberCount };
     });
   }
@@ -95,7 +98,9 @@ export class OrgManager {
       .prepare("SELECT * FROM organization_members WHERE org_id=? ORDER BY joined_at ASC")
       .all(org.id);
     const invites = this.db
-      .prepare("SELECT * FROM organization_invites WHERE org_id=? AND status='pending' ORDER BY created_at DESC")
+      .prepare(
+        "SELECT * FROM organization_invites WHERE org_id=? AND status='pending' ORDER BY created_at DESC",
+      )
       .all(org.id);
 
     return { ...org, members, invites };
@@ -115,7 +120,7 @@ export class OrgManager {
         `
       INSERT INTO organizations (id, name, slug, avatar_url, plan, is_default, created_at, updated_at)
       VALUES (?, ?, ?, ?, 'enterprise', 0, ?, ?)
-    `
+    `,
       )
       .run(id, name.trim(), cleanSlug, avatar_url, now, now);
 
@@ -125,7 +130,7 @@ export class OrgManager {
         `
       INSERT INTO organization_members (id, org_id, user_email, user_name, role, joined_at)
       VALUES (?, ?, 'admin@hosterax.internal', 'Workspace Owner', 'owner', ?)
-    `
+    `,
       )
       .run(`mem_${crypto.randomBytes(6).toString("hex")}`, id, now);
 
@@ -182,9 +187,16 @@ export class OrgManager {
         `
       INSERT INTO organization_members (id, org_id, user_email, user_name, role, joined_at)
       VALUES (?, ?, ?, ?, ?, ?)
-    `
+    `,
       )
-      .run(id, org.id, user_email.trim().toLowerCase(), (user_name || user_email.split("@")[0]).trim(), role, now);
+      .run(
+        id,
+        org.id,
+        user_email.trim().toLowerCase(),
+        (user_name || user_email.split("@")[0]).trim(),
+        role,
+        now,
+      );
 
     return this.getOrganization(org.id);
   }
@@ -206,11 +218,15 @@ export class OrgManager {
     if (!mem) throw new Error("Member not found.");
     if (mem.role === "owner") {
       const ownerCount = this.db
-        .prepare("SELECT COUNT(*) as count FROM organization_members WHERE org_id=? AND role='owner'")
+        .prepare(
+          "SELECT COUNT(*) as count FROM organization_members WHERE org_id=? AND role='owner'",
+        )
         .get(orgId)?.count;
       if (ownerCount <= 1) throw new Error("Cannot remove the only organization owner.");
     }
-    this.db.prepare("DELETE FROM organization_members WHERE org_id=? AND id=?").run(orgId, memberId);
+    this.db
+      .prepare("DELETE FROM organization_members WHERE org_id=? AND id=?")
+      .run(orgId, memberId);
     return true;
   }
 
@@ -226,7 +242,7 @@ export class OrgManager {
         `
       INSERT INTO organization_invites (id, org_id, email, role, token, status, expires_at, created_at)
       VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
-    `
+    `,
       )
       .run(id, orgId, email.trim().toLowerCase(), role, token, expiresAt, now);
 
