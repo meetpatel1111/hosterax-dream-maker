@@ -369,16 +369,13 @@ export class SelfHealEngine {
         return;
       }
 
-      const ACTIVE_PHASES = new Set([
-        "queued",
-        "fetching",
-        "cloning",
-        "building",
-        "pulling",
-        "deploying",
-        "starting",
-      ]);
-      if (latestDeploy && ACTIVE_PHASES.has(latestDeploy.phase)) {
+      const isDeploying =
+        latestDeploy &&
+        latestDeploy.phase !== "ready" &&
+        latestDeploy.phase !== "failed" &&
+        latestDeploy.phase !== "cancelled";
+
+      if (isDeploying) {
         this.healthMap.set(name, {
           status: "recovering",
           lastProbeTs: Date.now(),
@@ -786,12 +783,13 @@ export class SelfHealEngine {
     const activeDeploy = this.db
       .prepare("SELECT phase FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
       .get(name);
-    if (
+    const isDeployActive =
       activeDeploy &&
-      ["queued", "fetching", "cloning", "building", "pulling", "deploying", "starting"].includes(
-        activeDeploy.phase,
-      )
-    ) {
+      activeDeploy.phase !== "ready" &&
+      activeDeploy.phase !== "failed" &&
+      activeDeploy.phase !== "cancelled";
+
+    if (isDeployActive) {
       this.healthMap.set(name, {
         status: "recovering",
         lastProbeTs: now,
