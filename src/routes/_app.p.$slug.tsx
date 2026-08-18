@@ -91,6 +91,7 @@ function ProjectPage() {
             start_command: ep.start_cmd || null,
             port: ep.port || ep.route?.upstream_port || 3000,
             target_type: ep.target || "process",
+            health_path: ep.health_path || ep.healthPath || "/",
             workspace_type: "none",
             build_timeout_minutes: 30,
             created_at: ep.created_at
@@ -124,6 +125,7 @@ function ProjectPage() {
             build_command: found.build_cmd || null,
             start_command: found.start_cmd || null,
             port: found.port || 3000,
+            health_path: found.health_path || found.healthPath || "/",
             target_type: found.target || "process",
             workspace_type: "none",
             build_timeout_minutes: 30,
@@ -404,7 +406,12 @@ function DeploymentsTab({ projectId, projectName }: { projectId: string; project
             environment: d.environment || "production",
             trigger_type: d.trigger || "manual",
             phase: d.phase,
-            status: d.phase === "ready" ? "success" : d.phase === "failed" ? "error" : "building",
+            status:
+              d.phase === "ready"
+                ? "success"
+                : d.phase === "failed"
+                  ? "failed"
+                  : d.phase || "building",
             created_at: d.started_at
               ? new Date(d.started_at).toISOString()
               : new Date().toISOString(),
@@ -1038,6 +1045,7 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
   const [buildCmd, setBuildCmd] = useState(project.build_command ?? "");
   const [startCmd, setStartCmd] = useState(project.start_command ?? "");
   const [port, setPort] = useState(project.port ?? 3000);
+  const [healthPath, setHealthPath] = useState(project.health_path || "/");
   const [busy, setBusy] = useState(false);
 
   async function save() {
@@ -1049,6 +1057,7 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
         build_command: buildCmd,
         start_command: startCmd,
         port: Number(port),
+        health_path: healthPath,
       });
       toast.success("Settings saved to SQLite database");
     } catch (e: any) {
@@ -1090,14 +1099,24 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
             className={inputCls + " font-mono"}
           />
         </Field>
-        <Field label="Port">
-          <input
-            type="number"
-            value={port}
-            onChange={(e) => setPort(Number(e.target.value))}
-            className={inputCls}
-          />
-        </Field>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label="Port">
+            <input
+              type="number"
+              value={port}
+              onChange={(e) => setPort(Number(e.target.value))}
+              className={inputCls}
+            />
+          </Field>
+          <Field label="Health check path">
+            <input
+              value={healthPath}
+              onChange={(e) => setHealthPath(e.target.value)}
+              placeholder="/"
+              className={inputCls + " font-mono"}
+            />
+          </Field>
+        </div>
         <div className="flex justify-end">
           <button
             onClick={save}

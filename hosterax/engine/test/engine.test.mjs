@@ -520,6 +520,19 @@ test("universal multi-framework zero-config dockerfile generation", async () => 
   const dotnetDf = generateUniversalDockerfile(dotnetDir);
   assert.ok(dotnetDf.includes("mcr.microsoft.com/dotnet/sdk:8.0-alpine"));
 
+  // Check BuildKit and HEALTHCHECK in generated Dockerfiles
+  assert.ok(nextDf.includes("# syntax=docker/dockerfile:1"));
+  assert.ok(nextDf.includes("--mount=type=cache"));
+  assert.ok(nextDf.includes("HEALTHCHECK"));
+
+  assert.ok(bunDf.includes("# syntax=docker/dockerfile:1"));
+  assert.ok(bunDf.includes("--mount=type=cache"));
+  assert.ok(bunDf.includes("HEALTHCHECK"));
+
+  assert.ok(pyDf.includes("# syntax=docker/dockerfile:1"));
+  assert.ok(pyDf.includes("--mount=type=cache"));
+  assert.ok(pyDf.includes("HEALTHCHECK"));
+
   // Clean up
   try {
     rmSync(testDir, { recursive: true, force: true });
@@ -527,5 +540,31 @@ test("universal multi-framework zero-config dockerfile generation", async () => 
     rmSync(javaDir, { recursive: true, force: true });
     rmSync(dotnetDir, { recursive: true, force: true });
   } catch {}
+});
+
+test("project health_path configuration and persistence", async () => {
+  const name = `healthpath-test-${Date.now()}`;
+  const created = await api("POST", "/api/projects", {
+    name,
+    source: "https://github.com/example/demo",
+    healthPath: "/api/health",
+  });
+  assert.ok(created.id);
+
+  // Read back project
+  const fetched = await api("GET", `/api/projects/${name}`);
+  assert.equal(fetched.healthPath, "/api/health");
+
+  // Update health path via PATCH
+  const patched = await api("PATCH", `/api/projects/${name}`, {
+    healthPath: "/up",
+  });
+  assert.equal(patched.health_path, "/up");
+
+  const fetchedAfter = await api("GET", `/api/projects/${name}`);
+  assert.equal(fetchedAfter.healthPath, "/up");
+
+  // Clean up
+  await api("DELETE", `/api/projects/${name}`);
 });
 

@@ -117,6 +117,7 @@ CREATE INDEX IF NOT EXISTS idx_server_logs_project ON server_logs(project, ts DE
     ["location", "TEXT"],
     ["resources_json", "TEXT"],
     ["disk_mb", "INTEGER"],
+    ["health_path", "TEXT"],
     ["updated_at", "INTEGER"],
     ["status", "TEXT"],
     ["deleted_at", "INTEGER"],
@@ -345,6 +346,7 @@ export function createProjectsApi(ctx) {
       routingConfig: parse(p.routing_config_json, null),
       defaultRollbackStrategy: p.default_rollback_strategy || "git",
       target: p.target,
+      healthPath: p.health_path || "/",
       sleepMode: p.sleep_mode || "auto_sleep",
       resources: parse(p.resources_json, {
         production: {
@@ -504,6 +506,8 @@ export function createProjectsApi(ctx) {
       routingConfig: ["routing_config_json", JSON.stringify],
       hasServer: ["has_server", (v) => (v ? 1 : 0)],
       hasBuild: ["has_build", (v) => (v ? 1 : 0)],
+      healthPath: ["health_path", String],
+      health_path: ["health_path", String],
       target: ["target", String],
     };
     if (b.packageManager !== undefined) {
@@ -1337,8 +1341,9 @@ export function createProjectsApi(ctx) {
           production: { ...cur.production, ...(b.production || {}) },
           build: { ...cur.build, ...(b.build || {}) },
         };
+        const healthPathVal = b.healthPath !== undefined ? b.healthPath : (b.health_path !== undefined ? b.health_path : null);
         db.prepare(
-          "UPDATE projects SET resources_json=?, cpu_limit=?, memory_mb_limit=?, disk_mb=?, sleep_mode=COALESCE(?, sleep_mode), port=COALESCE(?, port), updated_at=? WHERE name=?",
+          "UPDATE projects SET resources_json=?, cpu_limit=?, memory_mb_limit=?, disk_mb=?, sleep_mode=COALESCE(?, sleep_mode), port=COALESCE(?, port), health_path=COALESCE(?, health_path), updated_at=? WHERE name=?",
         ).run(
           JSON.stringify(next),
           next.production.cpuCores ?? null,
@@ -1346,6 +1351,7 @@ export function createProjectsApi(ctx) {
           next.production.diskMb ?? null,
           b.sleepMode ?? null,
           b.port ?? null,
+          healthPathVal,
           Date.now(),
           proj.name,
         );
@@ -1355,6 +1361,7 @@ export function createProjectsApi(ctx) {
             ...shape(after).resources,
             sleepMode: after.sleep_mode,
             port: after.port,
+            healthPath: after.health_path || "/",
           }),
           true
         );

@@ -16,6 +16,16 @@ const MAP: Record<string, { label: string; cls: string; dot: string }> = {
     cls: "bg-warning/10 text-warning border-warning/30",
     dot: "bg-warning animate-pulse",
   },
+  migrating: {
+    label: "Migrating DB",
+    cls: "bg-purple-500/10 text-purple-400 border-purple-500/30",
+    dot: "bg-purple-400 animate-pulse",
+  },
+  health_check: {
+    label: "Health Check",
+    cls: "bg-cyan-500/10 text-cyan-400 border-cyan-500/30",
+    dot: "bg-cyan-400 animate-pulse",
+  },
   deploying: {
     label: "Deploying",
     cls: "bg-info/10 text-info border-info/30",

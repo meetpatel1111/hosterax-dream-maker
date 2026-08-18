@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // HosteraX engine daemon. Real HTTP+WS server; spawns real deploys.
 import http from "node:http";
+import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -872,6 +873,206 @@ function generateZeroConfigDockerfile(workdir) {
   return generateUniversalDockerfile(workdir);
 }
 
+// ---------- readiness health probe ----------
+/**
+ * Poll a container's HTTP endpoint until healthy or timeout.
+ * Falls back to TCP socket check if HTTP fails repeatedly.
+ * @returns {{ healthy: boolean, attempts: number, latencyMs: number|null }}
+ */
+async function waitForHealthy(deploymentId, containerPort, opts = {}) {
+  const {
+    healthPath = "/",
+    maxAttempts = 15,
+    intervalMs = 2000,
+    timeoutMs = 3000,
+  } = opts;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const start = Date.now();
+    try {
+      const result = await new Promise((resolve, reject) => {
+        const req = http.get(
+          {
+            hostname: "127.0.0.1",
+            port: containerPort,
+            path: healthPath,
+            timeout: timeoutMs,
+          },
+          (res) => {
+            // Drain the response body
+            res.resume();
+            resolve({ status: res.statusCode, latencyMs: Date.now() - start });
+          },
+        );
+        req.on("error", reject);
+        req.on("timeout", () => {
+          req.destroy();
+          reject(new Error("timeout"));
+        });
+      });
+      if (result.status >= 200 && result.status < 400) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "system",
+          text: `[health] ✓ Container ready (HTTP ${result.status}, ${result.latencyMs}ms, attempt ${attempt}/${maxAttempts})`,
+        });
+        return { healthy: true, attempts: attempt, latencyMs: result.latencyMs };
+      }
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "system",
+        text: `[health] Probe ${attempt}/${maxAttempts}: HTTP ${result.status} (not ready)`,
+      });
+    } catch (err) {
+      // Try TCP fallback on first HTTP error to handle non-HTTP services
+      try {
+        await new Promise((resolve, reject) => {
+          const sock = new net.Socket();
+          sock.setTimeout(timeoutMs);
+          sock.connect(containerPort, "127.0.0.1", () => {
+            sock.destroy();
+            resolve(true);
+          });
+          sock.on("error", reject);
+          sock.on("timeout", () => {
+            sock.destroy();
+            reject(new Error("tcp timeout"));
+          });
+        });
+        const latencyMs = Date.now() - start;
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "system",
+          text: `[health] ✓ Container ready (TCP port open, ${latencyMs}ms, attempt ${attempt}/${maxAttempts})`,
+        });
+        return { healthy: true, attempts: attempt, latencyMs };
+      } catch {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "system",
+          text: `[health] Probe ${attempt}/${maxAttempts}: waiting for port ${containerPort}...`,
+        });
+      }
+    }
+    if (attempt < maxAttempts) {
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+  }
+  publish(deploymentId, {
+    ts: Date.now(),
+    stream: "stderr",
+    text: `[health] ✗ Container failed health check after ${maxAttempts} attempts`,
+  });
+  return { healthy: false, attempts: maxAttempts, latencyMs: null };
+}
+
+// ---------- pre-deploy migration hooks ----------
+/**
+ * Auto-detect and run database migrations inside the container before traffic cutover.
+ * Returns 0 on success/skip, non-zero on failure.
+ */
+async function runPreDeployHooks(deploymentId, workdir, env, containerName) {
+  const exists = (f) => fs.existsSync(path.join(workdir, f));
+  const readDeps = () => {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(workdir, "package.json"), "utf8"));
+      return { ...pkg.dependencies, ...pkg.devDependencies };
+    } catch {
+      return {};
+    }
+  };
+
+  const hooks = [];
+  const deps = exists("package.json") ? readDeps() : {};
+
+  // Prisma
+  if (exists("prisma/schema.prisma") || deps["prisma"]) {
+    hooks.push({ name: "Prisma", cmd: "npx prisma migrate deploy" });
+  }
+  // Drizzle
+  if (deps["drizzle-kit"]) {
+    hooks.push({ name: "Drizzle", cmd: "npx drizzle-kit migrate" });
+  }
+  // TypeORM
+  if (deps["typeorm"]) {
+    hooks.push({ name: "TypeORM", cmd: "npx typeorm migration:run -d dist/data-source.js 2>/dev/null || npx typeorm migration:run" });
+  }
+  // Sequelize
+  if (deps["sequelize-cli"]) {
+    hooks.push({ name: "Sequelize", cmd: "npx sequelize-cli db:migrate" });
+  }
+  // Django
+  if (exists("manage.py")) {
+    hooks.push({ name: "Django", cmd: "python manage.py migrate --noinput" });
+  }
+  // Laravel
+  if (exists("artisan")) {
+    hooks.push({ name: "Laravel", cmd: "php artisan migrate --force" });
+  }
+  // Rails
+  if (exists("Rakefile") && exists("db/migrate")) {
+    hooks.push({ name: "Rails", cmd: "bundle exec rails db:migrate" });
+  }
+
+  if (hooks.length === 0) return 0;
+
+  for (const hook of hooks) {
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "system",
+      text: `[migrate] Running ${hook.name} migrations...`,
+    });
+
+    if (containerName) {
+      // Run inside Docker container for correct runtime environment
+      const rc = await runStep(
+        deploymentId,
+        workdir,
+        `docker exec ${containerName} sh -c "${hook.cmd}"`,
+        {},
+      );
+      if (rc !== 0) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "stderr",
+          text: `[migrate] ${hook.name} migration failed (exit ${rc})`,
+        });
+        return rc;
+      }
+    } else {
+      // Run directly for process/local targets
+      const rc = await runStep(deploymentId, workdir, hook.cmd, env);
+      if (rc !== 0) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "stderr",
+          text: `[migrate] ${hook.name} migration failed (exit ${rc})`,
+        });
+        return rc;
+      }
+    }
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "system",
+      text: `[migrate] ✓ ${hook.name} migrations complete`,
+    });
+  }
+  return 0;
+}
+
+// ---------- docker container helpers for blue/green ----------
+function stopContainer(name) {
+  try {
+    spawnSync("docker", ["rm", "-f", name], { stdio: "ignore" });
+  } catch {}
+}
+
+function renameContainer(from, to) {
+  try {
+    spawnSync("docker", ["rename", from, to], { stdio: "ignore" });
+  } catch {}
+}
+
 const staticServers = new Map(); // project -> http.Server
 
 function stopProject(project, reason = "manual stop") {
@@ -1317,7 +1518,7 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
         deploymentId,
         workdir,
         `docker build -t ${sanitizeImageTag(tag)} .`,
-        env,
+        { ...env, DOCKER_BUILDKIT: "1" },
       );
 
       // Self-Healing Build Fallback: If original Dockerfile build failed, fallback to zero-config multi-stage build!
@@ -1338,7 +1539,7 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
           deploymentId,
           workdir,
           `docker build -t ${sanitizeImageTag(tag)} .`,
-          env,
+          { ...env, DOCKER_BUILDKIT: "1" },
         );
       }
 
@@ -1346,9 +1547,16 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       imageInspect = inspectDockerImage(tag);
     }
 
-    try {
-      await runStep(deploymentId, workdir, `docker rm -f hx_${cleanName}`, {});
-    } catch {}
+    // ── Blue/Green Zero-Downtime Deployment ──
+    // 1. Launch NEW container as hx_{name}_green (old hx_{name} keeps serving)
+    // 2. Run pre-deploy migration hooks inside green container
+    // 3. Health probe green container
+    // 4. If healthy → swap: remove old, rename green → hx_{name}
+    // 5. If unhealthy → destroy green, keep old live, fail deployment
+
+    const greenName = `hx_${cleanName}_green`;
+    // Clean up any stale green container from a previous failed deploy
+    stopContainer(greenName);
 
     // Auto-discover container internal port using smart HTTP port prioritization
     let containerInternalPort = 3000;
@@ -1366,7 +1574,6 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       db.prepare("UPDATE projects SET port=? WHERE name=?").run(hostPort, project);
     } catch {}
 
-    // Persistent volume mappings
     // Persistent volume mappings (use reliable Docker Named Volumes for cross-platform stability)
     let volFlags = "";
     if (imageInspect.volumes && imageInspect.volumes.length > 0) {
@@ -1475,33 +1682,95 @@ pages:
       portFlag += ` -p 127.0.0.1:${consoleHostPort}:9001`;
     }
 
-    const runCmd = `docker run -d --init --name hx_${cleanName} --restart unless-stopped --add-host host.docker.internal:host-gateway ${portFlag}${volFlags} ${envFlags} ${sanitizeImageTag(tag)}${extraArgs}`;
+    // Step 1: Launch green container (old container still serves traffic)
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "system",
+      text: `[blue/green] Launching candidate container ${greenName}...`,
+    });
+    const runCmd = `docker run -d --init --name ${greenName} --restart unless-stopped --add-host host.docker.internal:host-gateway ${portFlag}${volFlags} ${envFlags} ${sanitizeImageTag(tag)}${extraArgs}`;
     publish(deploymentId, { ts: Date.now(), stream: "system", text: runCmd });
     const rc = await runStep(deploymentId, workdir, runCmd, {});
-    if (rc === 0) {
-      if (glanceConfigFile && fs.existsSync(glanceConfigFile)) {
-        try {
-          await runStep(
-            deploymentId,
-            workdir,
-            `docker cp "${glanceConfigFile}" hx_${cleanName}:/app/config/glance.yml`,
-            {},
-          );
-          await runStep(deploymentId, workdir, `docker restart hx_${cleanName}`, {});
-        } catch {}
-      }
-      running.set(project, {
-        child: { pid: process.pid },
-        stopped: false,
-        startedAt: Date.now(),
-        cmd: runCmd,
-        workdir,
-        env,
-        policy: "always",
-      });
+    if (rc !== 0) {
+      stopContainer(greenName);
+      return rc;
     }
-    return rc;
+
+    // Glance config injection (before health check)
+    if (glanceConfigFile && fs.existsSync(glanceConfigFile)) {
+      try {
+        await runStep(
+          deploymentId,
+          workdir,
+          `docker cp "${glanceConfigFile}" ${greenName}:/app/config/glance.yml`,
+          {},
+        );
+        await runStep(deploymentId, workdir, `docker restart ${greenName}`, {});
+      } catch {}
+    }
+
+    // Step 2: Run pre-deploy migration hooks inside the green container
+    const projSettings = db.prepare("SELECT health_path FROM projects WHERE name=?").get(project);
+    const healthPath = projSettings?.health_path || "/";
+
+    setPhase(deploymentId, "migrating");
+    const migrationRc = await runPreDeployHooks(deploymentId, workdir, env, greenName);
+    if (migrationRc !== 0) {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[blue/green] Migration failed — destroying candidate, keeping old container live.`,
+      });
+      stopContainer(greenName);
+      return migrationRc;
+    }
+
+    // Step 3: Readiness health probe on the green container
+    setPhase(deploymentId, "health_check");
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "system",
+      text: `[health] Starting readiness probe on port ${hostPort} (path: ${healthPath})...`,
+    });
+    const health = await waitForHealthy(deploymentId, hostPort, { healthPath });
+
+    if (!health.healthy) {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[blue/green] ✗ Candidate failed health check — destroying candidate, old container remains live.`,
+      });
+      stopContainer(greenName);
+      return 1;
+    }
+
+    // Step 4: Atomic traffic cutover — remove old, rename green → production
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "system",
+      text: `[blue/green] ✓ Candidate healthy — swapping traffic...`,
+    });
+    const oldName = `hx_${cleanName}`;
+    stopContainer(oldName);
+    renameContainer(greenName, oldName);
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "system",
+      text: `[blue/green] ✓ Zero-downtime cutover complete (${oldName})`,
+    });
+
+    running.set(project, {
+      child: { pid: process.pid },
+      stopped: false,
+      startedAt: Date.now(),
+      cmd: runCmd,
+      workdir,
+      env,
+      policy: "always",
+    });
+    return 0;
   }
+
 
   // Static SPA server mode
   if (cmd?.startsWith("serve-static:")) {
@@ -1526,6 +1795,20 @@ pages:
     publish(deploymentId, { ts: Date.now(), stream: "system", text: "no start command; skipping" });
     return 0;
   }
+  if (!cmd.startsWith("serve-static:")) {
+    setPhase(deploymentId, "migrating");
+    const migrationRc = await runPreDeployHooks(deploymentId, workdir, env, null);
+    if (migrationRc !== 0) {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[migrate] Pre-deploy migration failed (exit ${migrationRc})`,
+      });
+      return migrationRc;
+    }
+  }
+
+  setPhase(deploymentId, "deploying");
   publish(deploymentId, {
     ts: Date.now(),
     stream: "system",
@@ -1539,6 +1822,14 @@ pages:
     env.HOSTERAX_RESTART_POLICY || "on-failure",
     deploymentId,
   );
+
+  if (port && !cmd.startsWith("serve-static:")) {
+    const projSettings = db.prepare("SELECT health_path FROM projects WHERE name=?").get(project);
+    const healthPath = projSettings?.health_path || "/";
+    setPhase(deploymentId, "health_check");
+    await waitForHealthy(deploymentId, port, { healthPath, maxAttempts: 10 });
+  }
+
   return 0;
 }
 

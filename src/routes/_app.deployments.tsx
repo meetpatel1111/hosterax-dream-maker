@@ -28,7 +28,12 @@ function DeploymentsPage() {
             environment: d.environment || "production",
             trigger_type: d.trigger || "manual",
             phase: d.phase,
-            status: d.phase === "ready" ? "success" : d.phase === "failed" ? "error" : "building",
+            status:
+              d.phase === "ready"
+                ? "success"
+                : d.phase === "failed"
+                  ? "failed"
+                  : d.phase || "building",
             created_at: d.started_at
               ? new Date(d.started_at).toISOString()
               : new Date().toISOString(),
