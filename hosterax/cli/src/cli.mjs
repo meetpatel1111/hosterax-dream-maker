@@ -228,15 +228,28 @@ try {
       console.log("Engine:", health.ok ? "✓ online" : "✗ offline", `(${cfg.url})`);
       console.log("Version:", health.version);
       try {
-        const sys = await api("GET", "/api/metrics");
+        const sys = await api("GET", "/api/system");
+        if (sys.docker) {
+          if (sys.docker.running) {
+            console.log(
+              `Docker: ✓ online (${sys.docker.version || "Engine daemon active"})`,
+            );
+          } else {
+            console.log(
+              `Docker: ⚠️  offline (Start Docker Desktop to run container workloads)`,
+            );
+          }
+        }
         console.log(`CPU: ${sys.cpu.percent}% (${sys.cpu.cores} cores)`);
         console.log(
           `Memory: ${sys.memory.used_mb} MB / ${sys.memory.total_mb} MB (${sys.memory.percent}%)`,
         );
         console.log(
-          `Uptime: ${Math.floor(sys.uptime_seconds / 3600)}h ${Math.floor((sys.uptime_seconds % 3600) / 60)}m`,
+          `Uptime: ${Math.floor((sys.os?.uptime || 0) / 3600)}h ${Math.floor(((sys.os?.uptime || 0) % 3600) / 60)}m`,
         );
-        console.log(`Host: ${sys.hostname} (${sys.platform})`);
+        console.log(
+          `Host: ${os.hostname()} (${sys.os?.platform || process.platform})`,
+        );
       } catch {}
       break;
     }

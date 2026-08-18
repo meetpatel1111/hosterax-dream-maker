@@ -299,6 +299,9 @@ if (tokenCount === 0) {
 const rateLimiter = new Map(); // ip -> { count, resetAt }
 function rateLimit(req, maxRequests = 60, windowMs = 60000) {
   const ip = req.socket?.remoteAddress || "unknown";
+  if (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1" || ip === "localhost") {
+    return false;
+  }
   const now = Date.now();
   const entry = rateLimiter.get(ip);
   if (!entry || now > entry.resetAt) {
@@ -1364,6 +1367,17 @@ function pickPrimaryHttpPort(exposedPorts) {
 
 async function startService(deploymentId, project, workdir, cmd, env, target, port) {
   stopProject(project, "superseded by new deploy");
+  if (target === "docker" || target === "compose") {
+    const isDaemonUp = selfHeal ? selfHeal.probeDockerDaemon() : true;
+    if (!isDaemonUp) {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[docker] ❌ Docker Daemon Offline: Cannot deploy "${project}". Docker Desktop is not running on this host.\n[docker] 💡 Action Required: Please launch Docker Desktop from your Start menu or start the Docker service, then retry deployment.`,
+      });
+      return 1;
+    }
+  }
   if (target === "compose") {
     publish(deploymentId, { ts: Date.now(), stream: "system", text: "docker compose up -d" });
     return runStep(deploymentId, workdir, "docker compose up -d --build", env);
@@ -2490,7 +2504,11 @@ const server = http.createServer(async (req, res) => {
       },
       docker: {
         containers_count: contCount,
-        running: true,
+        running: Boolean(selfHeal?.daemonHealthy),
+        version: selfHeal?.daemonVersion || null,
+        error: !selfHeal?.daemonHealthy
+          ? "Docker Desktop is offline or unreachable"
+          : null,
       },
       os: {
         platform: os.platform(),

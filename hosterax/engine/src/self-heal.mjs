@@ -182,11 +182,39 @@ export class SelfHealEngine {
         encoding: "utf8",
         timeout: 2500,
       });
-      this.daemonHealthy = res.status === 0 && Boolean(res.stdout?.trim());
+      const isOk = res.status === 0 && Boolean(res.stdout?.trim());
+      if (isOk !== this.daemonHealthy) {
+        if (!isOk) {
+          this.logEvent(
+            "system",
+            "daemon_unresponsive",
+            "Docker daemon socket is unresponsive or offline. Suspending container probes.",
+            "error",
+          );
+        } else {
+          this.logEvent(
+            "system",
+            "daemon_recovered",
+            `Docker daemon connected (Engine v${res.stdout.trim()}). Resuming probes.`,
+            "info",
+          );
+        }
+      }
+      this.daemonHealthy = isOk;
+      this.daemonVersion = isOk ? res.stdout.trim() : null;
       this.lastDaemonCheckTs = Date.now();
       return this.daemonHealthy;
     } catch {
+      if (this.daemonHealthy) {
+        this.logEvent(
+          "system",
+          "daemon_unresponsive",
+          "Docker daemon socket is unresponsive or offline. Suspending container probes.",
+          "error",
+        );
+      }
       this.daemonHealthy = false;
+      this.daemonVersion = null;
       this.lastDaemonCheckTs = Date.now();
       return false;
     }
@@ -199,12 +227,6 @@ export class SelfHealEngine {
       // 1. Verify Docker Daemon Socket Health First
       const daemonOk = this.probeDockerDaemon();
       if (!daemonOk) {
-        this.logEvent(
-          "system",
-          "daemon_unresponsive",
-          "Docker daemon socket is unresponsive or locked. Suspending intrusive commands to protect event loop.",
-          "error",
-        );
         return;
       }
 
