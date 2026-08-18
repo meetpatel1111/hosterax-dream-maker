@@ -3537,17 +3537,6 @@ const server = http.createServer(async (req, res) => {
         return json(res, 500, { error: err.message });
       }
     }
-    if (url.pathname === "/api/backups" && req.method === "GET") {
-      return json(res, 200, backupManager.listBackups());
-    }
-    if ((m = url.pathname.match(/^\/api\/backups\/([^/]+)\/restore$/)) && req.method === "POST") {
-      try {
-        const restoreResult = await backupManager.restoreBackup(m[1]);
-        return json(res, 200, restoreResult);
-      } catch (err) {
-        return json(res, 400, { error: err.message });
-      }
-    }
 
     // ────────── tokens ──────────
     if (url.pathname === "/api/tokens" && req.method === "GET")
