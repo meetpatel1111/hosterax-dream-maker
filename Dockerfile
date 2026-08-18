@@ -10,7 +10,7 @@ WORKDIR /app
 # Install build tools & dependencies
 RUN apk add --no-cache python3 make g++ git
 COPY package.json package-lock.json* bun.lock* ./
-RUN npm install --legacy-peer-deps --prefer-offline
+RUN npm install --legacy-peer-deps --no-audit --no-fund
 
 # Copy source code and build production bundle
 COPY . .
@@ -38,7 +38,7 @@ ENV NODE_ENV=production \
 
 # Install engine production dependencies
 COPY hosterax/engine/package.json ./hosterax/engine/
-RUN cd hosterax/engine && npm install --omit=dev --legacy-peer-deps
+RUN cd hosterax/engine && npm install --omit=dev --legacy-peer-deps --no-audit --no-fund
 
 # Copy engine source and CLI
 COPY hosterax/engine ./hosterax/engine

@@ -145,11 +145,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Lowercase Repository Name
+        id: repo
+        run: echo "IMAGE_NAME=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
       - name: Extract Docker Metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ steps.repo.outputs.IMAGE_NAME }}
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
@@ -275,6 +279,7 @@ jobs:
   create-release:
     name: Publish GitHub Release & Checksums
     needs: [publish-npm, publish-docker, build-desktop]
+    if: always() && !cancelled() && needs.gate.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
