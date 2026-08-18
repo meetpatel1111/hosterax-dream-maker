@@ -1,5 +1,7 @@
 {
-  "name": "tanstack_start_ts",
+  "name": "hosterax",
+  "version": "0.2.0",
+  "description": "HosteraX - Autonomous Self-Hosted Cloud Control Plane with Universal Model Context Protocol (MCP)",
   "private": true,
   "sideEffects": false,
   "type": "module",

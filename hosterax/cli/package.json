@@ -1,11 +1,35 @@
 {
-  "name": "hosterax-cli",
-  "version": "0.1.0",
+  "name": "hosterax",
+  "version": "0.2.0",
+  "description": "HosteraX CLI & Universal Model Context Protocol (MCP) Client for Cursor, Claude Desktop, Devin, OpenAI, and Ollama",
   "type": "module",
-  "private": true,
+  "main": "./src/cli.mjs",
   "bin": {
     "hosterax": "./src/cli.mjs",
     "htx": "./src/cli.mjs"
+  },
+  "files": [
+    "src"
+  ],
+  "keywords": [
+    "hosterax",
+    "mcp",
+    "model-context-protocol",
+    "cursor",
+    "claude",
+    "devin",
+    "codex",
+    "paas",
+    "self-hosted",
+    "cloud",
+    "docker",
+    "ai-agent"
+  ],
+  "author": "HosteraX Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/meetpatel1111/hosterax-dream-maker.git"
   },
   "engines": {
     "node": ">=20"
