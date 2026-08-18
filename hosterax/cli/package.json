@@ -1,6 +1,6 @@
 {
   "name": "hosterax",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "HosteraX CLI & Universal Model Context Protocol (MCP) Client for Cursor, Claude Desktop, Devin, OpenAI, and Ollama",
   "type": "module",
   "main": "./src/cli.mjs",

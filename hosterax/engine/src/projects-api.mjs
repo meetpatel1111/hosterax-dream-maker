@@ -1450,7 +1450,7 @@ export function createProjectsApi(ctx) {
       // deployment logs
       if ((m = sub.match(/^deployments\/([^/]+)\/logs$/)) && method === "GET") {
         requirePerm(req, "project:read");
-        const depId = m[1];
+        const depId = m[1].replace(/[^a-zA-Z0-9_-]/g, "");
         const logPath = path.join(HOME, "logs", depId + ".log");
         const lines = [];
         if (fs.existsSync(logPath)) {

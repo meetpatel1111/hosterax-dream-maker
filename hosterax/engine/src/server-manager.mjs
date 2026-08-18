@@ -148,7 +148,16 @@ export class ServerManager {
 
   listServers() {
     this.refreshLocalMetrics();
-    return this.db.prepare("SELECT * FROM servers ORDER BY is_default DESC, created_at ASC").all();
+    const rows = this.db
+      .prepare("SELECT * FROM servers ORDER BY is_default DESC, created_at ASC")
+      .all();
+    return rows.map((s) => ({
+      ...s,
+      private_key: s.private_key ? "••••••••••••" : "",
+      has_key: Boolean(s.private_key),
+      password: s.password ? "••••••••••••" : "",
+      has_password: Boolean(s.password),
+    }));
   }
 
   getServer(id) {

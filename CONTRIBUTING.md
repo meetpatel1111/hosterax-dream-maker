@@ -15,11 +15,13 @@ Please read our [Code of Conduct](./CODE_OF_CONDUCT.md) before contributing to e
 ## 🛠️ Local Development Setup
 
 ### Prerequisites
+
 - **Node.js**: v20.x or v22.x+
 - **Git**
 - **Docker Desktop** (or Docker Engine on Linux) for container workloads
 
 ### 1. Clone the Repository
+
 ```bash
 git clone https://github.com/meetpatel1111/hosterax-dream-maker.git
 cd hosterax-dream-maker
@@ -27,17 +29,21 @@ npm install
 ```
 
 ### 2. Start the Backend Engine Daemon
+
 ```bash
 npm run test:engine  # Run all 18 test suites to verify system integrity
 node hosterax/engine/src/index.mjs
 ```
-*The Engine Daemon boots on `http://localhost:7777` with SQLite database initialized at `~/.hosterax/hosterax.db`.*
+
+_The Engine Daemon boots on `http://localhost:7777` with SQLite database initialized at `~/.hosterax/hosterax.db`._
 
 ### 3. Start the Frontend Dashboard
+
 ```bash
 npm run dev
 ```
-*The Web Dashboard will be available at `http://localhost:8080`.*
+
+_The Web Dashboard will be available at `http://localhost:8080`._
 
 ---
 
@@ -85,6 +91,7 @@ hosterax-dream-maker/
 ## 🏪 Adding New Templates to the App Store
 
 To add or update open-source templates in the 2,502+ App Store catalog:
+
 1. Run the catalog pipeline:
    ```bash
    npm run catalog:sync

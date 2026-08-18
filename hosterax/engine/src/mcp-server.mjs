@@ -507,7 +507,7 @@ export class MCPServer {
               },
               serverInfo: {
                 name: "hosterax-engine",
-                version: "0.2.0",
+                version: "1.0.0",
                 description: "HosteraX Autonomous Self-Hosted Cloud Operating System",
               },
             },

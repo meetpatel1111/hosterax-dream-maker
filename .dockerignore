@@ -1,0 +1,14 @@
+node_modules
+.output
+.nitro
+.tanstack
+dist
+dist-ssr
+.git
+.github
+hosterax/desktop/out
+*.log
+.env
+.env.*
+scratch
+hosterax/engine/*.db*

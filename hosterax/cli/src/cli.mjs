@@ -92,7 +92,7 @@ function help() {
   App Store & AI / MCP (Claude, Cursor, Devin, OpenAI, Gemini):
     ai "<prompt>" [--provider <name>] [--model <name>] Universal autonomous AI copilot (Claude, OpenAI, Ollama, Gemini)
     ai:key <apiKey> [--provider <name>]       Save AI provider API key in CLI config
-    ai:model <modelName>                      Set default AI model (e.g. gemini-2.5-flash, gpt-4o, claude-3-5-sonnet)
+    ai:model <modelName>                      Set default AI model (e.g. gemini-3.5-flash, gpt-4o, claude-3-5-sonnet)
     catalog:search <query> [--category <cat>] Search 2,502+ open-source template apps
     mcp:tools                                 List all 34 registered MCP tools
     mcp:call <toolName> [jsonArgs]            Execute MCP JSON-RPC tool directly
@@ -231,13 +231,9 @@ try {
         const sys = await api("GET", "/api/system");
         if (sys.docker) {
           if (sys.docker.running) {
-            console.log(
-              `Docker: ✓ online (${sys.docker.version || "Engine daemon active"})`,
-            );
+            console.log(`Docker: ✓ online (${sys.docker.version || "Engine daemon active"})`);
           } else {
-            console.log(
-              `Docker: ⚠️  offline (Start Docker Desktop to run container workloads)`,
-            );
+            console.log(`Docker: ⚠️  offline (Start Docker Desktop to run container workloads)`);
           }
         }
         console.log(`CPU: ${sys.cpu.percent}% (${sys.cpu.cores} cores)`);
@@ -247,9 +243,7 @@ try {
         console.log(
           `Uptime: ${Math.floor((sys.os?.uptime || 0) / 3600)}h ${Math.floor(((sys.os?.uptime || 0) % 3600) / 60)}m`,
         );
-        console.log(
-          `Host: ${os.hostname()} (${sys.os?.platform || process.platform})`,
-        );
+        console.log(`Host: ${os.hostname()} (${sys.os?.platform || process.platform})`);
       } catch {}
       break;
     }

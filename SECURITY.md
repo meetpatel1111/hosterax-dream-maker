@@ -8,11 +8,11 @@ The HosteraX team takes security, container isolation, and data privacy seriousl
 
 We release patches and security fixes for the following versions:
 
-| Version | Supported | Notes |
-| :--- | :---: | :--- |
-| **0.2.x** |  Yes | Current active release branch |
-| **0.1.x** | ⚠️ Limited | Critical security patches only |
-| **< 0.1.0** | ❌ No | Please upgrade to the latest version |
+| Version     | Supported  | Notes                                |
+| :---------- | :--------: | :----------------------------------- |
+| **0.2.x**   |    Yes     | Current active release branch        |
+| **0.1.x**   | ⚠️ Limited | Critical security patches only       |
+| **< 0.1.0** |   ❌ No    | Please upgrade to the latest version |
 
 ---
 
@@ -33,10 +33,12 @@ HosteraX is architected with defense-in-depth principles:
 If you discover a potential security vulnerability in HosteraX, please **do not report it in public GitHub issues**.
 
 Instead, please responsibly disclose it via:
-* **Private GitHub Security Advisory**: Open a draft advisory under the GitHub repository's **Security** tab.
-* **Email**: Contact the security team at **security@hosterax.io** (or contact the repository maintainers directly).
+
+- **Private GitHub Security Advisory**: Open a draft advisory under the GitHub repository's **Security** tab.
+- **Email**: Contact the security team at **security@hosterax.io** (or contact the repository maintainers directly).
 
 ### What to Include in Your Report:
+
 - A clear description of the vulnerability.
 - Steps to reproduce or proof-of-concept (PoC) code.
 - Impact assessment (e.g., privilege escalation, remote execution, denial of service).

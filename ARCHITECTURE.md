@@ -44,6 +44,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ## 🧩 Core Subsystems
 
 ### 1. Control Plane & Web Dashboard (`src/`)
+
 - **Technology**: TanStack Start, React 19, Tailwind CSS, Radix UI.
 - **File-Based Routing**: Strict route typing via `@tanstack/react-router` in `src/routes/`.
 - **Localization**: Native instant multi-language support (English, Spanish, French, German, Chinese, Japanese, Arabic with RTL).
@@ -52,6 +53,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ---
 
 ### 2. Universal MCP Server (`hosterax/engine/src/mcp-server.mjs`)
+
 - Implements the **Model Context Protocol (JSON-RPC 2.0)** for direct AI agent integration.
 - Exposes **34 registered tools** across:
   - Project provisioning, zero-downtime deployment, logs, rollback, and restart.
@@ -64,6 +66,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ---
 
 ### 3. Zero-Downtime Deployment & Supervisor (`hosterax/engine/src/index.mjs`)
+
 - **Blue/Green Release Lifecycle**:
   1. Clones repository or resolves direct container image into an isolated versioned workdir (`~/.hosterax/work/<project>/<version>`).
   2. Builds project using native toolchains or generated multi-stage Dockerfiles.
@@ -75,6 +78,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ---
 
 ### 4. Autonomous Self-Healing & AI Diagnostics (`hosterax/engine/src/self-heal.mjs`)
+
 - Probes running containers and processes every 5 seconds.
 - Automatically handles:
   - **Deadlock / Unresponsive Sockets**: Suspends intrusive checks when Docker Desktop is offline.
@@ -85,6 +89,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ---
 
 ### 5. Multi-Node Remote Fleet Management (`hosterax/engine/src/server-manager.mjs`)
+
 - Connects to remote Linux servers via encrypted SSH.
 - Gathers hardware metrics (CPU load, memory usage, disk headroom, Docker status).
 - Deploys container workloads to remote nodes with zero remote agent installation required.
@@ -92,6 +97,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ---
 
 ### 6. Edge Proxy & Magic DNS (`hosterax/engine/src/edge-manager.mjs` & `tls-manager.mjs`)
+
 - **Edge Drivers**: Supports OpenResty (Lua-powered dynamic routing) and Caddy 2.
 - **Magic DNS**: Instant wildcards via `nip.io` and `sslip.io` without requiring manual DNS configuration.
 - **Automated SSL**: Automatic ACME HTTP-01 challenge verification and Let's Encrypt TLS renewal.
@@ -99,5 +105,6 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ---
 
 ### 7. App Store & 2,502+ Template Catalog (`public/catalog.json`)
+
 - Offline-first database compiling templates from **Awesome-Selfhosted**, **selfh.st**, and **Awesome-Sysadmin**.
 - Pre-mapped container images with high-resolution vector SVGs from **Homarr** and **Simple Icons**.

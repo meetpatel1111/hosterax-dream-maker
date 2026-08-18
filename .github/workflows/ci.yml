@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test & Typecheck (${{ matrix.os }} - Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node-version: [20.x, 22.x]
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Check TypeScript Types
+        run: npx tsc --noEmit
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Check Prettier Formatting
+        run: npx prettier --check "src/**/*.{ts,tsx}" "hosterax/**/*.{mjs,js,json}" "*.{md,json}"
+
+      - name: Run Engine Test Suite (18 Suites)
+        run: npm run test:engine
+
+      - name: Build Frontend Production Bundle
+        run: npm run build
+
+      - name: Verify CLI NPM Tarball (Dry Run)
+        run: npm --prefix hosterax/cli pack --dry-run

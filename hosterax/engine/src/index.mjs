@@ -2419,7 +2419,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/health" || url.pathname === "/api/health")
-    return json(res, 200, { ok: true, version: "0.2.0" });
+    return json(res, 200, { ok: true, version: "1.0.0" });
   // Rate limit: 120 req/min for auth endpoints, 600/min for others
   const isAuthEndpoint = url.pathname.startsWith("/api/auth") || url.pathname === "/api/token";
   if (rateLimit(req, isAuthEndpoint ? 120 : 600)) {
@@ -2506,9 +2506,7 @@ const server = http.createServer(async (req, res) => {
         containers_count: contCount,
         running: Boolean(selfHeal?.daemonHealthy),
         version: selfHeal?.daemonVersion || null,
-        error: !selfHeal?.daemonHealthy
-          ? "Docker Desktop is offline or unreachable"
-          : null,
+        error: !selfHeal?.daemonHealthy ? "Docker Desktop is offline or unreachable" : null,
       },
       os: {
         platform: os.platform(),
@@ -3253,7 +3251,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         mcp: "2024-11-05",
         server: "HosteraX Autonomous Engine",
-        version: "0.2.0",
+        version: "1.0.0",
         endpoint: "/api/mcp",
         transport: "JSON-RPC 2.0 (HTTP POST)",
         capabilities: { tools: true, resources: true, prompts: true },

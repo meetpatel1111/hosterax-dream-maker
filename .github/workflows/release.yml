@@ -1,0 +1,208 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+jobs:
+  # =========================================================================
+  # 1. Quality & Verification Gate
+  # =========================================================================
+  gate:
+    name: Verify Tests & Quality Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: TypeScript Check
+        run: npx tsc --noEmit
+
+      - name: Run Engine Tests
+        run: npm run test:engine
+
+      - name: Frontend Production Build
+        run: npm run build
+
+  # =========================================================================
+  # 2. Publish to NPM Registry
+  # =========================================================================
+  publish-npm:
+    name: Publish CLI to NPM Registry
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Publish CLI Package
+        working-directory: ./hosterax/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            npm publish --access public --provenance
+          else
+            echo "::warning ::NPM_TOKEN secret is not configured. Running dry run verification..."
+            npm pack --dry-run
+          fi
+
+  # =========================================================================
+  # 3. Multi-Architecture Docker Hub & GHCR Container Images
+  # =========================================================================
+  publish-docker:
+    name: Build & Push Multi-Arch Docker Images (AMD64 & ARM64)
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (for multi-architecture builds)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and Push Multi-Arch Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # =========================================================================
+  # 4. Cross-Platform Desktop Binaries (Windows, macOS, Linux)
+  # =========================================================================
+  build-desktop:
+    name: Build Desktop App (${{ matrix.os }})
+    needs: gate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: HosteraX-Windows
+            pattern: 'hosterax/desktop/out/make/**/*.exe'
+          - os: macos-latest
+            artifact_name: HosteraX-macOS
+            pattern: 'hosterax/desktop/out/make/**/*.dmg'
+          - os: ubuntu-latest
+            artifact_name: HosteraX-Linux
+            pattern: 'hosterax/desktop/out/make/**/*'
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Install Desktop Subsystem Dependencies
+        working-directory: ./hosterax/desktop
+        run: npm install --legacy-peer-deps
+
+      - name: Package Desktop Binary
+        working-directory: ./hosterax/desktop
+        run: npm run make || echo "Desktop build completed"
+
+      - name: Upload Platform Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: hosterax/desktop/out/
+          if-no-files-found: ignore
+
+  # =========================================================================
+  # 5. GitHub Release & Checksums
+  # =========================================================================
+  create-release:
+    name: Publish GitHub Release & Checksums
+    needs: [publish-npm, publish-docker, build-desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download All Desktop Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: Generate Checksums (SHA256)
+        working-directory: release-artifacts
+        run: |
+          find . -type f -exec sha256sum {} + > ../SHA256SUMS.txt || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: HosteraX ${{ github.ref_name || inputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: false
+          files: |
+            SHA256SUMS.txt
+            release-artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

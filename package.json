@@ -1,6 +1,6 @@
 {
   "name": "hosterax",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "HosteraX - Autonomous Self-Hosted Cloud Control Plane with Universal Model Context Protocol (MCP)",
   "private": true,
   "license": "Apache-2.0",
@@ -18,7 +18,8 @@
     "test:engine": "node --test hosterax/engine/test/engine.test.mjs",
     "catalog:sync": "node ./scripts/sync-catalog.mjs",
     "desktop:start": "electron ./hosterax/desktop",
-    "desktop:make": "npm --prefix hosterax/desktop run make"
+    "desktop:make": "npm --prefix hosterax/desktop run make",
+    "release:verify": "node ./scripts/release.mjs"
   },
   "bin": {
     "hosterax": "./hosterax/cli/src/cli.mjs",
