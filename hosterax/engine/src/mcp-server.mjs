@@ -888,18 +888,33 @@ export class MCPServer {
         }
 
         case "search_catalog": {
-          const q = (args.query || "").toLowerCase();
-          const cat = (args.category || "").toLowerCase();
-          const results = (this.catalogApps || [])
-            .filter((a) => {
-              const matchesQ =
-                (a.name && a.name.toLowerCase().includes(q)) ||
-                (a.description && a.description.toLowerCase().includes(q));
-              const matchesCat = !cat || (a.category && a.category.toLowerCase().includes(cat));
-              return matchesQ && matchesCat;
-            })
-            .slice(0, 20);
-          return formatResponse(results);
+          const rawQ = (args.query || "").toLowerCase().trim();
+          const tokens = rawQ ? rawQ.split(/\s+/).filter(Boolean) : [];
+          const cat = (args.category || "").toLowerCase().trim();
+          const list = this.catalogApps || [];
+          
+          let results = list.filter((a) => {
+            const name = (a.name || "").toLowerCase();
+            const desc = (a.desc || a.description || "").toLowerCase();
+            const tag = (a.tag || a.category || "").toLowerCase();
+            const allText = `${name} ${desc} ${tag}`;
+            
+            const matchesCat = !cat || tag.includes(cat);
+            if (!matchesCat) return false;
+            if (tokens.length === 0) return true;
+            return tokens.some((tok) => allText.includes(tok));
+          });
+          
+          // Sort by exact name match first, then term matches
+          results.sort((a, b) => {
+            const aName = (a.name || "").toLowerCase();
+            const bName = (b.name || "").toLowerCase();
+            if (rawQ && aName === rawQ) return -1;
+            if (rawQ && bName === rawQ) return 1;
+            return 0;
+          });
+
+          return formatResponse(results.slice(0, 20));
         }
 
         case "deploy_catalog_app": {

@@ -90,8 +90,10 @@ function help() {
     s3:sync                                   Trigger remote backup sync to AWS S3/R2
 
   App Store & AI / MCP:
+    ai "<prompt>" [--key <geminiKey>]         Autonomous AI copilot powered by Gemini & MCP tools
+    ai:key <geminiApiKey>                     Save Gemini API key in CLI config for persistent AI use
     catalog:search <query> [--category <cat>] Search 2,502+ open-source template apps
-    mcp:tools                                 List all 24+ registered MCP tools
+    mcp:tools                                 List all 34 registered MCP tools
     mcp:call <toolName> [jsonArgs]            Execute MCP JSON-RPC tool directly
     tokens                                    List personal access tokens
     token:new <label>                         Mint personal access token
@@ -784,6 +786,128 @@ try {
         params: { name: toolName, arguments: rawArgs },
       });
       console.log(rpc.result?.content?.[0]?.text || JSON.stringify(rpc, null, 2));
+      break;
+    }
+
+    case "ai:key": {
+      const key = args[0] || flag("key");
+      if (!key) {
+        console.error("Usage: htx ai:key <geminiApiKey>");
+        process.exit(1);
+      }
+      cfg.geminiApiKey = key;
+      saveCfg(cfg);
+      console.log("✓ Gemini API key saved to ~/.hosterax/cli.json");
+      break;
+    }
+
+    case "ai": {
+      const userPrompt = args[0];
+      if (!userPrompt) {
+        console.error("Usage: htx ai \"<your prompt>\" [--key <geminiApiKey>]");
+        process.exit(1);
+      }
+      const geminiKey = flag("key") || cfg.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!geminiKey) {
+        console.error("Error: Gemini API key not found.");
+        console.error("Set it with: htx ai:key <apiKey> or pass --key <apiKey> or set GEMINI_API_KEY env variable.");
+        process.exit(1);
+      }
+
+      console.log(`\n🤖 HosteraX Autonomous Agent thinking...`);
+
+      // 1. Fetch MCP Tools
+      const rpc = await api("POST", "/api/mcp", { jsonrpc: "2.0", id: "mcp_list", method: "tools/list" });
+      const mcpTools = rpc.result?.tools || [];
+      const functionDeclarations = mcpTools.map((t) => ({
+        name: t.name,
+        description: t.description,
+        parameters: JSON.parse(JSON.stringify(t.inputSchema || { type: "object", properties: {} })),
+      }));
+      const geminiTools = [{ functionDeclarations }];
+
+      const contents = [
+        {
+          role: "user",
+          parts: [{ text: userPrompt }],
+        },
+      ];
+
+      const model = "gemini-2.5-flash";
+      let geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+
+      let currentContents = [...contents];
+      let maxSteps = 5;
+
+      while (maxSteps-- > 0) {
+        let res = await fetch(geminiUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: currentContents,
+            tools: geminiTools,
+            systemInstruction: {
+              parts: [
+                {
+                  text: "You are the HosteraX Autonomous Cloud Agent. You have direct access to 34 HosteraX MCP tools. Answer the user prompt by invoking the relevant tools and then providing a clear, concise summary of the results.",
+                },
+              ],
+            },
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          console.error("Gemini API Error:", err.error?.message || res.statusText);
+          break;
+        }
+
+        const responseJson = await res.json();
+        const candidate = responseJson.candidates?.[0];
+        const parts = candidate?.content?.parts || [];
+
+        const funcCallPart = parts.find((p) => p.functionCall);
+        if (funcCallPart) {
+          const { name, args: callArgs } = funcCallPart.functionCall;
+          console.log(`\n⚡ Autonomous MCP Tool Call: \x1b[36m${name}\x1b[0m`);
+          if (Object.keys(callArgs || {}).length > 0) {
+            console.log(`   Args:`, JSON.stringify(callArgs));
+          }
+
+          // Execute tool on HosteraX MCP Server
+          const toolExec = await api("POST", "/api/mcp", {
+            jsonrpc: "2.0",
+            id: "ai_exec_" + Date.now(),
+            method: "tools/call",
+            params: { name, arguments: callArgs || {} },
+          });
+
+          let toolResultRaw = toolExec.result?.content?.[0]?.text;
+          let toolData;
+          try {
+            toolData = JSON.parse(toolResultRaw);
+          } catch {
+            toolData = { raw: toolResultRaw };
+          }
+
+          // Push model turn and user functionResponse turn
+          currentContents.push(candidate.content);
+          currentContents.push({
+            role: "user",
+            parts: [{ functionResponse: { name, response: { content: toolData } } }],
+          });
+          continue;
+        }
+
+        const text = parts
+          .map((p) => p.text)
+          .filter(Boolean)
+          .join("\n");
+        if (text) {
+          console.log(`\n💡 \x1b[1mAnswer:\x1b[0m\n${text}\n`);
+        }
+        break;
+      }
       break;
     }
 
