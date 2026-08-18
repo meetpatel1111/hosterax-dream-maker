@@ -52,7 +52,9 @@ COPY public ./public
 COPY package.json ./
 
 # Link global CLI binaries
-RUN npm link ./hosterax/cli
+RUN chmod +x ./hosterax/cli/src/cli.mjs \
+    && ln -sf /app/hosterax/cli/src/cli.mjs /usr/local/bin/hosterax \
+    && ln -sf /app/hosterax/cli/src/cli.mjs /usr/local/bin/htx
 
 # Copy built frontend assets
 COPY --from=frontend-builder /app/.output ./.output
