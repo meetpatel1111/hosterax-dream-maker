@@ -4,7 +4,8 @@
   "type": "module",
   "private": true,
   "bin": {
-    "hosterax": "./src/cli.mjs"
+    "hosterax": "./src/cli.mjs",
+    "hx": "./src/cli.mjs"
   },
   "engines": {
     "node": ">=20"

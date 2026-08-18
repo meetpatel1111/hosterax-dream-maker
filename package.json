@@ -9,7 +9,13 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "hosterax": "node ./hosterax/cli/src/cli.mjs",
+    "hx": "node ./hosterax/cli/src/cli.mjs"
+  },
+  "bin": {
+    "hosterax": "./hosterax/cli/src/cli.mjs",
+    "hx": "./hosterax/cli/src/cli.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
