@@ -10,7 +10,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 
 const DESKTOP_DIR = path.join(ROOT, "hosterax", "desktop");
-const ENGINE_SRC = path.join(ROOT, "hosterax", "engine", "src");
+const ENGINE_DIR = path.join(ROOT, "hosterax", "engine");
+const ENGINE_SRC = path.join(ENGINE_DIR, "src");
+const ENGINE_MODULES = path.join(ENGINE_DIR, "node_modules");
 const DESKTOP_ENGINE_DIR = path.join(DESKTOP_DIR, "engine");
 const DESKTOP_DIST_DIR = path.join(DESKTOP_DIR, "dist");
 
@@ -30,10 +32,17 @@ function copyDirRecursive(src, dest) {
 
 console.log("[HosteraX Desktop] Preparing desktop app bundle...");
 
-// 1. Bundle Engine
+// 1. Bundle Engine source and pre-built node_modules
 fs.rmSync(DESKTOP_ENGINE_DIR, { recursive: true, force: true });
 fs.mkdirSync(DESKTOP_ENGINE_DIR, { recursive: true });
 copyDirRecursive(ENGINE_SRC, DESKTOP_ENGINE_DIR);
+
+if (fs.existsSync(ENGINE_MODULES)) {
+  copyDirRecursive(ENGINE_MODULES, path.join(DESKTOP_ENGINE_DIR, "node_modules"));
+}
+if (fs.existsSync(path.join(ENGINE_DIR, "package.json"))) {
+  fs.copyFileSync(path.join(ENGINE_DIR, "package.json"), path.join(DESKTOP_ENGINE_DIR, "package.json"));
+}
 console.log(`[HosteraX Desktop] Bundled engine into ${DESKTOP_ENGINE_DIR}`);
 
 // 2. Bundle Web UI
