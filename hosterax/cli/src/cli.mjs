@@ -89,12 +89,14 @@ function help() {
     s3:status                                 Check remote S3/R2 backup sync status
     s3:sync                                   Trigger remote backup sync to AWS S3/R2
 
-  App Store & AI / MCP:
-    ai "<prompt>" [--key <geminiKey>]         Autonomous AI copilot powered by Gemini & MCP tools
-    ai:key <geminiApiKey>                     Save Gemini API key in CLI config for persistent AI use
+  App Store & AI / MCP (Claude, Cursor, Devin, OpenAI, Gemini):
+    ai "<prompt>" [--provider <name>]         Universal autonomous AI copilot (Claude, OpenAI, Ollama, Gemini)
+    ai:key <apiKey> [--provider <name>]       Save AI provider API key in CLI config
     catalog:search <query> [--category <cat>] Search 2,502+ open-source template apps
     mcp:tools                                 List all 34 registered MCP tools
     mcp:call <toolName> [jsonArgs]            Execute MCP JSON-RPC tool directly
+    mcp:config [cursor|claude|devin|windsurf] Output ready-to-use IDE MCP configuration JSON
+    mcp:stdio                                 Run stdio MCP transport for IDEs (Cursor, Claude, Devin)
     tokens                                    List personal access tokens
     token:new <label>                         Mint personal access token
 `);
@@ -789,36 +791,280 @@ try {
       break;
     }
 
+    case "mcp:config": {
+      const target = (args[0] || "all").toLowerCase();
+      const httpEndpoint = `${cfg.url}/api/mcp`;
+      const cliPath = path.resolve(process.argv[1]);
+
+      const configs = {
+        cursor: {
+          name: "Cursor IDE (.cursor/mcp.json or Settings -> Features -> MCP)",
+          config: {
+            mcpServers: {
+              hosterax: {
+                url: httpEndpoint,
+              },
+            },
+          },
+        },
+        claude: {
+          name: "Claude Desktop (claude_desktop_config.json)",
+          config: {
+            mcpServers: {
+              hosterax: {
+                command: "node",
+                args: [cliPath, "mcp:stdio"],
+              },
+            },
+          },
+        },
+        devin: {
+          name: "Devin / Windsurf / Codex / Custom Agents",
+          config: {
+            name: "hosterax",
+            type: "mcp",
+            url: httpEndpoint,
+          },
+        },
+      };
+
+      if (target === "cursor") {
+        console.log(JSON.stringify(configs.cursor.config, null, 2));
+      } else if (target === "claude") {
+        console.log(JSON.stringify(configs.claude.config, null, 2));
+      } else if (target === "devin" || target === "windsurf" || target === "codex") {
+        console.log(JSON.stringify(configs.devin.config, null, 2));
+      } else {
+        console.log(`\n╭─ HosteraX Model Context Protocol (MCP) Setup ─╮`);
+        console.log(`│ HTTP Endpoint: ${(httpEndpoint).padEnd(31)}│`);
+        console.log(`╰────────────────────────────────────────────────╯`);
+        for (const val of Object.values(configs)) {
+          console.log(`\n📌 ${val.name}:`);
+          console.log(JSON.stringify(val.config, null, 2));
+        }
+      }
+      break;
+    }
+
+    case "mcp:stdio": {
+      const { createInterface } = await import("readline");
+      const rl = createInterface({ input: process.stdin, terminal: false });
+      rl.on("line", async (line) => {
+        if (!line.trim()) return;
+        try {
+          const payload = JSON.parse(line);
+          const res = await api("POST", "/api/mcp", payload);
+          process.stdout.write(JSON.stringify(res) + "\n");
+        } catch (err) {
+          process.stdout.write(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: null,
+              error: { code: -32700, message: err.message },
+            }) + "\n",
+          );
+        }
+      });
+      break;
+    }
+
     case "ai:key": {
+      const provider = flag("provider") || "gemini";
       const key = args[0] || flag("key");
       if (!key) {
-        console.error("Usage: htx ai:key <geminiApiKey>");
+        console.error("Usage: htx ai:key <apiKey> [--provider openai|anthropic|gemini]");
         process.exit(1);
       }
-      cfg.geminiApiKey = key;
+      if (provider === "anthropic" || provider === "claude") {
+        cfg.anthropicApiKey = key;
+      } else if (provider === "openai") {
+        cfg.openaiApiKey = key;
+      } else {
+        cfg.geminiApiKey = key;
+      }
       saveCfg(cfg);
-      console.log("✓ Gemini API key saved to ~/.hosterax/cli.json");
+      console.log(`✓ ${provider.toUpperCase()} API key saved to ~/.hosterax/cli.json`);
       break;
     }
 
     case "ai": {
       const userPrompt = args[0];
       if (!userPrompt) {
-        console.error("Usage: htx ai \"<your prompt>\" [--key <geminiApiKey>]");
-        process.exit(1);
-      }
-      const geminiKey = flag("key") || cfg.geminiApiKey || process.env.GEMINI_API_KEY;
-      if (!geminiKey) {
-        console.error("Error: Gemini API key not found.");
-        console.error("Set it with: htx ai:key <apiKey> or pass --key <apiKey> or set GEMINI_API_KEY env variable.");
+        console.error("Usage: htx ai \"<your prompt>\" [--provider openai|claude|gemini|ollama] [--key <apiKey>]");
         process.exit(1);
       }
 
-      console.log(`\n🤖 HosteraX Autonomous Agent thinking...`);
+      // Auto-detect provider
+      let provider = flag("provider");
+      let apiKey = flag("key");
+
+      if (!provider) {
+        if (apiKey) provider = apiKey.startsWith("sk-ant") ? "anthropic" : apiKey.startsWith("sk-") ? "openai" : "gemini";
+        else if (process.env.ANTHROPIC_API_KEY || cfg.anthropicApiKey) provider = "anthropic";
+        else if (process.env.OPENAI_API_KEY || cfg.openaiApiKey) provider = "openai";
+        else if (process.env.OLLAMA_HOST) provider = "ollama";
+        else if (process.env.GEMINI_API_KEY || cfg.geminiApiKey) provider = "gemini";
+        else provider = "gemini";
+      }
+
+      console.log(`\n🤖 HosteraX Autonomous Agent thinking (${provider.toUpperCase()})...`);
 
       // 1. Fetch MCP Tools
       const rpc = await api("POST", "/api/mcp", { jsonrpc: "2.0", id: "mcp_list", method: "tools/list" });
       const mcpTools = rpc.result?.tools || [];
+
+      // ── Provider: Anthropic (Claude) ──
+      if (provider === "anthropic" || provider === "claude") {
+        const key = apiKey || cfg.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+        if (!key) {
+          console.error("Error: Anthropic API key not found. Set ANTHROPIC_API_KEY or run: htx ai:key <key> --provider anthropic");
+          process.exit(1);
+        }
+        const claudeTools = mcpTools.map((t) => ({
+          name: t.name,
+          description: t.description,
+          input_schema: t.inputSchema || { type: "object", properties: {} },
+        }));
+
+        let messages = [{ role: "user", content: userPrompt }];
+        let maxSteps = 5;
+
+        while (maxSteps-- > 0) {
+          const res = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-api-key": key,
+              "anthropic-version": "2023-06-01",
+            },
+            body: JSON.stringify({
+              model: "claude-3-5-sonnet-20241022",
+              max_tokens: 1024,
+              system: "You are the HosteraX Autonomous Cloud Agent. You have direct access to 34 HosteraX MCP tools to inspect and manage infrastructure.",
+              messages,
+              tools: claudeTools,
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            console.error("Anthropic API Error:", err.error?.message || res.statusText);
+            break;
+          }
+          const resp = await res.json();
+          const toolUse = resp.content?.find((c) => c.type === "tool_use");
+          if (toolUse) {
+            console.log(`\n⚡ Autonomous MCP Tool Call: \x1b[36m${toolUse.name}\x1b[0m`);
+            if (Object.keys(toolUse.input || {}).length > 0) {
+              console.log(`   Args:`, JSON.stringify(toolUse.input));
+            }
+            const toolExec = await api("POST", "/api/mcp", {
+              jsonrpc: "2.0",
+              id: "ai_" + Date.now(),
+              method: "tools/call",
+              params: { name: toolUse.name, arguments: toolUse.input || {} },
+            });
+            const resultText = toolExec.result?.content?.[0]?.text || JSON.stringify(toolExec);
+            messages.push({ role: "assistant", content: resp.content });
+            messages.push({
+              role: "user",
+              content: [
+                {
+                  type: "tool_result",
+                  tool_use_id: toolUse.id,
+                  content: resultText,
+                },
+              ],
+            });
+            continue;
+          }
+          const textBlock = resp.content?.find((c) => c.type === "text");
+          if (textBlock?.text) {
+            console.log(`\n💡 \x1b[1mAnswer:\x1b[0m\n${textBlock.text}\n`);
+          }
+          break;
+        }
+        break;
+      }
+
+      // ── Provider: OpenAI / Ollama ──
+      if (provider === "openai" || provider === "ollama") {
+        const key = apiKey || cfg.openaiApiKey || process.env.OPENAI_API_KEY || (provider === "ollama" ? "ollama" : "");
+        const baseUrl = provider === "ollama"
+          ? (process.env.OLLAMA_HOST || "http://localhost:11434") + "/v1"
+          : (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
+        const modelName = provider === "ollama" ? "llama3" : "gpt-4o";
+
+        const openAiTools = mcpTools.map((t) => ({
+          type: "function",
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.inputSchema || { type: "object", properties: {} },
+          },
+        }));
+
+        let messages = [{ role: "user", content: userPrompt }];
+        let maxSteps = 5;
+
+        while (maxSteps-- > 0) {
+          const res = await fetch(`${baseUrl}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${key}`,
+            },
+            body: JSON.stringify({
+              model: modelName,
+              messages,
+              tools: openAiTools,
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            console.error("OpenAI API Error:", err.error?.message || res.statusText);
+            break;
+          }
+          const resp = await res.json();
+          const choice = resp.choices?.[0]?.message;
+          if (choice?.tool_calls?.length > 0) {
+            const call = choice.tool_calls[0];
+            const name = call.function.name;
+            const callArgs = JSON.parse(call.function.arguments || "{}");
+            console.log(`\n⚡ Autonomous MCP Tool Call: \x1b[36m${name}\x1b[0m`);
+            if (Object.keys(callArgs).length > 0) {
+              console.log(`   Args:`, JSON.stringify(callArgs));
+            }
+            const toolExec = await api("POST", "/api/mcp", {
+              jsonrpc: "2.0",
+              id: "ai_" + Date.now(),
+              method: "tools/call",
+              params: { name, arguments: callArgs },
+            });
+            const resultText = toolExec.result?.content?.[0]?.text || JSON.stringify(toolExec);
+            messages.push(choice);
+            messages.push({
+              role: "tool",
+              tool_call_id: call.id,
+              content: resultText,
+            });
+            continue;
+          }
+          if (choice?.content) {
+            console.log(`\n💡 \x1b[1mAnswer:\x1b[0m\n${choice.content}\n`);
+          }
+          break;
+        }
+        break;
+      }
+
+      // ── Provider: Google Gemini ──
+      const geminiKey = apiKey || cfg.geminiApiKey || process.env.GEMINI_API_KEY;
+      if (!geminiKey) {
+        console.error("Error: No AI provider API key found.");
+        console.error("Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GEMINI_API_KEY, or run: htx ai:key <key>");
+        process.exit(1);
+      }
+
       const functionDeclarations = mcpTools.map((t) => ({
         name: t.name,
         description: t.description,
@@ -826,13 +1072,7 @@ try {
       }));
       const geminiTools = [{ functionDeclarations }];
 
-      const contents = [
-        {
-          role: "user",
-          parts: [{ text: userPrompt }],
-        },
-      ];
-
+      const contents = [{ role: "user", parts: [{ text: userPrompt }] }];
       const model = "gemini-2.5-flash";
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
@@ -881,7 +1121,6 @@ try {
             console.log(`   Args:`, JSON.stringify(callArgs));
           }
 
-          // Execute tool on HosteraX MCP Server
           const toolExec = await api("POST", "/api/mcp", {
             jsonrpc: "2.0",
             id: "ai_exec_" + Date.now(),
@@ -897,7 +1136,6 @@ try {
             toolData = { raw: toolResultRaw };
           }
 
-          // Push model turn and user functionResponse turn
           currentContents.push(candidate.content);
           currentContents.push({
             role: "user",
