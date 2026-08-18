@@ -878,7 +878,8 @@ export function createProjectsApi(ctx) {
 
           stopProject?.(targetName, isPermanent ? "project purged" : "project archived");
           try {
-            spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
+            const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
+            child.on("error", () => {});
           } catch {}
 
           // Clean up cloned project working directories on disk (always frees 100% disk space)

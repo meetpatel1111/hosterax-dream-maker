@@ -1080,7 +1080,8 @@ const staticServers = new Map(); // project -> http.Server
 function stopProject(project, reason = "manual stop") {
   const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
   try {
-    spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
+    const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
+    child.on("error", () => {});
   } catch {}
   const srv = staticServers.get(project);
   if (srv) {
@@ -4021,8 +4022,8 @@ const server = http.createServer(async (req, res) => {
         process.platform === "win32" ? ["/c", cmd] : ["-c", cmd],
       );
       let out = "";
-      child.stdout.on("data", (d) => (out += d.toString()));
-      child.stderr.on("data", (d) => (out += d.toString()));
+      child.stdout?.on("data", (d) => (out += d.toString()));
+      child.stderr?.on("data", (d) => (out += d.toString()));
       child.on("close", (code) => {
         const status = code === 0 ? "running" : "failed";
         db.prepare("UPDATE installed_apps SET status=?, container_id=? WHERE id=?").run(
@@ -4031,17 +4032,23 @@ const server = http.createServer(async (req, res) => {
           id,
         );
       });
+      child.on("error", () => {
+        db.prepare("UPDATE installed_apps SET status='failed' WHERE id=?").run(id);
+      });
       return json(res, 200, { id, slug: b.slug });
     }
     if ((m = url.pathname.match(/^\/api\/apps\/([^/]+)$/)) && req.method === "DELETE") {
       const app = db.prepare("SELECT * FROM installed_apps WHERE id=?").get(m[1]);
       if (app?.container_id) {
-        spawn(
-          process.platform === "win32" ? "cmd.exe" : "sh",
-          process.platform === "win32"
-            ? ["/c", `docker rm -f ${app.container_id}`]
-            : ["-c", `docker rm -f ${app.container_id}`],
-        );
+        try {
+          const c = spawn(
+            process.platform === "win32" ? "cmd.exe" : "sh",
+            process.platform === "win32"
+              ? ["/c", `docker rm -f ${app.container_id}`]
+              : ["-c", `docker rm -f ${app.container_id}`],
+          );
+          c.on("error", () => {});
+        } catch {}
       }
       db.prepare("DELETE FROM installed_apps WHERE id=?").run(m[1]);
       return json(res, 200, { ok: true });
