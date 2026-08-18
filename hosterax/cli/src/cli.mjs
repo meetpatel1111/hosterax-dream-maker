@@ -1085,6 +1085,7 @@ try {
 
       let currentContents = [...contents];
       let maxSteps = 5;
+      let rateLimitRetries = 0;
 
       while (maxSteps-- > 0) {
         let res = await fetch(geminiUrl, {
@@ -1106,8 +1107,12 @@ try {
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           if (res.status === 429) {
+            if (++rateLimitRetries > 2) {
+              console.error("Gemini API Rate Limit: Quota currently exhausted. Please try again in 1 minute or use a paid/custom API key.");
+              break;
+            }
             const match = err.error?.message?.match(/retry in ([\d\.]+)s/i);
-            const waitSec = match ? Math.ceil(parseFloat(match[1])) + 1 : 5;
+            const waitSec = match ? Math.min(Math.ceil(parseFloat(match[1])) + 1, 15) : 5;
             console.log(`⏳ Gemini Free-tier RPM limit reached. Waiting ${waitSec}s...`);
             await new Promise((r) => setTimeout(r, waitSec * 1000));
             continue;
