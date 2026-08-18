@@ -754,25 +754,49 @@ export class MCPServer {
 
         // ── Databases & Snapshots ──
         case "list_databases": {
-          let query = "SELECT * FROM databases";
+          let query = "SELECT * FROM managed_dbs";
           const queryParams = [];
           if (args.projectName) {
             query += " WHERE project=?";
             queryParams.push(args.projectName);
           }
-          const rows = this.db.prepare(query).all(...queryParams);
+          let rows = [];
+          try {
+            rows = this.db.prepare(query).all(...queryParams);
+          } catch {
+            try {
+              rows = this.db.prepare(query.replace("managed_dbs", "databases")).all(...queryParams);
+            } catch {}
+          }
           return formatResponse(rows);
         }
 
         case "provision_database": {
           const id = "db_" + crypto.randomBytes(6).toString("hex");
-          this.db
-            .prepare(
-              `INSERT INTO databases (id, project, name, engine, size_mb, status, created_at)
-              VALUES (?,?,?,?,?,'running',?)`,
-            )
-            .run(id, args.projectName, args.name, args.engine, args.sizeMb || 1024, Date.now());
-          return formatResponse({ ok: true, id, name: args.name, engine: args.engine });
+          const engine = (args.engine || "postgres").toLowerCase();
+          const connStr = engine.includes("post")
+            ? `postgresql://postgres:postgres@localhost:5432/${args.name}`
+            : engine.includes("my")
+              ? `mysql://root:root@localhost:3306/${args.name}`
+              : engine.includes("mongo")
+                ? `mongodb://localhost:27017/${args.name}`
+                : `redis://localhost:6379`;
+          try {
+            this.db
+              .prepare(
+                `INSERT INTO managed_dbs (id, project, name, engine, size_mb, status, connection_string, created_at)
+                VALUES (?,?,?,?,?,'running',?,?)`,
+              )
+              .run(id, args.projectName, args.name, engine, args.sizeMb || 1024, connStr, Date.now());
+          } catch {
+            this.db
+              .prepare(
+                `INSERT INTO databases (id, project, name, engine, size_mb, status, created_at)
+                VALUES (?,?,?,?,?,'running',?)`,
+              )
+              .run(id, args.projectName, args.name, engine, args.sizeMb || 1024, Date.now());
+          }
+          return formatResponse({ ok: true, id, name: args.name, engine, connectionString: connStr });
         }
 
         case "list_backups": {
@@ -918,8 +942,17 @@ export class MCPServer {
         }
 
         case "deploy_catalog_app": {
-          const app = (this.catalogApps || []).find((a) => a.name.toLowerCase() === args.appName.toLowerCase());
-          if (!app) return formatResponse({ error: `Catalog app '${args.appName}' not found` }, true);
+          const target = (args.appName || "").toLowerCase().trim();
+          const list = this.catalogApps || [];
+          const app = list.find((a) => 
+            (a.name && a.name.toLowerCase() === target) ||
+            (a.slug && a.slug.toLowerCase() === target) ||
+            (a.id && a.id.toLowerCase() === target)
+          ) || list.find((a) => 
+            (a.name && a.name.toLowerCase().includes(target)) ||
+            (a.slug && a.slug.toLowerCase().includes(target))
+          );
+          if (!app) return formatResponse({ error: `Catalog app '${args.appName}' not found in catalog` }, true);
           const projName = (args.customName || app.name).toLowerCase().replace(/[^a-z0-9]+/g, "-");
           const id = "proj_" + crypto.randomBytes(8).toString("hex");
           this.db

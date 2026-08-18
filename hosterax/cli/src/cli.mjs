@@ -834,7 +834,7 @@ try {
       ];
 
       const model = "gemini-2.5-flash";
-      let geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
       let currentContents = [...contents];
       let maxSteps = 5;
@@ -858,6 +858,13 @@ try {
 
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
+          if (res.status === 429) {
+            const match = err.error?.message?.match(/retry in ([\d\.]+)s/i);
+            const waitSec = match ? Math.ceil(parseFloat(match[1])) + 1 : 5;
+            console.log(`⏳ Gemini Free-tier RPM limit reached. Waiting ${waitSec}s...`);
+            await new Promise((r) => setTimeout(r, waitSec * 1000));
+            continue;
+          }
           console.error("Gemini API Error:", err.error?.message || res.statusText);
           break;
         }
