@@ -14,8 +14,8 @@
   <a href="#-deployment-modes">Deployment Modes</a> •
   <a href="#-key-features">Features</a> •
   <a href="#-cli-commands">CLI (`htx`)</a> •
-  <a href="#-mcp-ide-integration">MCP IDE Setup</a> •
-  <a href="#-app-store-catalog">App Store (2,502+ Apps)</a> •
+  <a href="#-mcp-tool-matrix-34-tools">MCP 34 Tools</a> •
+  <a href="#-deployment-engine-matrix">Deployment Matrix</a> •
   <a href="#-downloads">Downloads</a>
 </p>
 
@@ -104,6 +104,73 @@ Download the official standalone application packages from the **[GitHub Release
 - ✉️ **Self-Hosted Email Stack**: Inbound/outbound email management with DKIM, SPF, DMARC validation, mailboxes, forwarding aliases, and external SMTP relay chaining.
 - 🖥️ **Multi-Node Fleet Management**: Add and orchestrate remote servers over SSH with live CPU/RAM load telemetry and latency pings.
 - ⏱️ **Distributed Cron Engine**: Schedule recurring tasks with human-readable crontab schedules, audit execution logs, and manual triggers.
+
+---
+
+## 🤖 Model Context Protocol (MCP) 34-Tool Matrix
+
+HosteraX exposes **34 native DevOps & SRE tools** to any AI Coding Agent via standard JSON-RPC 2.0:
+
+| Category | Tool Name | Description |
+| :--- | :--- | :--- |
+| 📊 **Observability** | `get_system_stats` | Live CPU, Memory, Disk gauges, and active routes |
+| 📊 **Observability** | `get_system_metrics` | Detailed host metrics, platform specs, and load averages |
+| 📊 **Observability** | `get_activity_logs` | Server deployment audit log and execution events |
+| 📁 **Projects & Apps** | `list_projects` | List all applications, statuses, ports, and domains |
+| 📁 **Projects & Apps** | `get_project` | Inspect project quotas, health metrics, and config |
+| 📁 **Projects & Apps** | `create_project` | Provision app from Git, Dockerfile, or local workspace |
+| 📁 **Projects & Apps** | `update_project` | Update build commands, ports, and sleep modes |
+| 📁 **Projects & Apps** | `delete_project` | Destroy containers and clean up routing rules |
+| 🚀 **Deployments** | `deploy_project` | Trigger zero-downtime blue/green deployment |
+| 🚀 **Deployments** | `rollback_project` | 1-click byte-for-byte rollback to previous snapshot |
+| 🚀 **Deployments** | `get_deployment` | Query deployment progress, phase, and exit codes |
+| 🚀 **Deployments** | `get_project_logs` | Stream build and container runtime logs |
+| 🚀 **Deployments** | `restart_project` | Immediate container restart and self-heal trigger |
+| ⚙️ **Config & Limits** | `get_project_env` | Read environment variables and secrets |
+| ⚙️ **Config & Limits** | `set_project_env` | Inject/update environment variables |
+| ⚙️ **Config & Limits** | `set_project_quotas` | Set hard CPU core limits & RAM allocation caps |
+| 🌐 **Domains & Edge** | `list_domains` | List all custom domains and SSL certificate statuses |
+| 🌐 **Domains & Edge** | `add_domain` | Attach custom domain with Let's Encrypt TLS |
+| 🌐 **Domains & Edge** | `remove_domain` | Detach domain and revoke routing rules |
+| 🌐 **Domains & Edge** | `verify_domain_dns` | Query real-time DNS propagation and A records |
+| 🌐 **Domains & Edge** | `get_edge_routes` | Query Caddy / OpenResty proxy route tables |
+| 🌐 **Domains & Edge** | `create_edge_route` | Define custom upstream routing and middleware |
+| 🗄️ **Databases & S3** | `list_databases` | List provisioned PostgreSQL, MySQL, Redis, MongoDB |
+| 🗄️ **Databases & S3** | `create_database` | 1-click launch managed database container |
+| 🗄️ **Databases & S3** | `delete_database` | Delete database and unmount storage volumes |
+| 🗄️ **Databases & S3** | `list_backups` | View SHA-256 verified database snapshots |
+| 🗄️ **Databases & S3** | `create_backup` | Take point-in-time snapshot of any database |
+| 🗄️ **Databases & S3** | `restore_backup` | Restore database snapshot instantly |
+| 🗄️ **Databases & S3** | `sync_s3_storage` | Trigger automated backup sync to S3 / Cloudflare R2 |
+| ⏰ **Cron Engine** | `list_cron_jobs` | Inspect scheduled cron schedules and triggers |
+| ⏰ **Cron Engine** | `create_cron_job` | Schedule recurring crontab task |
+| ⏰ **Cron Engine** | `run_cron_job` | Trigger manual immediate execution of any job |
+| ⏰ **Cron Engine** | `delete_cron_job` | Unregister scheduled task |
+| 🖥️ **Fleet & Catalog** | `list_servers` | Multi-node SSH cluster health & latency |
+| 🖥️ **Fleet & Catalog** | `add_server` | Attach remote VPS server to cluster |
+| 📦 **App Store** | `search_catalog` | Search 2,502+ open-source application templates |
+| 📦 **App Store** | `deploy_catalog_app` | 1-click launch Ghost, N8N, Nextcloud, Vaultwarden |
+
+---
+
+## 🔄 Deployment Engine Matrix (18+ Frameworks & Auto-Detection)
+
+| Framework / Stack | Supported Detectors | Default Build Command | Default Start Command |
+| :--- | :--- | :--- | :--- |
+| ⚡ **Next.js** | `package.json` with `"next"` | `npm run build` | `npm start` (or standalone server) |
+| ⚛️ **Vite / React / Vue** | `vite.config.*` / `"vite"` | `npm run build` | Embedded static file server (`dist/`) |
+| 🟢 **Node.js / Express** | `package.json` (Express/Fastify) | `npm install` | `node index.js` / `npm start` |
+| 🚀 **NestJS / TypeScript** | `nest-cli.json` / `tsconfig.json` | `npm run build` | `node dist/main.js` |
+| 🐍 **Python FastAPI** | `main.py`, `requirements.txt` | `pip install -r requirements.txt` | `uvicorn main:app --host 0.0.0.0 --port $PORT` |
+| 🐍 **Python Django / Flask** | `manage.py`, `app.py` | `pip install -r requirements.txt` | `gunicorn app:app` / `python manage.py runserver` |
+| 🦀 **Rust (Actix / Axum)** | `Cargo.toml` | `cargo build --release` | `./target/release/app` |
+| 🐹 **Go (Gin / Fiber)** | `go.mod` | `go build -o server .` | `./server` |
+| ☕ **Java Spring Boot** | `pom.xml`, `build.gradle` | `mvn clean package` / `./gradlew build` | `java -jar target/*.jar` |
+| 💎 **Ruby on Rails** | `Gemfile` with `rails` | `bundle install` | `bundle exec rails s -p $PORT -b 0.0.0.0` |
+| 🐘 **PHP Laravel** | `composer.json` with `laravel` | `composer install --no-dev` | `php artisan serve --port=$PORT` |
+| 🦔 **Bun / Deno** | `bun.lock`, `deno.json` | `bun install` / `deno cache` | `bun start` / `deno run -A main.ts` |
+| 🐳 **Dockerfile (Custom)** | `Dockerfile` | Custom multi-stage build | Container ENTRYPOINT / CMD |
+| 📦 **Docker Compose** | `docker-compose.yml` | Multi-service orchestration | Service composition |
 
 ---
 
