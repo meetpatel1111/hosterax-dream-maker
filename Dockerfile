@@ -56,7 +56,6 @@ RUN npm link ./hosterax/cli
 
 # Copy built frontend assets
 COPY --from=frontend-builder /app/.output ./.output
-COPY --from=frontend-builder /app/dist ./dist 2>/dev/null || true
 
 # Expose Engine (:7777) and Web Dashboard (:8080)
 EXPOSE 7777 8080
