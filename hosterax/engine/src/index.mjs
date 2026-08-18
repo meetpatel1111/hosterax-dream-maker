@@ -260,10 +260,21 @@ const MAGIC_DNS_PROVIDERS = {
   },
 };
 
+function getServerIp() {
+  return process.env.SERVER_IP || process.env.HOSTERAX_PUBLIC_IP || getSetting("server_public_ip", "127.0.0.1");
+}
+
 function getMagicDnsHost(projectName) {
   const provider = getSetting("magic_dns_provider", "sslip.io");
-  const p = MAGIC_DNS_PROVIDERS[provider] || MAGIC_DNS_PROVIDERS["sslip.io"];
-  return p.format(projectName);
+  const ip = getServerIp();
+  const dashedIp = ip.replace(/\./g, "-");
+
+  if (provider === "nip.io") return `${projectName}.${ip}.nip.io`;
+  if (provider === "traefik.me") return ip === "127.0.0.1" ? `${projectName}.traefik.me` : `${projectName}.${ip}.nip.io`;
+  if (provider === "ipq.co") return `${projectName}.${ip}.ipq.co`;
+  if (provider === "fdns.uk") return `${projectName}.${ip}.fdns.uk`;
+  if (provider === "localhost") return `${projectName}.localhost`;
+  return `${projectName}.${dashedIp}.sslip.io`;
 }
 
 initProjectsSchema(db);

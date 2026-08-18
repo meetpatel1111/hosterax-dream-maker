@@ -229,6 +229,9 @@ export class EdgeManager {
 
     // Map projects with upstreams and hostnames
     const routeList = [];
+    const serverIp = process.env.SERVER_IP || process.env.HOSTERAX_PUBLIC_IP || "127.0.0.1";
+    const dashedServerIp = serverIp.replace(/\./g, "-");
+
     for (const p of projects) {
       if (!p.port) continue;
       const projDomains = domains.filter((d) => d.project === p.name);
@@ -246,6 +249,19 @@ export class EdgeManager {
         `${p.name}.127.0.0.1.fdns.uk`,
         `${p.name}.localhost`,
       ]);
+
+      if (serverIp && serverIp !== "127.0.0.1") {
+        hostnames.add(`${p.name}.${serverIp}.nip.io`);
+        hostnames.add(`${p.name}.${serverIp.replace(/\./g, "-")}.nip.io`);
+        hostnames.add(`${p.name}.${serverIp}.sslip.io`);
+        hostnames.add(`${p.name}.${dashedServerIp}.sslip.io`);
+        hostnames.add(`${p.name}.${serverIp}.ipq.co`);
+        hostnames.add(`${p.name}.${serverIp}.fdns.uk`);
+        if (cleanName !== p.name) {
+          hostnames.add(`${cleanName}.${serverIp}.nip.io`);
+          hostnames.add(`${cleanName}.${dashedServerIp}.sslip.io`);
+        }
+      }
 
       if (cleanName !== p.name) {
         hostnames.add(`${cleanName}.127.0.0.1.nip.io`);
