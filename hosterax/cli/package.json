@@ -9,7 +9,10 @@
     "htx": "./src/cli.mjs"
   },
   "files": [
-    "src"
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "keywords": [
     "hosterax",
