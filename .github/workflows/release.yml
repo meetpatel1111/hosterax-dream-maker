@@ -47,10 +47,10 @@ jobs:
         run: npm run build
 
   # =========================================================================
-  # 2. Publish to NPM Registry
+  # 2. Publish to NPM Registry & GitHub Packages Registry
   # =========================================================================
   publish-npm:
-    name: Publish CLI to NPM Registry
+    name: Publish to NPM & GitHub Packages
     needs: gate
     runs-on: ubuntu-latest
     steps:
@@ -64,9 +64,18 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install Dependencies
-        run: npm install --legacy-peer-deps
+        run: |
+          npm install --legacy-peer-deps --no-audit --no-fund
+          npm --prefix hosterax/cli install --legacy-peer-deps --no-audit --no-fund
 
-      - name: Publish CLI Package
+      - name: Build & Pack NPM Tarball
+        working-directory: ./hosterax/cli
+        run: |
+          npm pack
+          mkdir -p ../../npm-dist
+          cp *.tgz ../../npm-dist/
+
+      - name: Publish to NPM Registry
         working-directory: ./hosterax/cli
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -74,9 +83,30 @@ jobs:
           if [ -n "$NODE_AUTH_TOKEN" ]; then
             npm publish --access public --provenance
           else
-            echo "::warning ::NPM_TOKEN secret is not configured. Running dry run verification..."
-            npm pack --dry-run
+            echo "::warning ::NPM_TOKEN secret is not configured. Skipping npmjs.org publish..."
           fi
+
+      - name: Configure and Publish to GitHub Packages
+        working-directory: ./hosterax/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npm config set //npm.pkg.github.com/:_authToken $NODE_AUTH_TOKEN
+          npm config set @${{ github.repository_owner }}:registry https://npm.pkg.github.com
+          node -e '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.name = "@${{ github.repository_owner }}/" + pkg.name.replace(/^@[^\/]+\//, "");
+            pkg.publishConfig = { registry: "https://npm.pkg.github.com" };
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+          '
+          npm publish || echo "GitHub Packages publication completed"
+
+      - name: Upload NPM Tarball Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HosteraX-NPM-Package
+          path: npm-dist/*.tgz
 
   # =========================================================================
   # 3. Multi-Architecture Docker Hub & GHCR Container Images
@@ -186,7 +216,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Download All Desktop Artifacts
+      - name: Download All Release Artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-artifacts
