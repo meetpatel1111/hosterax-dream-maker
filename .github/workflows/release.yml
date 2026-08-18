@@ -230,6 +230,11 @@ jobs:
             console.log("[HosteraX Desktop] Stamped package version to:", rawVer);
           '
 
+      - name: Build Web Dashboard & Prepare Desktop Assets
+        run: |
+          npm run build
+          npm run desktop:prepare
+
       - name: Package Desktop Binary
         working-directory: ./hosterax/desktop
         run: npm run make || echo "Desktop packaging step completed"

@@ -4,7 +4,13 @@ module.exports = {
     name: "HosteraX",
     executableName: "hosterax",
     icon: "./icon",
-    asar: true,
+    asar: {
+      unpack: "{engine/**/*,dist/**/*,node_modules/better-sqlite3/**/*}",
+    },
+    extraResource: [
+      "./engine",
+      "./dist",
+    ],
   },
   rebuildConfig: {},
   makers: [

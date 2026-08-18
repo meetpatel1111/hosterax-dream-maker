@@ -39,6 +39,8 @@ hosterax/engine/*.db
 hosterax/engine/*.db-journal
 hosterax/engine/*.db-wal
 hosterax/desktop/out/
+hosterax/desktop/engine/
+hosterax/desktop/dist/
 hosterax/cli/engine/
 hosterax/cli/dist/
 scratch/

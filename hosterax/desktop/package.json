@@ -18,6 +18,12 @@
   ],
   "author": "HosteraX Team",
   "license": "Apache-2.0",
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "nodemailer": "^6.10.0",
+    "undici": "^7.1.0",
+    "ws": "^8.18.0"
+  },
   "devDependencies": {
     "@electron-forge/cli": "^7.7.0",
     "@electron-forge/maker-deb": "^7.7.0",
