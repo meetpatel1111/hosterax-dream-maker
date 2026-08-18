@@ -894,17 +894,24 @@ try {
         process.exit(1);
       }
 
-      // Auto-detect provider
-      let provider = flag("provider");
+      // Provider resolution (Default: Gemini)
+      let provider = flag("provider") || cfg.defaultAiProvider;
       let apiKey = flag("key");
 
       if (!provider) {
-        if (apiKey) provider = apiKey.startsWith("sk-ant") ? "anthropic" : apiKey.startsWith("sk-") ? "openai" : "gemini";
-        else if (process.env.ANTHROPIC_API_KEY || cfg.anthropicApiKey) provider = "anthropic";
-        else if (process.env.OPENAI_API_KEY || cfg.openaiApiKey) provider = "openai";
-        else if (process.env.OLLAMA_HOST) provider = "ollama";
-        else if (process.env.GEMINI_API_KEY || cfg.geminiApiKey) provider = "gemini";
-        else provider = "gemini";
+        if (apiKey) {
+          provider = apiKey.startsWith("sk-ant") ? "anthropic" : apiKey.startsWith("sk-") ? "openai" : "gemini";
+        } else if (process.env.GEMINI_API_KEY || cfg.geminiApiKey) {
+          provider = "gemini"; // Default
+        } else if (process.env.ANTHROPIC_API_KEY || cfg.anthropicApiKey) {
+          provider = "anthropic";
+        } else if (process.env.OPENAI_API_KEY || cfg.openaiApiKey) {
+          provider = "openai";
+        } else if (process.env.OLLAMA_HOST) {
+          provider = "ollama";
+        } else {
+          provider = "gemini";
+        }
       }
 
       console.log(`\n🤖 HosteraX Autonomous Agent thinking (${provider.toUpperCase()})...`);
