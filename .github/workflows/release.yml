@@ -332,19 +332,15 @@ jobs:
             fi
           done
 
-          echo "=== Complete HosteraX Release Asset Suite ==="
-          ls -lah
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
-          name: HosteraX ${{ github.ref_name || inputs.version || 'v1.0.0' }}
-          body_path: CHANGELOG.md
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-          files: |
-            final-dist/*
+      - name: Publish GitHub Release with All Packages & Checksums
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REL_VER: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
+        run: |
+          echo "Publishing official GitHub Release for tag: $REL_VER"
+          gh release create "$REL_VER" final-dist/* \
+            --title "HosteraX $REL_VER" \
+            --notes-file CHANGELOG.md \
+            --generate-notes \
+            || gh release upload "$REL_VER" final-dist/* --clobber
+          echo "✅ GitHub Release $REL_VER successfully published with all 20+ assets!"
