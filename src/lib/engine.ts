@@ -1,4 +1,4 @@
-import { useSyncExternalStore, useCallback } from "react";
+import { useSyncExternalStore, useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 export * from "./schema";
 
@@ -19,7 +19,7 @@ const listeners = new Set<() => void>();
 
 // Auto-discover local engine bootstrap token if not set
 if (typeof window !== "undefined") {
-  if (!state.token && state.url.includes("localhost")) {
+  if (!state.token && (state.url.includes("localhost") || state.url.includes("127.0.0.1"))) {
     fetch(state.url + "/api/token")
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
@@ -63,11 +63,39 @@ export function useEngine() {
 
   const call = useCallback(
     async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-      const r = await fetch(url + path, {
+      let activeToken = token;
+      let r = await fetch(url + path, {
         method,
-        headers: { "content-type": "application/json", authorization: "Bearer " + token },
+        headers: {
+          "content-type": "application/json",
+          authorization: activeToken ? "Bearer " + activeToken : "",
+        },
         body: body ? JSON.stringify(body) : undefined,
       });
+
+      // Auto-heal 401 Unauthorized for local engine bootstrap
+      if (r.status === 401 && (url.includes("localhost") || url.includes("127.0.0.1"))) {
+        try {
+          const bootRes = await fetch(url + "/api/token");
+          if (bootRes.ok) {
+            const bootData = await bootRes.json();
+            if (bootData?.token) {
+              setEngineConfig(url, bootData.token);
+              activeToken = bootData.token;
+              // Retry with fresh token
+              r = await fetch(url + path, {
+                method,
+                headers: {
+                  "content-type": "application/json",
+                  authorization: "Bearer " + activeToken,
+                },
+                body: body ? JSON.stringify(body) : undefined,
+              });
+            }
+          }
+        } catch {}
+      }
+
       if (!r.ok) {
         let err: any;
         try {
@@ -85,7 +113,7 @@ export function useEngine() {
     [url, token],
   );
 
-  return { url, token, save: setEngineConfig, call };
+  return useMemo(() => ({ url, token, save: setEngineConfig, call }), [url, token, call]);
 }
 
 export function useEngineHealth() {

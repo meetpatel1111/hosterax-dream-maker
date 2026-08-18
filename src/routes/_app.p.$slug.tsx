@@ -572,7 +572,7 @@ function LiveLogs({ projectName }: { projectName: string }) {
 
     const abortController = new AbortController();
     fetch(`${engine.url}/api/projects/${projectName}/logs/stream`, {
-      headers: { Authorization: `Bearer ${engine.token}` },
+      headers: engine.token ? { Authorization: `Bearer ${engine.token}` } : {},
       signal: abortController.signal,
     })
       .then((res) => {
@@ -581,40 +581,44 @@ function LiveLogs({ projectName }: { projectName: string }) {
         const decoder = new TextDecoder();
         let buffer = "";
         const readChunk = () => {
-          reader.read().then(({ done, value }) => {
-            if (done) return;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split("\n");
-            buffer = lines.pop() || "";
-            for (const line of lines) {
-              if (line.startsWith("data: ")) {
-                try {
-                  const payload = JSON.parse(line.slice(6));
-                  if (payload?.text) {
-                    setLogs((prev) => {
-                      if (
-                        prev.some(
-                          (p) =>
-                            p.text === payload.text &&
-                            Math.abs((p.ts || 0) - (payload.ts || 0)) < 1500,
-                        )
-                      ) {
-                        return prev;
-                      }
-                      return [...prev, payload];
-                    });
-                  }
-                } catch {}
+          if (abortController.signal.aborted) return;
+          reader
+            .read()
+            .then(({ done, value }) => {
+              if (done || abortController.signal.aborted) return;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split("\n");
+              buffer = lines.pop() || "";
+              for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                  try {
+                    const payload = JSON.parse(line.slice(6));
+                    if (payload?.text) {
+                      setLogs((prev) => {
+                        if (
+                          prev.some(
+                            (p) =>
+                              p.text === payload.text &&
+                              Math.abs((p.ts || 0) - (payload.ts || 0)) < 1500,
+                          )
+                        ) {
+                          return prev;
+                        }
+                        return [...prev, payload];
+                      });
+                    }
+                  } catch {}
+                }
               }
-            }
-            readChunk();
-          });
+              readChunk();
+            })
+            .catch(() => {});
         };
         readChunk();
       })
       .catch(() => {});
     return () => abortController.abort();
-  }, [active, engine, projectName]);
+  }, [active, engine.url, engine.token, projectName]);
 
   return (
     <div className="grid gap-4 md:grid-cols-[220px_1fr]">
