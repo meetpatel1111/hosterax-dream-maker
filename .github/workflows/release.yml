@@ -32,8 +32,10 @@ jobs:
         with:
           node-version: 22.x
 
-      - name: Install Dependencies
-        run: npm install --legacy-peer-deps
+      - name: Install Dependencies (Root & Engine)
+        run: |
+          npm install --legacy-peer-deps
+          npm --prefix hosterax/engine install --legacy-peer-deps
 
       - name: TypeScript Check
         run: npx tsc --noEmit
@@ -154,7 +156,9 @@ jobs:
           node-version: 22.x
 
       - name: Install Dependencies
-        run: npm install --legacy-peer-deps
+        run: |
+          npm install --legacy-peer-deps
+          npm --prefix hosterax/engine install --legacy-peer-deps
 
       - name: Install Desktop Subsystem Dependencies
         working-directory: ./hosterax/desktop
