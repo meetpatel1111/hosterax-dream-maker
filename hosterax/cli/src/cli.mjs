@@ -726,9 +726,10 @@ try {
     // ────────── Catalog & MCP ──────────
     case "catalog:search": {
       const q = args[0] || "";
-      const cat = flag("category");
-      const url = `/api/catalog/search?q=${encodeURIComponent(q)}${cat ? `&category=${encodeURIComponent(cat)}` : ""}`;
-      const apps = await api("GET", url);
+      const tag = flag("category") || flag("tag");
+      const url = `/api/catalog/apps?q=${encodeURIComponent(q)}${tag ? `&tag=${encodeURIComponent(tag)}` : ""}&limit=20`;
+      const res = await api("GET", url);
+      const apps = Array.isArray(res) ? res : (res?.apps || []);
       if (!apps || apps.length === 0) {
         console.log("No matching catalog apps found.");
         break;
@@ -736,8 +737,8 @@ try {
       console.table(
         apps.slice(0, 20).map((a) => ({
           Name: a.name,
-          Category: a.category || "App",
-          Description: (a.description || "").slice(0, 45) + "…",
+          Category: a.tag || a.category || "App",
+          Description: (a.desc || a.description || "").slice(0, 45) + "…",
         })),
       );
       break;
@@ -758,7 +759,20 @@ try {
 
     case "mcp:call": {
       const toolName = args[0];
-      const rawArgs = args[1] ? JSON.parse(args[1]) : {};
+      let rawArgs = {};
+      if (args[1]) {
+        try {
+          rawArgs = JSON.parse(args[1]);
+        } catch {
+          try {
+            // Support key=val syntax or single unquoted string
+            const cleaned = args[1].replace(/'/g, '"');
+            rawArgs = JSON.parse(cleaned);
+          } catch {
+            rawArgs = { query: args[1], name: args[1], input: args[1] };
+          }
+        }
+      }
       if (!toolName) {
         console.error("Usage: hosterax mcp:call <toolName> [jsonArgs]");
         process.exit(1);
@@ -769,7 +783,7 @@ try {
         method: "tools/call",
         params: { name: toolName, arguments: rawArgs },
       });
-      console.log(rpc.result?.content?.[0]?.text || JSON.stringify(rpc));
+      console.log(rpc.result?.content?.[0]?.text || JSON.stringify(rpc, null, 2));
       break;
     }
 

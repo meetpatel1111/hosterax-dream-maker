@@ -83,7 +83,7 @@ export function createCatalogApi({ db, HOME, readBody }) {
     }
 
     // Search and filter apps across all awesome-selfhosted tags
-    if (p === "/api/catalog/apps" && req.method === "GET") {
+    if ((p === "/api/catalog/apps" || p === "/api/catalog/search") && req.method === "GET") {
       const tag = url.searchParams.get("tag")?.toLowerCase();
       const source = url.searchParams.get("source")?.toLowerCase();
       const q = url.searchParams.get("q")?.toLowerCase().trim();
