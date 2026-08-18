@@ -233,13 +233,29 @@ export class EdgeManager {
       if (!p.port) continue;
       const projDomains = domains.filter((d) => d.project === p.name);
       const primary = projDomains.find((d) => d.is_primary);
-      const defaultHost = `${p.name}.127-0-0-1.sslip.io`;
+      const cleanName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
 
-      const hostnames = new Set();
-      hostnames.add(defaultHost);
+      const hostnames = new Set([
+        `${p.name}.127.0.0.1.nip.io`,
+        `${p.name}.127-0-0-1.nip.io`,
+        `${p.name}.127.0.0.1.sslip.io`,
+        `${p.name}.127-0-0-1.sslip.io`,
+        `${p.name}.127.0.0.1.traefik.me`,
+        `${p.name}.traefik.me`,
+        `${p.name}.127.0.0.1.ipq.co`,
+        `${p.name}.127.0.0.1.fdns.uk`,
+        `${p.name}.localhost`,
+      ]);
+
+      if (cleanName !== p.name) {
+        hostnames.add(`${cleanName}.127.0.0.1.nip.io`);
+        hostnames.add(`${cleanName}.127.0.0.1.sslip.io`);
+        hostnames.add(`${cleanName}.localhost`);
+      }
+
       if (primary) hostnames.add(primary.hostname);
       for (const d of projDomains) {
-        if (d.verified) hostnames.add(d.hostname);
+        if (d.verified || d.hostname) hostnames.add(d.hostname);
       }
 
       routeList.push({
