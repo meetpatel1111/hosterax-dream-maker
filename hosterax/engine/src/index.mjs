@@ -1851,7 +1851,7 @@ pages:
     const projSettings = db.prepare("SELECT health_path FROM projects WHERE name=?").get(project);
     const healthPath = projSettings?.health_path || "/";
     setPhase(deploymentId, "health_check");
-    await waitForHealthy(deploymentId, port, { healthPath, maxAttempts: 10 });
+    await waitForHealthy(deploymentId, port, { healthPath, maxAttempts: 25 });
   }
 
   return 0;
