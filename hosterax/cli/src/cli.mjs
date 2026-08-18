@@ -6,6 +6,87 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { WebSocket } from "undici";
 
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function findEngineEntry() {
+  const candidates = [
+    path.join(__dirname, "../engine/index.mjs"),
+    path.join(__dirname, "../engine/src/index.mjs"),
+    path.join(__dirname, "../../engine/src/index.mjs"),
+    path.join(process.cwd(), "hosterax/engine/src/index.mjs"),
+  ];
+  return candidates.find((p) => fs.existsSync(p));
+}
+
+function openBrowser(url) {
+  const start =
+    process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+  try {
+    spawn(start, [url], { shell: true, detached: true, stdio: "ignore" }).unref();
+  } catch {}
+}
+
+async function isEngineHealthy(url = "http://localhost:7777") {
+  try {
+    const res = await fetch(url + "/health", { signal: AbortSignal.timeout(1000) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function startEngineAndOpenDashboard(port = 7777, shouldOpen = true) {
+  const url = `http://localhost:${port}`;
+  const alreadyRunning = await isEngineHealthy(url);
+
+  if (alreadyRunning) {
+    console.log(`[HosteraX] Engine is already running at ${url}`);
+    if (shouldOpen) {
+      console.log(`[HosteraX] Opening Control Plane dashboard in your browser...`);
+      openBrowser(url);
+    }
+    return;
+  }
+
+  const enginePath = findEngineEntry();
+  if (!enginePath) {
+    console.error(`[HosteraX Error] Could not locate engine entrypoint.`);
+    console.error(`Make sure HosteraX is installed or pass --url http://host:7777 to connect remotely.`);
+    process.exit(1);
+  }
+
+  console.log(`[HosteraX] Launching HosteraX Cloud Control Plane on ${url}...`);
+  const child = spawn("node", [enginePath], {
+    env: { ...process.env, HOSTERAX_PORT: String(port) },
+    stdio: "inherit",
+    detached: false,
+  });
+
+  child.on("error", (err) => {
+    console.error(`[HosteraX Error] Failed to start engine process:`, err);
+  });
+
+  let attempts = 0;
+  while (attempts < 20) {
+    await new Promise((r) => setTimeout(r, 300));
+    attempts++;
+    if (await isEngineHealthy(url)) {
+      console.log(`\n======================================================`);
+      console.log(`  🚀 HosteraX Cloud Control Plane is Live!`);
+      console.log(`  🌐 Web Dashboard:  ${url}`);
+      console.log(`  🤖 MCP Endpoint:   ${url}/mcp`);
+      console.log(`  🛡️ Engine Daemon:  PID ${child.pid}`);
+      console.log(`======================================================\n`);
+      if (shouldOpen) {
+        openBrowser(url);
+      }
+      break;
+    }
+  }
+}
+
 const CFG = path.join(os.homedir(), ".hosterax", "cli.json");
 function loadCfg() {
   try {
@@ -113,6 +194,30 @@ function has(name) {
 
 try {
   switch (cmd) {
+    // ────────── All-in-One Engine & Web Dashboard Launcher ──────────
+    case undefined:
+    case "":
+    case "start":
+    case "up":
+    case "server":
+    case "dashboard":
+    case "open": {
+      if (has("help") || has("h")) {
+        help();
+        break;
+      }
+      const port = Number(flag("port") || 7777);
+      const noOpen = has("no-open");
+      await startEngineAndOpenDashboard(port, !noOpen);
+      break;
+    }
+
+    case "engine:start": {
+      const port = Number(flag("port") || 7777);
+      await startEngineAndOpenDashboard(port, false);
+      break;
+    }
+
     // ────────── Workflow & Init ──────────
     case "init": {
       const cwd = process.cwd();

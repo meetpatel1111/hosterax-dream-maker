@@ -39,6 +39,8 @@ hosterax/engine/*.db
 hosterax/engine/*.db-journal
 hosterax/engine/*.db-wal
 hosterax/desktop/out/
+hosterax/cli/engine/
+hosterax/cli/dist/
 scratch/
 
 # Lockfiles (use bun.lock)

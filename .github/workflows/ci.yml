@@ -45,5 +45,8 @@ jobs:
       - name: Build Frontend Production Bundle
         run: npm run build
 
+      - name: Prepare All-In-One NPM Package Bundle
+        run: npm run package:npm
+
       - name: Verify CLI NPM Tarball (Dry Run)
         run: npm --prefix hosterax/cli pack --dry-run

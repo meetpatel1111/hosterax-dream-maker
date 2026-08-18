@@ -77,6 +77,11 @@ jobs:
           echo "Auto-syncing CLI package version to $RAW_VER from git tag $RELEASE_TAG"
           npm version "$RAW_VER" --no-git-tag-version --allow-same-version
 
+      - name: Build Web Dashboard & Bundle Full App into NPM Package
+        run: |
+          npm run build
+          npm run package:npm
+
       - name: Build & Pack NPM Tarball
         working-directory: ./hosterax/cli
         env:

@@ -22,6 +22,7 @@
     "catalog:sync": "node ./scripts/sync-catalog.mjs",
     "desktop:start": "electron ./hosterax/desktop",
     "desktop:make": "npm --prefix hosterax/desktop run make",
+    "package:npm": "node ./scripts/prepare-npm-package.mjs",
     "release:verify": "node ./scripts/release.mjs"
   },
   "bin": {
