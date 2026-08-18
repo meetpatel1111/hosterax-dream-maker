@@ -90,8 +90,9 @@ function help() {
     s3:sync                                   Trigger remote backup sync to AWS S3/R2
 
   App Store & AI / MCP (Claude, Cursor, Devin, OpenAI, Gemini):
-    ai "<prompt>" [--provider <name>]         Universal autonomous AI copilot (Claude, OpenAI, Ollama, Gemini)
+    ai "<prompt>" [--provider <name>] [--model <name>] Universal autonomous AI copilot (Claude, OpenAI, Ollama, Gemini)
     ai:key <apiKey> [--provider <name>]       Save AI provider API key in CLI config
+    ai:model <modelName>                      Set default AI model (e.g. gemini-2.5-flash, gpt-4o, claude-3-5-sonnet)
     catalog:search <query> [--category <cat>] Search 2,502+ open-source template apps
     mcp:tools                                 List all 34 registered MCP tools
     mcp:call <toolName> [jsonArgs]            Execute MCP JSON-RPC tool directly
@@ -887,16 +888,37 @@ try {
       break;
     }
 
+    case "ai:model": {
+      const modelName = args[0] || flag("model");
+      if (!modelName) {
+        console.log(`Current default AI model: ${cfg.aiModel || "gemini-2.5-flash"}`);
+        console.log("Usage: htx ai:model <modelName>");
+        console.log("Examples:");
+        console.log("  htx ai:model gemini-2.5-flash");
+        console.log("  htx ai:model gpt-4o");
+        console.log("  htx ai:model gpt-4o-mini");
+        console.log("  htx ai:model claude-3-5-sonnet-20241022");
+        console.log("  htx ai:model claude-3-5-haiku-20241022");
+        console.log("  htx ai:model llama3");
+        break;
+      }
+      cfg.aiModel = modelName;
+      saveCfg(cfg);
+      console.log(`✓ Default AI model set to: ${modelName} (saved in ~/.hosterax/cli.json)`);
+      break;
+    }
+
     case "ai": {
       const userPrompt = args[0];
       if (!userPrompt) {
-        console.error("Usage: htx ai \"<your prompt>\" [--provider openai|claude|gemini|ollama] [--key <apiKey>]");
+        console.error("Usage: htx ai \"<your prompt>\" [--provider openai|claude|gemini|ollama] [--model <modelName>] [--key <apiKey>]");
         process.exit(1);
       }
 
       // Provider resolution (Default: Gemini)
       let provider = flag("provider") || cfg.defaultAiProvider;
       let apiKey = flag("key");
+      const customModel = flag("model") || cfg.aiModel;
 
       if (!provider) {
         if (apiKey) {
@@ -914,8 +936,6 @@ try {
         }
       }
 
-      console.log(`\n🤖 HosteraX Autonomous Agent thinking (${provider.toUpperCase()})...`);
-
       // 1. Fetch MCP Tools
       const rpc = await api("POST", "/api/mcp", { jsonrpc: "2.0", id: "mcp_list", method: "tools/list" });
       const mcpTools = rpc.result?.tools || [];
@@ -923,6 +943,9 @@ try {
       // ── Provider: Anthropic (Claude) ──
       if (provider === "anthropic" || provider === "claude") {
         const key = apiKey || cfg.anthropicApiKey || process.env.ANTHROPIC_API_KEY;
+        const modelName = customModel || process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022";
+        console.log(`\n🤖 HosteraX Autonomous Agent thinking (ANTHROPIC / ${modelName})...`);
+
         if (!key) {
           console.error("Error: Anthropic API key not found. Set ANTHROPIC_API_KEY or run: htx ai:key <key> --provider anthropic");
           process.exit(1);
@@ -945,7 +968,7 @@ try {
               "anthropic-version": "2023-06-01",
             },
             body: JSON.stringify({
-              model: "claude-3-5-sonnet-20241022",
+              model: modelName,
               max_tokens: 1024,
               system: "You are the HosteraX Autonomous Cloud Agent. You have direct access to 34 HosteraX MCP tools to inspect and manage infrastructure.",
               messages,
@@ -1008,7 +1031,8 @@ try {
         const baseUrl = provider === "ollama"
           ? (process.env.OLLAMA_HOST || "http://localhost:11434") + "/v1"
           : (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
-        const modelName = provider === "ollama" ? (process.env.OLLAMA_MODEL || "llama3") : "gpt-4o";
+        const modelName = customModel || (provider === "ollama" ? (process.env.OLLAMA_MODEL || "llama3") : (process.env.OPENAI_MODEL || "gpt-4o"));
+        console.log(`\n🤖 HosteraX Autonomous Agent thinking (${provider.toUpperCase()} / ${modelName})...`);
 
         const openAiTools = mcpTools.map((t) => ({
           type: "function",
@@ -1103,6 +1127,9 @@ try {
         process.exit(1);
       }
 
+      const model = customModel || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+      console.log(`\n🤖 HosteraX Autonomous Agent thinking (GEMINI / ${model})...`);
+
       const functionDeclarations = mcpTools.map((t) => ({
         name: t.name,
         description: t.description,
@@ -1111,7 +1138,6 @@ try {
       const geminiTools = [{ functionDeclarations }];
 
       const contents = [{ role: "user", parts: [{ text: userPrompt }] }];
-      const model = "gemini-2.5-flash";
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiKey}`;
 
       let currentContents = [...contents];
