@@ -952,38 +952,47 @@ try {
               tools: claudeTools,
             }),
           });
+
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
+            if (res.status === 429 || res.status === 529) {
+              console.log(`⏳ Anthropic rate limited/overloaded. Waiting 4s before retrying...`);
+              await new Promise((r) => setTimeout(r, 4000));
+              continue;
+            }
             console.error("Anthropic API Error:", err.error?.message || res.statusText);
             break;
           }
+
           const resp = await res.json();
-          const toolUse = resp.content?.find((c) => c.type === "tool_use");
-          if (toolUse) {
-            console.log(`\n⚡ Autonomous MCP Tool Call: \x1b[36m${toolUse.name}\x1b[0m`);
-            if (Object.keys(toolUse.input || {}).length > 0) {
-              console.log(`   Args:`, JSON.stringify(toolUse.input));
-            }
-            const toolExec = await api("POST", "/api/mcp", {
-              jsonrpc: "2.0",
-              id: "ai_" + Date.now(),
-              method: "tools/call",
-              params: { name: toolUse.name, arguments: toolUse.input || {} },
-            });
-            const resultText = toolExec.result?.content?.[0]?.text || JSON.stringify(toolExec);
+          const toolUses = resp.content?.filter((c) => c.type === "tool_use") || [];
+          if (toolUses.length > 0) {
             messages.push({ role: "assistant", content: resp.content });
-            messages.push({
-              role: "user",
-              content: [
-                {
-                  type: "tool_result",
-                  tool_use_id: toolUse.id,
-                  content: resultText,
-                },
-              ],
-            });
+            const toolResults = [];
+
+            for (const toolUse of toolUses) {
+              console.log(`\n⚡ Autonomous MCP Tool Call: \x1b[36m${toolUse.name}\x1b[0m`);
+              if (Object.keys(toolUse.input || {}).length > 0) {
+                console.log(`   Args:`, JSON.stringify(toolUse.input));
+              }
+              const toolExec = await api("POST", "/api/mcp", {
+                jsonrpc: "2.0",
+                id: "ai_" + Date.now(),
+                method: "tools/call",
+                params: { name: toolUse.name, arguments: toolUse.input || {} },
+              });
+              const resultText = toolExec.result?.content?.[0]?.text || JSON.stringify(toolExec);
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: toolUse.id,
+                content: resultText,
+              });
+            }
+
+            messages.push({ role: "user", content: toolResults });
             continue;
           }
+
           const textBlock = resp.content?.find((c) => c.type === "text");
           if (textBlock?.text) {
             console.log(`\n💡 \x1b[1mAnswer:\x1b[0m\n${textBlock.text}\n`);
@@ -999,7 +1008,7 @@ try {
         const baseUrl = provider === "ollama"
           ? (process.env.OLLAMA_HOST || "http://localhost:11434") + "/v1"
           : (process.env.OPENAI_BASE_URL || "https://api.openai.com/v1");
-        const modelName = provider === "ollama" ? "llama3" : "gpt-4o";
+        const modelName = provider === "ollama" ? (process.env.OLLAMA_MODEL || "llama3") : "gpt-4o";
 
         const openAiTools = mcpTools.map((t) => ({
           type: "function",
@@ -1014,46 +1023,68 @@ try {
         let maxSteps = 5;
 
         while (maxSteps-- > 0) {
-          const res = await fetch(`${baseUrl}/chat/completions`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${key}`,
-            },
-            body: JSON.stringify({
-              model: modelName,
-              messages,
-              tools: openAiTools,
-            }),
-          });
+          let res;
+          try {
+            res = await fetch(`${baseUrl}/chat/completions`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${key}`,
+              },
+              body: JSON.stringify({
+                model: modelName,
+                messages,
+                tools: openAiTools,
+              }),
+            });
+          } catch (fetchErr) {
+            if (provider === "ollama") {
+              console.error(`Ollama connection error: Could not reach Ollama at ${baseUrl}. Ensure Ollama is running ('ollama serve').`);
+            } else {
+              console.error(`Network error: ${fetchErr.message}`);
+            }
+            break;
+          }
+
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
+            if (res.status === 429) {
+              console.log(`⏳ OpenAI rate limit reached. Waiting 4s before retrying...`);
+              await new Promise((r) => setTimeout(r, 4000));
+              continue;
+            }
             console.error("OpenAI API Error:", err.error?.message || res.statusText);
             break;
           }
+
           const resp = await res.json();
           const choice = resp.choices?.[0]?.message;
           if (choice?.tool_calls?.length > 0) {
-            const call = choice.tool_calls[0];
-            const name = call.function.name;
-            const callArgs = JSON.parse(call.function.arguments || "{}");
-            console.log(`\n⚡ Autonomous MCP Tool Call: \x1b[36m${name}\x1b[0m`);
-            if (Object.keys(callArgs).length > 0) {
-              console.log(`   Args:`, JSON.stringify(callArgs));
-            }
-            const toolExec = await api("POST", "/api/mcp", {
-              jsonrpc: "2.0",
-              id: "ai_" + Date.now(),
-              method: "tools/call",
-              params: { name, arguments: callArgs },
-            });
-            const resultText = toolExec.result?.content?.[0]?.text || JSON.stringify(toolExec);
             messages.push(choice);
-            messages.push({
-              role: "tool",
-              tool_call_id: call.id,
-              content: resultText,
-            });
+
+            for (const call of choice.tool_calls) {
+              const name = call.function.name;
+              let callArgs = {};
+              try {
+                callArgs = JSON.parse(call.function.arguments || "{}");
+              } catch {}
+              console.log(`\n⚡ Autonomous MCP Tool Call: \x1b[36m${name}\x1b[0m`);
+              if (Object.keys(callArgs).length > 0) {
+                console.log(`   Args:`, JSON.stringify(callArgs));
+              }
+              const toolExec = await api("POST", "/api/mcp", {
+                jsonrpc: "2.0",
+                id: "ai_" + Date.now(),
+                method: "tools/call",
+                params: { name, arguments: callArgs },
+              });
+              const resultText = toolExec.result?.content?.[0]?.text || JSON.stringify(toolExec);
+              messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: resultText,
+              });
+            }
             continue;
           }
           if (choice?.content) {
