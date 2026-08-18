@@ -327,7 +327,7 @@ export class SelfHealEngine {
     try {
       const proj = this.db.prepare("SELECT * FROM projects WHERE name=?").get(name);
       return {
-        probePath: proj?.health_check_path || "/",
+        probePath: proj?.health_path || proj?.health_check_path || "/",
         expectedStatus: 200,
         timeoutSeconds: 3,
         startupDelaySeconds: 60,
@@ -534,38 +534,32 @@ export class SelfHealEngine {
         if (statusText === "running") {
           isAlive = true;
 
-          // Predictive memory sampling (async, non-blocking)
+          // Non-blocking predictive memory sampling
           try {
-            const memP = await new Promise((resolve) => {
-              const child = spawn(
-                "docker",
-                ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`],
-                { encoding: "utf8" },
-              );
-              let raw = "";
-              child.stdout.on("data", (d) => (raw += d.toString()));
-              child.on("close", (code) => {
-                resolve({ mem: raw.replace("%", ""), code });
-              });
-              child.on("error", () => resolve({ mem: "", code: 1 }));
-              setTimeout(() => {
-                try {
-                  child.kill();
-                } catch {}
-                resolve({ mem: raw, code: 1 });
-              }, 2500);
+            const child = spawn(
+              "docker",
+              ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`],
+              { stdio: ["ignore", "pipe", "ignore"] },
+            );
+            let raw = "";
+            child.stdout?.on("data", (d) => (raw += d.toString()));
+            child.on("close", () => {
+              const rawMem = raw.replace("%", "").trim();
+              const memVal = parseFloat(rawMem) || 0;
+              if (memVal >= 90) {
+                this.logEvent(
+                  name,
+                  "memory_warning_near_oom",
+                  `Memory utilization reached ${memVal}%. Approaching potential OOM threshold!`,
+                  "warning",
+                );
+              }
             });
-            const rawMem = memP.mem?.replace("%", "") || "0";
-            memoryPercent = parseFloat(rawMem) || 0;
-
-            if (memoryPercent >= 90) {
-              this.logEvent(
-                name,
-                "memory_warning_near_oom",
-                `Memory utilization reached ${memoryPercent}%. Approaching potential OOM threshold!`,
-                "warning",
-              );
-            }
+            setTimeout(() => {
+              try {
+                child.kill();
+              } catch {}
+            }, 3000);
           } catch {}
         } else if (statusText === "dead" || statusText === "removing") {
           this.logEvent(
@@ -879,12 +873,12 @@ export class SelfHealEngine {
       const cleanPath = endpointPath && endpointPath.startsWith("/") ? endpointPath : `/${endpointPath || ""}`;
       const req = http.request(
         {
-          host,
-          port,
+          hostname: host || "127.0.0.1",
+          port: Number(port),
           path: cleanPath,
           method: "GET",
           timeout: timeoutMs,
-          headers: { "User-Agent": "HosteraX-AutoHeal/6.0" },
+          headers: { "User-Agent": "HosteraX-AutoHeal/6.0", Accept: "*/*" },
         },
         (res) => {
           // Drain body to prevent resource leak

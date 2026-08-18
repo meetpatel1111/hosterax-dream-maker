@@ -1786,6 +1786,7 @@ pages:
       stream: "system",
       text: `[blue/green] ✓ Zero-downtime cutover complete (${oldName})`,
     });
+    setPhase(deploymentId, "ready", { finished_at: Date.now(), exit_code: 0 });
 
     running.set(project, {
       child: { pid: process.pid },
