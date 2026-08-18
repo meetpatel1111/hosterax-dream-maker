@@ -150,20 +150,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Lowercase Repository Name
+      - name: Compute Lowercase Repository Owner
         id: repo
-        run: echo "IMAGE_NAME=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+        run: |
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          echo "OWNER=$OWNER" >> $GITHUB_OUTPUT
 
       - name: Extract Docker Metadata
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ steps.repo.outputs.IMAGE_NAME }}
+          images: |
+            ghcr.io/${{ steps.repo.outputs.OWNER }}/hosterax
+            ghcr.io/${{ steps.repo.outputs.OWNER }}/hosterax-dream-maker
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
 
       - name: Build and Push Multi-Arch Image
         uses: docker/build-push-action@v5
