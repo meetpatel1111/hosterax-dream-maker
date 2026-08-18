@@ -291,6 +291,8 @@ jobs:
     needs: [publish-npm, publish-docker, build-desktop]
     if: always() && !cancelled() && needs.gate.result == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -331,10 +333,12 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: HosteraX ${{ github.ref_name || inputs.version }}
+          tag_name: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
+          name: HosteraX ${{ github.ref_name || inputs.version || 'v1.0.0' }}
           body_path: CHANGELOG.md
           draft: false
           prerelease: false
+          generate_release_notes: true
           files: |
             final-dist/*
         env:
