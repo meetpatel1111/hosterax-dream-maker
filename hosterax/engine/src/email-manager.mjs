@@ -537,9 +537,11 @@ export class EmailManager {
 
         const fromSender =
           defaultRelay.from_email ||
-          (defaultRelay.provider === "resend" || defaultRelay.host?.includes("resend")
-            ? "onboarding@resend.dev"
-            : mbox.email);
+          (!mbox.email.endsWith(".internal") && !mbox.email.endsWith(".local")
+            ? (mbox.name ? `"${mbox.name}" <${mbox.email}>` : mbox.email)
+            : defaultRelay.provider === "resend" || defaultRelay.host?.includes("resend")
+              ? "onboarding@resend.dev"
+              : mbox.email);
 
         const sendResult = await transporter.sendMail({
           from: fromSender,
