@@ -274,9 +274,12 @@ try {
     `
     UPDATE deployments 
     SET phase='failed', finished_at=?, exit_code=1 
-    WHERE phase IN ('queued', 'building', 'pulling', 'deploying', 'fetching')
+    WHERE phase IN ('queued', 'building', 'pulling', 'deploying', 'fetching', 'health_check') AND (exit_code IS NULL OR exit_code != 0)
   `,
   ).run(Date.now());
+  db.prepare(
+    `UPDATE deployments SET phase='ready' WHERE phase='health_check' AND exit_code=0 AND finished_at IS NOT NULL`,
+  ).run();
 } catch {}
 
 // bootstrap token

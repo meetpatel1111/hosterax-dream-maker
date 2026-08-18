@@ -276,16 +276,16 @@ export function createProjectsApi(ctx) {
       const res = spawnSync(
         "docker",
         ["ps", "--filter", "status=running", "--format", "{{.Names}}\t{{.Ports}}"],
-        { shell: true },
       );
       if (res.stdout) {
         const lines = res.stdout.toString().split("\n");
         for (const line of lines) {
           const [cName, cPorts] = line.split("\t");
           if (!cName) continue;
-          if (cName.toLowerCase().includes(clean) || cName.toLowerCase().includes(`hx_${clean}`))
+          const cn = cName.trim().toLowerCase();
+          if (cn === clean || cn === `hx_${clean}` || cn.includes(`hx_${clean}`) || cn.includes(clean))
             return true;
-          if (port && cPorts && cPorts.includes(`:${port}->`)) return true;
+          if (port && cPorts && (cPorts.includes(`:${port}->`) || cPorts.includes(`:${port}/`))) return true;
         }
       }
       return false;
