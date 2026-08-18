@@ -410,9 +410,9 @@ export class SelfHealEngine {
         : Infinity;
 
       const isWarmingUp =
-        elapsedSinceEngineBoot < 30000 ||
-        elapsedSinceRestart < 30000 ||
-        elapsedSinceDeploy < (cfg.startupDelaySeconds || 60) * 1000;
+        elapsedSinceEngineBoot < 120000 ||
+        elapsedSinceRestart < 120000 ||
+        elapsedSinceDeploy < Math.max(120000, (cfg.startupDelaySeconds || 120) * 1000);
 
       if (isWarmingUp) {
         const httpOk = await this.probeHttpEndpoint(
@@ -648,11 +648,11 @@ export class SelfHealEngine {
         const fails = (this.consecutiveFailures.get(name) || 0) + 1;
         this.consecutiveFailures.set(name, fails);
 
-        if (fails < 4) {
+        if (fails < 12) {
           this.healthMap.set(name, {
             status: "warming_up",
             lastProbeTs: Date.now(),
-            message: `Service warming up on port :${port} (probe check ${fails}/4)...`,
+            message: `Service warming up on port :${port} (probe check ${fails}/12)...`,
             latencyMs: 0,
             memoryPercent,
             circuitState: circuit.state,
