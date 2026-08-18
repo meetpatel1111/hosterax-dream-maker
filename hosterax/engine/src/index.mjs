@@ -4154,6 +4154,28 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
+    if (url.pathname === "/api/network/interfaces" && req.method === "GET") {
+      const interfaces = os.networkInterfaces();
+      const list = [];
+      for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name] || []) {
+          if (iface.family === "IPv4" && !iface.internal) {
+            list.push({
+              name,
+              address: iface.address,
+              netmask: iface.netmask,
+              mac: iface.mac,
+            });
+          }
+        }
+      }
+      return json(res, 200, {
+        ok: true,
+        primaryIp: list[0]?.address || "127.0.0.1",
+        interfaces: list,
+      });
+    }
+
     if (req.method === "GET" && serveStaticDashboard(res, url.pathname)) {
       return;
     }
