@@ -300,13 +300,33 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Prepare Clean Release Bundle & Checksums
+      - name: Prepare Clean Release Bundle & Individual SHA256 Checksums
+        env:
+          REL_VER: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
         run: |
           mkdir -p final-dist
           find release-artifacts -type f -exec cp {} final-dist/ \;
+
+          # Package standalone CLI, Dashboard, and Engine archives
+          tar -czf "final-dist/hosterax-cli-${REL_VER}.tar.gz" hosterax/cli/src hosterax/cli/package.json
+          if [ -d ".output/public" ]; then
+            tar -czf "final-dist/hosterax-dashboard-${REL_VER}.tar.gz" -C .output/public .
+          fi
+          tar -czf "final-dist/hosterax-engine-${REL_VER}.tar.gz" hosterax/engine/src hosterax/engine/package.json
+
           cd final-dist
-          sha256sum * > SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          # Master checksum list
+          sha256sum * > SHA256SUMS.txt 2>/dev/null || true
+
+          # Generate individual .sha256 verification files for each artifact
+          for f in *; do
+            if [ -f "$f" ] && [ "$f" != "SHA256SUMS.txt" ] && [[ "$f" != *.sha256 ]]; then
+              sha256sum "$f" | awk '{print $1}' > "${f}.sha256"
+            fi
+          done
+
+          echo "=== Complete HosteraX Release Asset Suite ==="
+          ls -lah
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
