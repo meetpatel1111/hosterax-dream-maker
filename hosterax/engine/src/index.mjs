@@ -29,6 +29,7 @@ import { ServerManager } from "./server-manager.mjs";
 import { WebhookManager } from "./webhook-manager.mjs";
 import { OrgManager } from "./org-manager.mjs";
 import { EmailManager } from "./email-manager.mjs";
+import { S3StorageClient } from "./s3-storage.mjs";
 import { generateUniversalDockerfile } from "./dockerfile-generator.mjs";
 import { fileURLToPath } from "node:url";
 
@@ -2386,12 +2387,24 @@ try {
   }
 } catch {}
 
+let s3Storage = null;
+try {
+  const s3StorageRow = db.prepare("SELECT * FROM s3_config LIMIT 1").get();
+  if (s3StorageRow) s3Storage = new S3StorageClient(s3StorageRow);
+} catch {}
+
 const mcpServer = new MCPServer({
   db,
   backupManager,
   cronManager,
+  serverManager,
+  s3Storage,
+  edgeManager,
+  tlsManager,
   selfHeal,
   projectsApi,
+  runDeployment,
+  applyRoute,
   catalogApps: catalogAppsList,
 });
 

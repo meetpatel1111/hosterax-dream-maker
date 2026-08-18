@@ -212,7 +212,7 @@ test("model context protocol (MCP) JSON-RPC 2.0 server", async () => {
   // Discovery endpoint
   const discovery = await api("GET", "/api/mcp");
   assert.equal(discovery.mcp, "2024-11-05");
-  assert.ok(discovery.toolsCount >= 10);
+  assert.ok(discovery.toolsCount >= 20);
 
   // JSON-RPC initialize
   const initRes = await api("POST", "/api/mcp", {
@@ -232,7 +232,14 @@ test("model context protocol (MCP) JSON-RPC 2.0 server", async () => {
   assert.ok(Array.isArray(toolsList.result.tools));
   const toolNames = toolsList.result.tools.map((t) => t.name);
   assert.ok(toolNames.includes("get_system_stats"));
+  assert.ok(toolNames.includes("get_system_metrics"));
   assert.ok(toolNames.includes("list_projects"));
+  assert.ok(toolNames.includes("create_project"));
+  assert.ok(toolNames.includes("update_project"));
+  assert.ok(toolNames.includes("delete_project"));
+  assert.ok(toolNames.includes("deploy_project"));
+  assert.ok(toolNames.includes("rollback_project"));
+  assert.ok(toolNames.includes("get_edge_status"));
   assert.ok(toolNames.includes("list_cron_jobs"));
   assert.ok(toolNames.includes("search_catalog"));
 
@@ -246,10 +253,74 @@ test("model context protocol (MCP) JSON-RPC 2.0 server", async () => {
   assert.equal(callStats.jsonrpc, "2.0");
   assert.ok(callStats.result.content[0].text.includes("HosteraX"));
 
+  // JSON-RPC tools/call: get_system_metrics
+  const callMetrics = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: { name: "get_system_metrics" },
+  });
+  assert.equal(callMetrics.jsonrpc, "2.0");
+  const metricsData = JSON.parse(callMetrics.result.content[0].text);
+  assert.ok(metricsData.cpu.cores >= 1);
+  assert.ok(metricsData.memory.totalMb > 0);
+
+  // JSON-RPC tools/call: create_project via MCP
+  const mcpProjName = `mcp-app-${Date.now()}`;
+  const callCreate = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 5,
+    method: "tools/call",
+    params: {
+      name: "create_project",
+      arguments: {
+        name: mcpProjName,
+        source: "https://github.com/example/demo",
+        port: 8080,
+      },
+    },
+  });
+  assert.equal(callCreate.jsonrpc, "2.0");
+  const createData = JSON.parse(callCreate.result.content[0].text);
+  assert.equal(createData.ok, true);
+  assert.equal(createData.name, mcpProjName);
+
+  // JSON-RPC tools/call: get_project
+  const callGet = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "get_project", arguments: { projectName: mcpProjName } },
+  });
+  assert.equal(callGet.jsonrpc, "2.0");
+  const getData = JSON.parse(callGet.result.content[0].text);
+  assert.equal(getData.name, mcpProjName);
+
+  // JSON-RPC tools/call: update_project
+  const callUpdate = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 7,
+    method: "tools/call",
+    params: {
+      name: "update_project",
+      arguments: { projectName: mcpProjName, healthPath: "/api/health" },
+    },
+  });
+  assert.equal(callUpdate.jsonrpc, "2.0");
+
+  // JSON-RPC tools/call: delete_project
+  const callDelete = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 8,
+    method: "tools/call",
+    params: { name: "delete_project", arguments: { projectName: mcpProjName } },
+  });
+  assert.equal(callDelete.jsonrpc, "2.0");
+
   // JSON-RPC tools/call: search_catalog
   const callCatalog = await api("POST", "/api/mcp", {
     jsonrpc: "2.0",
-    id: 4,
+    id: 9,
     method: "tools/call",
     params: { name: "search_catalog", arguments: { query: "postgres" } },
   });

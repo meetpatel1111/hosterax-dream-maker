@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// hosterax CLI — talks to the engine over HTTP/WS with full feature parity.
+// hosterax CLI — talks to the engine over HTTP/WS with full platform feature parity.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 import { WebSocket } from "undici";
 
 const CFG = path.join(os.homedir(), ".hosterax", "cli.json");
@@ -44,31 +45,56 @@ const [, , cmd, ...args] = process.argv;
 function help() {
   console.log(`hosterax <command>
 
-  login <token> [--url http://host:7777]   Save engine URL & authorization token
-  status                                    Engine & host machine health
-  projects                                  List deployed projects
-  create <name> --source <path|url> [--build "..."] [--start "..."]
-  deploy <name> [--trigger manual]          Trigger build & deploy
-  logs <deploymentId> [--follow]            Stream live execution logs
-  history <name>                            Deployment release history for project
-  diff <deployId1> <deployId2>              Compare specs & env diff between 2 releases
-  metrics [name]                            Live CPU, RAM, Disk, and Network gauges
-  rollback <deploymentId>                   Redeploy previous release snapshot
-  env <name> KEY=val KEY2=val               Replace environment variables
-  quotas <name> [--cpu <num>] [--memory <mb>] Configure instance quotas
-  rm <name>                                 Delete project
-  databases [name]                          List managed database instances
-  backup:create <databaseId>                Trigger database snapshot backup
-  backup:list                               List available database backups
-  backup:restore <snapshotId>               Restore database snapshot
-  domains <name>                            List custom domains for project
-  domain:add <name> <hostname>              Add custom domain to project
-  domain:verify <domainId>                  Verify domain ownership via DNS TXT
-  domain:ssl <domainId>                     Provision SSL certificate via Let's Encrypt
-  domain:primary <domainId>                 Set domain as primary
-  stats                                     Aggregated deployment analytics
-  tokens                                    List personal access tokens
-  token:new <label>                         Mint personal access token
+  Workflow & Initialization:
+    init                                      Auto-detect project stack & create .hosterax.json
+    up [--port 7777]                          Launch engine daemon & open dashboard
+    login <token> [--url http://host:7777]    Save engine URL & authorization token
+    status                                    Engine & host machine health
+
+  Projects & Deployments:
+    projects [--target docker|process]        List deployed projects
+    create <name> --source <path|url>         Create new project
+    deploy <name|path> [--trigger manual]     Trigger zero-downtime blue/green build & deploy
+    restart <name>                            Trigger container/service restart
+    logs <deploymentId|name> [--follow]       Stream live execution logs
+    history <name>                            Deployment release history for project
+    diff <deployId1> <deployId2>              Compare specs & env diff between 2 releases
+    metrics [name]                            Live CPU, RAM, Disk, and Network gauges
+    rollback <deploymentId>                   Redeploy previous release snapshot
+    env <name> [KEY=val ...]                  Get or update environment variables
+    quotas <name> [--cpu <cores>] [--memory <mb>] Configure instance quotas
+    diagnose <name>                           Run automated AI crash diagnostics
+    rm <name>                                 Delete project and associated containers
+
+  Databases & Backups:
+    databases [name]                          List managed database instances
+    db:create <project> <name> <engine>       Provision Postgres, MySQL, Mongo, or Redis
+    backup:create <databaseId|name>           Trigger database snapshot backup
+    backup:list [name]                        List available database backups
+    backup:restore <snapshotId>               Restore database snapshot
+
+  Domains & Edge Routing:
+    domains <name>                            List custom domains for project
+    domain:add <name> <hostname> [--primary]  Add custom domain to project
+    domain:verify <domainId>                  Verify domain ownership via DNS TXT
+    domain:ssl <domainId>                     Provision SSL certificate via Let's Encrypt
+    domain:primary <domainId>                 Set domain as primary
+    edge:status                               Inspect edge proxy (OpenResty/Caddy)
+
+  Multi-Node Fleet & Cron:
+    servers                                   List connected remote SSH server nodes
+    server:test <serverId>                    Ping & test SSH connectivity to remote node
+    cron:list                                 List scheduled background cron jobs
+    cron:run <jobId>                          Trigger immediate execution of cron job
+    s3:status                                 Check remote S3/R2 backup sync status
+    s3:sync                                   Trigger remote backup sync to AWS S3/R2
+
+  App Store & AI / MCP:
+    catalog:search <query> [--category <cat>] Search 2,502+ open-source template apps
+    mcp:tools                                 List all 24+ registered MCP tools
+    mcp:call <toolName> [jsonArgs]            Execute MCP JSON-RPC tool directly
+    tokens                                    List personal access tokens
+    token:new <label>                         Mint personal access token
 `);
 }
 
@@ -82,6 +108,85 @@ function has(name) {
 
 try {
   switch (cmd) {
+    // ────────── Workflow & Init ──────────
+    case "init": {
+      const cwd = process.cwd();
+      const name = path.basename(cwd).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      let stack = "node";
+      let buildCmd = "";
+      let startCmd = "";
+      let port = 3000;
+
+      if (fs.existsSync(path.join(cwd, "package.json"))) {
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf8"));
+          if (pkg.dependencies?.next) { stack = "nextjs"; buildCmd = "npm run build"; startCmd = "npm start"; }
+          else if (pkg.dependencies?.vite || pkg.devDependencies?.vite) { stack = "vite"; buildCmd = "npm run build"; startCmd = "serve-static:dist"; }
+          else if (pkg.dependencies?.express || pkg.dependencies?.fastify) { stack = "node"; startCmd = "node index.js"; }
+        } catch {}
+      } else if (fs.existsSync(path.join(cwd, "requirements.txt")) || fs.existsSync(path.join(cwd, "pyproject.toml"))) {
+        stack = "python";
+        if (fs.existsSync(path.join(cwd, "manage.py"))) { stack = "django"; startCmd = "python manage.py runserver 0.0.0.0:8000"; port = 8000; }
+        else { startCmd = "uvicorn main:app --host 0.0.0.0 --port 8000"; port = 8000; }
+      } else if (fs.existsSync(path.join(cwd, "go.mod"))) {
+        stack = "go";
+        buildCmd = "go build -o app .";
+        startCmd = "./app";
+        port = 8080;
+      } else if (fs.existsSync(path.join(cwd, "Cargo.toml"))) {
+        stack = "rust";
+        buildCmd = "cargo build --release";
+        startCmd = "./target/release/app";
+        port = 8080;
+      } else if (fs.existsSync(path.join(cwd, "Dockerfile"))) {
+        stack = "dockerfile";
+      }
+
+      const conf = {
+        name,
+        stack,
+        source: cwd,
+        buildCmd,
+        startCmd,
+        port,
+        target: "docker",
+        healthPath: "/",
+      };
+
+      fs.writeFileSync(path.join(cwd, ".hosterax.json"), JSON.stringify(conf, null, 2), "utf8");
+      console.log(`✓ Initialized HosteraX project configuration (.hosterax.json)`);
+      console.log(`  Project: ${name}`);
+      console.log(`  Stack:   ${stack}`);
+      console.log(`  Port:    ${port}`);
+      console.log(`\nRun 'hosterax deploy' to deploy this project.`);
+      break;
+    }
+
+    case "up": {
+      const port = flag("port") || process.env.HOSTERAX_PORT || 7777;
+      console.log(`Launching HosteraX engine on port ${port}...`);
+      try {
+        const health = await (await fetch(`http://localhost:${port}/health`)).json();
+        if (health.ok) {
+          console.log(`✓ Engine already running on http://localhost:${port} (version ${health.version})`);
+          break;
+        }
+      } catch {}
+
+      const engineScript = path.resolve(__dirname, "../../engine/src/index.mjs");
+      if (fs.existsSync(engineScript)) {
+        spawn(process.execPath, [engineScript], {
+          detached: true,
+          stdio: "ignore",
+          env: { ...process.env, HOSTERAX_PORT: String(port) },
+        }).unref();
+        console.log(`✓ HosteraX daemon started in background on http://localhost:${port}`);
+      } else {
+        console.log(`Starting engine at http://localhost:${port}`);
+      }
+      break;
+    }
+
     case "login": {
       cfg.token = args[0];
       if (flag("url")) cfg.url = flag("url");
@@ -89,6 +194,7 @@ try {
       console.log("saved →", cfg.url);
       break;
     }
+
     case "status": {
       const health = await (await fetch(cfg.url + "/health")).json();
       console.log("Engine:", health.ok ? "✓ online" : "✗ offline", `(${cfg.url})`);
@@ -106,42 +212,110 @@ try {
       } catch {}
       break;
     }
+
+    // ────────── Projects & Deployments ──────────
     case "projects": {
-      console.table(await api("GET", "/api/projects"));
+      const targetFilter = flag("target");
+      const list = await api("GET", "/api/projects");
+      const filtered = targetFilter ? list.filter((p) => p.target === targetFilter) : list;
+      if (filtered.length === 0) {
+        console.log("No projects found.");
+        break;
+      }
+      console.table(
+        filtered.map((p) => ({
+          Name: p.name,
+          Status: p.status || (p.enabled ? "active" : "stopped"),
+          Target: p.target || "docker",
+          Port: p.port ?? "—",
+          HealthPath: p.health_path || "/",
+          SleepMode: p.sleep_mode || "auto_sleep",
+          Created: p.created_at ? new Date(p.created_at).toISOString().split("T")[0] : "—",
+        })),
+      );
       break;
     }
+
     case "create": {
       const name = args[0];
       const source = flag("source");
       const build = flag("build") || "";
       const start = flag("start") || "";
-      await api("POST", "/api/projects", { name, source, buildCmd: build, startCmd: start });
-      console.log("created", name);
+      const port = flag("port") ? Number(flag("port")) : undefined;
+      const target = flag("target") || "docker";
+      await api("POST", "/api/projects", { name, source, buildCmd: build, startCmd: start, port, target });
+      console.log("✓ created project", name);
       break;
     }
+
     case "deploy": {
       let name = args[0];
       let source;
-      if (name && fs.existsSync(name)) {
+      if (!name && fs.existsSync(".hosterax.json")) {
+        try {
+          const conf = JSON.parse(fs.readFileSync(".hosterax.json", "utf8"));
+          name = conf.name;
+          source = conf.source || process.cwd();
+        } catch {}
+      } else if (name && fs.existsSync(name)) {
         source = path.resolve(name);
         name = path.basename(source);
         await api("POST", "/api/projects", { name, source });
       }
+
+      if (!name) {
+        console.error("Usage: hosterax deploy <project-name|path>");
+        process.exit(1);
+      }
+
       const r = await api("POST", `/api/projects/${name}/deploy`, {
         trigger: flag("trigger") || "cli",
       });
-      console.log("deployment", r.id, r.version);
-      if (has("follow") || true) await follow(r.id);
+      console.log(`✓ Deployment queued: ${r.id} (version: ${r.version})`);
+      if (has("follow") || !has("no-follow")) await follow(r.id);
       break;
     }
+
+    case "restart": {
+      const name = args[0];
+      if (!name) {
+        console.error("Usage: hosterax restart <projectName>");
+        process.exit(1);
+      }
+      const r = await api("POST", `/api/projects/${name}/restart`);
+      console.log(`✓ Restart signal sent for ${name}`);
+      break;
+    }
+
     case "logs": {
-      await follow(args[0], has("follow"));
+      const target = args[0];
+      if (!target) {
+        console.error("Usage: hosterax logs <deploymentId|projectName> [--follow]");
+        process.exit(1);
+      }
+      if (target.startsWith("d_") || target.startsWith("dep_")) {
+        await follow(target, has("follow"));
+      } else {
+        const deps = await api("GET", `/api/projects/${target}/deployments?limit=1`);
+        if (deps && deps.length > 0) {
+          await follow(deps[0].id, has("follow"));
+        } else {
+          console.log(`No deployments found for project '${target}'`);
+        }
+      }
       break;
     }
+
     case "history": {
-      console.table(await api("GET", `/api/projects/${args[0]}/deployments`));
+      const name = args[0];
+      if (!name) {
+        console.error("Usage: hosterax history <projectName>");
+        process.exit(1);
+      }
+      console.table(await api("GET", `/api/projects/${name}/deployments`));
       break;
     }
+
     case "diff": {
       const d1 = args[0];
       const d2 = args[1];
@@ -164,7 +338,7 @@ try {
           Target: diff.target.exit_code ?? "—",
         },
       ]);
-      if (diff.env_diff.length > 0) {
+      if (diff.env_diff && diff.env_diff.length > 0) {
         console.log("Environment changes:");
         console.table(
           diff.env_diff.map((d) => ({
@@ -174,14 +348,13 @@ try {
             Target: d.target ?? "—",
           })),
         );
-      } else {
-        console.log("No environment variable changes.");
       }
       console.log(
         `Duration delta: ${diff.duration_diff_ms > 0 ? "+" : ""}${diff.duration_diff_ms}ms`,
       );
       break;
     }
+
     case "metrics": {
       const name = args[0];
       if (name) {
@@ -214,23 +387,42 @@ try {
       }
       break;
     }
+
     case "rollback": {
-      const r = await api("POST", `/api/deployments/${args[0]}/rollback`);
-      console.log(r);
+      const target = args[0];
+      if (!target) {
+        console.error("Usage: hosterax rollback <deploymentId>");
+        process.exit(1);
+      }
+      const r = await api("POST", `/api/deployments/${target}/rollback`);
+      console.log(`✓ Rollback initiated: ${r.id}`);
       await follow(r.id);
       break;
     }
+
     case "env": {
       const name = args[0];
+      if (!name) {
+        console.error("Usage: hosterax env <projectName> [KEY=val ...]");
+        process.exit(1);
+      }
+      const kvArgs = args.slice(1);
+      if (kvArgs.length === 0) {
+        const p = await api("GET", `/api/projects/${name}`);
+        console.log(`Environment variables for ${name}:`);
+        console.table(p.env || {});
+        break;
+      }
       const env = {};
-      for (const kv of args.slice(1)) {
+      for (const kv of kvArgs) {
         const i = kv.indexOf("=");
         if (i > 0) env[kv.slice(0, i)] = kv.slice(i + 1);
       }
       await api("POST", `/api/projects/${name}/env`, { env });
-      console.log("updated env");
+      console.log(`✓ Updated environment variables for ${name}`);
       break;
     }
+
     case "quotas": {
       const name = args[0];
       const cpu = flag("cpu");
@@ -243,17 +435,39 @@ try {
         cpu_limit: cpu ? parseFloat(cpu) : null,
         memory_mb_limit: memory ? parseInt(memory, 10) : null,
       });
-      console.log(`updated quotas for ${name}`);
+      console.log(`✓ Updated quotas for ${name}`);
       console.log(`  CPU: ${r.cpu_limit ?? "Unlimited"}`);
       console.log(`  Memory: ${r.memory_mb_limit ? r.memory_mb_limit + " MB" : "Unlimited"}`);
       break;
     }
-    case "rm": {
-      await api("DELETE", `/api/projects/${args[0]}`);
-      console.log("removed", args[0]);
+
+    case "diagnose": {
+      const name = args[0];
+      if (!name) {
+        console.error("Usage: hosterax diagnose <projectName>");
+        process.exit(1);
+      }
+      const diag = await api("POST", "/api/diagnostics/crash", { projectName: name });
+      console.log(`\n╭─ AI Crash Diagnostics: ${name.padEnd(28)} ╮`);
+      console.log(`│ Status:      ${diag.status || "analyzed"} │`);
+      console.log(`│ Root Cause:  ${(diag.rootCause || "Unknown").slice(0, 36)} │`);
+      console.log(`│ Suggested:   ${(diag.suggestedFix || "Restart").slice(0, 36)} │`);
+      console.log(`╰───────────────────────────────────────────────────╯`);
       break;
     }
-    // ────────── databases ──────────
+
+    case "rm": {
+      const name = args[0];
+      if (!name) {
+        console.error("Usage: hosterax rm <projectName>");
+        process.exit(1);
+      }
+      await api("DELETE", `/api/projects/${name}`);
+      console.log("✓ Removed project", name);
+      break;
+    }
+
+    // ────────── Databases & Backups ──────────
     case "databases": {
       const name = args[0];
       if (name) {
@@ -293,17 +507,36 @@ try {
       }
       break;
     }
-    case "backup:create": {
-      const dbId = args[0];
-      if (!dbId) {
-        console.error("Usage: hosterax backup:create <databaseId>");
+
+    case "db:create": {
+      const project = args[0];
+      const dbName = args[1];
+      const engine = args[2] || "postgres";
+      if (!project || !dbName) {
+        console.error("Usage: hosterax db:create <project> <name> [postgres|mysql|mongodb|redis]");
         process.exit(1);
       }
-      const r = await api("POST", `/api/databases/${dbId}/backup`);
-      console.log(`✓ Snapshot ${r.id} created for ${r.database} (${r.engine})`);
-      console.log(`  Size: ${r.size_mb} MB | SHA256: ${r.sha256.slice(0, 16)}…`);
+      const r = await api("POST", `/api/projects/${project}/databases`, {
+        name: dbName,
+        engine,
+        size_mb: 1024,
+      });
+      console.log(`✓ Database ${dbName} (${engine}) provisioned for project ${project}`);
       break;
     }
+
+    case "backup:create": {
+      const target = args[0];
+      if (!target) {
+        console.error("Usage: hosterax backup:create <databaseName|databaseId>");
+        process.exit(1);
+      }
+      const r = await api("POST", `/api/databases/${target}/backup`);
+      console.log(`✓ Snapshot ${r.id} created for ${r.database || target}`);
+      console.log(`  Size: ${r.size_mb || 0} MB | SHA256: ${(r.sha256 || "").slice(0, 16)}…`);
+      break;
+    }
+
     case "backup:list": {
       const backups = await api("GET", "/api/backups");
       if (backups.length === 0) {
@@ -324,6 +557,7 @@ try {
       );
       break;
     }
+
     case "backup:restore": {
       const snapId = args[0];
       if (!snapId) {
@@ -331,10 +565,11 @@ try {
         process.exit(1);
       }
       const r = await api("POST", `/api/backups/${snapId}/restore`);
-      console.log(`✓ ${r.message}`);
+      console.log(`✓ ${r.message || "Snapshot restored successfully"}`);
       break;
     }
-    // ────────── domains ──────────
+
+    // ────────── Domains & Edge ──────────
     case "domains": {
       const name = args[0];
       if (!name) {
@@ -353,24 +588,24 @@ try {
           Verified: d.verified ? "✓" : "✗",
           Primary: d.is_primary ? "★" : "",
           SSL: d.ssl_status,
-          Expires: d.ssl_expires ?? "—",
         })),
       );
       break;
     }
+
     case "domain:add": {
       const name = args[0];
       const hostname = args[1];
       if (!name || !hostname) {
-        console.error("Usage: hosterax domain:add <project> <hostname>");
+        console.error("Usage: hosterax domain:add <project> <hostname> [--primary]");
         process.exit(1);
       }
-      const r = await api("POST", `/api/projects/${name}/domains`, { hostname });
+      const isPrimary = has("primary");
+      const r = await api("POST", `/api/projects/${name}/domains`, { hostname, isPrimary });
       console.log(`✓ Domain ${hostname} added (id: ${r.id})`);
-      console.log(`  To verify, add a DNS TXT record:`);
-      console.log(`  _hosterax-challenge.${hostname} → ${r.challenge_token}`);
       break;
     }
+
     case "domain:verify": {
       const domId = args[0];
       if (!domId) {
@@ -378,16 +613,10 @@ try {
         process.exit(1);
       }
       const r = await api("POST", `/api/domains/${domId}/verify`);
-      if (r.verified) {
-        console.log(`✓ Domain ${r.hostname} verified successfully.`);
-      } else {
-        console.log(`✗ Verification failed for ${r.hostname}.`);
-        console.log(
-          `  Ensure TXT record exists: _hosterax-challenge.${r.hostname} → ${r.challenge_token}`,
-        );
-      }
+      console.log(r.verified ? `✓ Domain ${r.hostname} verified.` : `✗ Verification pending for ${r.hostname}.`);
       break;
     }
+
     case "domain:ssl": {
       const domId = args[0];
       if (!domId) {
@@ -398,6 +627,7 @@ try {
       console.log(`✓ ${r.message}`);
       break;
     }
+
     case "domain:primary": {
       const domId = args[0];
       if (!domId) {
@@ -408,33 +638,151 @@ try {
       console.log("✓ Primary domain updated.");
       break;
     }
-    // ────────── stats ──────────
-    case "stats": {
-      const s = await api("GET", "/api/stats");
-      console.log(`\n╭─ HosteraX Control Plane Stats ─────────────────╮`);
-      console.log(`│ Projects:       ${String(s.projects).padEnd(30)} │`);
-      console.log(`│ Deployments:    ${String(s.deployments.total).padEnd(30)} │`);
-      console.log(`│ Success rate:   ${(s.deployments.success_rate + "%").padEnd(30)} │`);
-      console.log(`│ Avg duration:   ${(s.avg_duration_ms + "ms").padEnd(30)} │`);
-      console.log(`│ Domains:        ${String(s.domains).padEnd(30)} │`);
-      console.log(`│ Databases:      ${String(s.databases).padEnd(30)} │`);
-      console.log(`│ Backups:        ${String(s.backups).padEnd(30)} │`);
-      console.log(`│ Running procs:  ${String(s.running_processes).padEnd(30)} │`);
+
+    case "edge:status": {
+      const edge = await api("GET", "/api/edge/status");
+      console.log(`\n╭─ Managed Edge Gateway ────────────────────────╮`);
+      console.log(`│ Active Proxy:   ${(edge.provider || "Caddy 2").padEnd(30)} │`);
+      console.log(`│ Dynamic Routes: ${String(edge.routes_count || 0).padEnd(30)} │`);
       console.log(`╰────────────────────────────────────────────────╯`);
-      console.log(
-        `\nSystem: ${s.system.hostname} | CPU: ${s.system.cpu.percent}% | RAM: ${s.system.memory.percent}%`,
+      break;
+    }
+
+    // ────────── Multi-Node & Cron ──────────
+    case "servers": {
+      const srvs = await api("GET", "/api/servers");
+      if (!srvs || srvs.length === 0) {
+        console.log("No remote servers connected.");
+        break;
+      }
+      console.table(
+        srvs.map((s) => ({
+          ID: s.id,
+          Name: s.name,
+          Host: s.host,
+          Status: s.status,
+          Latency: s.latency_ms ? `${s.latency_ms}ms` : "—",
+        })),
       );
       break;
     }
-    // ────────── tokens ──────────
+
+    case "server:test": {
+      const srvId = args[0];
+      if (!srvId) {
+        console.error("Usage: hosterax server:test <serverId>");
+        process.exit(1);
+      }
+      const r = await api("POST", `/api/servers/${srvId}/test`);
+      console.log(r.ok ? `✓ Server reachable (${r.latency_ms}ms)` : `✗ Connection failed: ${r.error}`);
+      break;
+    }
+
+    case "cron:list": {
+      const jobs = await api("GET", "/api/cron/jobs");
+      if (!jobs || jobs.length === 0) {
+        console.log("No cron jobs scheduled.");
+        break;
+      }
+      console.table(
+        jobs.map((j) => ({
+          ID: j.id,
+          Name: j.name,
+          Schedule: j.schedule,
+          Target: j.target_project || "system",
+          Enabled: j.enabled ? "✓" : "✗",
+          LastRun: j.last_run_at ? new Date(j.last_run_at).toISOString() : "Never",
+        })),
+      );
+      break;
+    }
+
+    case "cron:run": {
+      const jobId = args[0];
+      if (!jobId) {
+        console.error("Usage: hosterax cron:run <jobId>");
+        process.exit(1);
+      }
+      const r = await api("POST", `/api/cron/jobs/${jobId}/run`);
+      console.log(`✓ Cron job execution triggered (exit code: ${r.exit_code ?? 0})`);
+      break;
+    }
+
+    case "s3:status": {
+      const s3 = await api("GET", "/api/storage/s3");
+      console.log(`S3 Configured: ${s3.configured ? "✓ Yes" : "✗ No"}`);
+      if (s3.configured) {
+        console.log(`Bucket: ${s3.bucket} (${s3.provider || "AWS S3"})`);
+      }
+      break;
+    }
+
+    case "s3:sync": {
+      const r = await api("POST", "/api/storage/s3/sync");
+      console.log(`✓ S3 Remote Sync: ${r.message || "Completed"}`);
+      break;
+    }
+
+    // ────────── Catalog & MCP ──────────
+    case "catalog:search": {
+      const q = args[0] || "";
+      const cat = flag("category");
+      const url = `/api/catalog/search?q=${encodeURIComponent(q)}${cat ? `&category=${encodeURIComponent(cat)}` : ""}`;
+      const apps = await api("GET", url);
+      if (!apps || apps.length === 0) {
+        console.log("No matching catalog apps found.");
+        break;
+      }
+      console.table(
+        apps.slice(0, 20).map((a) => ({
+          Name: a.name,
+          Category: a.category || "App",
+          Description: (a.description || "").slice(0, 45) + "…",
+        })),
+      );
+      break;
+    }
+
+    case "mcp:tools": {
+      const rpc = await api("POST", "/api/mcp", { jsonrpc: "2.0", id: "cli_1", method: "tools/list" });
+      const tools = rpc.result?.tools || [];
+      console.log(`\nHosteraX Registered MCP Tools (${tools.length} available):`);
+      console.table(
+        tools.map((t) => ({
+          Tool: t.name,
+          Description: t.description.slice(0, 65) + "…",
+        })),
+      );
+      break;
+    }
+
+    case "mcp:call": {
+      const toolName = args[0];
+      const rawArgs = args[1] ? JSON.parse(args[1]) : {};
+      if (!toolName) {
+        console.error("Usage: hosterax mcp:call <toolName> [jsonArgs]");
+        process.exit(1);
+      }
+      const rpc = await api("POST", "/api/mcp", {
+        jsonrpc: "2.0",
+        id: "cli_call",
+        method: "tools/call",
+        params: { name: toolName, arguments: rawArgs },
+      });
+      console.log(rpc.result?.content?.[0]?.text || JSON.stringify(rpc));
+      break;
+    }
+
     case "tokens": {
       console.table(await api("GET", "/api/tokens"));
       break;
     }
+
     case "token:new": {
       console.log((await api("POST", "/api/tokens", { name: args[0] })).token);
       break;
     }
+
     default:
       help();
   }

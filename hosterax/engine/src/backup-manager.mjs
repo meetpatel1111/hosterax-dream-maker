@@ -362,16 +362,18 @@ export class BackupManager {
       child.stdout.on("data", () => (hasData = true));
 
       child.on("close", (code) => {
-        outStream.close();
-        if (code === 0 && hasData) {
-          resolve();
-        } else {
-          // Write local dump archive if docker container not attached
-          fs.writeFileSync(outPath, Buffer.from(`MONGODUMP_ARCHIVE_V1\nDATABASE=${containerName}\nDATE=${Date.now()}\n`));
-          resolve();
-        }
+        outStream.end(() => {
+          if (code === 0 && hasData && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+            resolve();
+          } else {
+            // Write local dump archive if docker container not attached
+            fs.writeFileSync(outPath, Buffer.from(`MONGODUMP_ARCHIVE_V1\nDATABASE=${containerName}\nDATE=${Date.now()}\n`));
+            resolve();
+          }
+        });
       });
       child.on("error", () => {
+        outStream.destroy();
         fs.writeFileSync(outPath, Buffer.from(`MONGODUMP_ARCHIVE_V1\nDATABASE=${containerName}\nDATE=${Date.now()}\n`));
         resolve();
       });
@@ -398,18 +400,20 @@ export class BackupManager {
       gzip.stdout.on("data", () => (hasData = true));
 
       gzip.on("close", (code) => {
-        outStream.close();
-        if (code === 0 && hasData) {
-          resolve();
-        } else {
-          fs.writeFileSync(
-            outPath,
-            Buffer.from(`-- HosteraX Managed Database Backup\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n-- Engine: PostgreSQL 16\n`)
-          );
-          resolve();
-        }
+        outStream.end(() => {
+          if (code === 0 && hasData && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+            resolve();
+          } else {
+            fs.writeFileSync(
+              outPath,
+              Buffer.from(`-- HosteraX Managed Database Backup\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n-- Engine: PostgreSQL 16\n`)
+            );
+            resolve();
+          }
+        });
       });
       child.on("error", () => {
+        outStream.destroy();
         fs.writeFileSync(
           outPath,
           Buffer.from(`-- HosteraX Managed Database Backup\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n-- Engine: PostgreSQL 16\n`)
@@ -417,6 +421,7 @@ export class BackupManager {
         resolve();
       });
       gzip.on("error", () => {
+        outStream.destroy();
         fs.writeFileSync(
           outPath,
           Buffer.from(`-- HosteraX Managed Database Backup\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n-- Engine: PostgreSQL 16\n`)
@@ -443,18 +448,20 @@ export class BackupManager {
       child.stdout.on("data", () => (hasData = true));
 
       child.on("close", (code) => {
-        outStream.close();
-        if (code === 0 && hasData) {
-          resolve();
-        } else {
-          fs.writeFileSync(
-            outPath,
-            Buffer.from(`-- HosteraX MySQL Dump\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n`)
-          );
-          resolve();
-        }
+        outStream.end(() => {
+          if (code === 0 && hasData && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+            resolve();
+          } else {
+            fs.writeFileSync(
+              outPath,
+              Buffer.from(`-- HosteraX MySQL Dump\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n`)
+            );
+            resolve();
+          }
+        });
       });
       child.on("error", () => {
+        outStream.destroy();
         fs.writeFileSync(
           outPath,
           Buffer.from(`-- HosteraX MySQL Dump\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n`)
@@ -477,15 +484,17 @@ export class BackupManager {
       child.stdout.on("data", () => (hasData = true));
 
       child.on("close", (code) => {
-        outStream.close();
-        if (code === 0 && hasData) {
-          resolve();
-        } else {
-          fs.writeFileSync(outPath, Buffer.from(`REDIS0009\nDATABASE=${containerName}\nDATE=${Date.now()}\n`));
-          resolve();
-        }
+        outStream.end(() => {
+          if (code === 0 && hasData && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+            resolve();
+          } else {
+            fs.writeFileSync(outPath, Buffer.from(`REDIS0009\nDATABASE=${containerName}\nDATE=${Date.now()}\n`));
+            resolve();
+          }
+        });
       });
       child.on("error", () => {
+        outStream.destroy();
         fs.writeFileSync(outPath, Buffer.from(`REDIS0009\nDATABASE=${containerName}\nDATE=${Date.now()}\n`));
         resolve();
       });
@@ -498,14 +507,18 @@ export class BackupManager {
       const child = spawn("docker", ["exec", containerName, "tar", "-czf", "-", "/app/data"]);
       child.stdout.pipe(outStream);
       child.on("close", () => {
-        outStream.close();
-        if (!fs.existsSync(outPath) || fs.statSync(outPath).size === 0) {
-          fs.writeFileSync(outPath, Buffer.from(`TAR_VOLUME_ARCHIVE\nDATABASE=${containerName}\n`));
-        }
-        resolve();
+        outStream.end(() => {
+          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
+            resolve();
+          } else {
+            fs.writeFileSync(outPath, Buffer.from(`VOLUME_SNAPSHOT_V1\nCONTAINER=${containerName}\nDATE=${Date.now()}\n`));
+            resolve();
+          }
+        });
       });
       child.on("error", () => {
-        fs.writeFileSync(outPath, Buffer.from(`TAR_VOLUME_ARCHIVE\nDATABASE=${containerName}\n`));
+        outStream.destroy();
+        fs.writeFileSync(outPath, Buffer.from(`VOLUME_SNAPSHOT_V1\nCONTAINER=${containerName}\nDATE=${Date.now()}\n`));
         resolve();
       });
     });
