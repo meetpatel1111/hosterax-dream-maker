@@ -34,10 +34,11 @@ dist-ssr
 # Playwright MCP (test artifacts)
 .playwright-mcp/
 
-# Engine runtime data
+# Engine & Desktop runtime data
 hosterax/engine/*.db
 hosterax/engine/*.db-journal
 hosterax/engine/*.db-wal
+hosterax/desktop/out/
 scratch/
 
 # Lockfiles (use bun.lock)

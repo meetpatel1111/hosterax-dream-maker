@@ -16,7 +16,9 @@
     "hosterax": "node ./hosterax/cli/src/cli.mjs",
     "htx": "node ./hosterax/cli/src/cli.mjs",
     "test:engine": "node --test hosterax/engine/test/engine.test.mjs",
-    "catalog:sync": "node ./scripts/sync-catalog.mjs"
+    "catalog:sync": "node ./scripts/sync-catalog.mjs",
+    "desktop:start": "electron ./hosterax/desktop",
+    "desktop:make": "npm --prefix hosterax/desktop run make"
   },
   "bin": {
     "hosterax": "./hosterax/cli/src/cli.mjs",

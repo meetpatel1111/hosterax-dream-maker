@@ -11,7 +11,11 @@ let engineProcess = null;
 let tray = null;
 
 const ENGINE_PORT = process.env.HOSTERAX_PORT || 7777;
-const UI_URL = process.env.HOSTERAX_UI_URL || `http://localhost:${ENGINE_PORT}`;
+const UI_URL =
+  process.env.HOSTERAX_UI_URL ||
+  (process.env.NODE_ENV === "production"
+    ? `http://localhost:${ENGINE_PORT}`
+    : "http://localhost:8080");
 
 function startEngineDaemon() {
   const engineEntry = path.join(__dirname, "../engine/src/index.mjs");
