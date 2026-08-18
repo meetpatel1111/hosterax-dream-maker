@@ -164,15 +164,22 @@ export function DashboardShell({ children }: { children: ReactNode }) {
 
       <main className="flex-1 min-w-0">
         <header className="flex h-14 items-center justify-between border-b border-border bg-background/60 px-6 backdrop-blur">
-          <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-            <Terminal className="h-3.5 w-3.5 text-primary" />
-            <span>hx</span>
-            <span className="text-muted-foreground/50">·</span>
-            <span className="truncate">{loc.pathname}</span>
+          <div className="flex items-center gap-3">
+            <div className="md:hidden flex items-center mr-2">
+              <Link to="/dashboard">
+                <Logo />
+              </Link>
+            </div>
+            <div className="hidden md:flex items-center gap-2 font-mono text-xs text-muted-foreground">
+              <Terminal className="h-3.5 w-3.5 text-primary" />
+              <span>hx</span>
+              <span className="text-muted-foreground/50">·</span>
+              <span className="truncate">{loc.pathname}</span>
+            </div>
           </div>
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
             <span className="hidden items-center gap-1.5 md:inline-flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-lime-400 animate-pulse" />
               {t("systemHealthy", "Control plane · connected")}
             </span>
           </div>
