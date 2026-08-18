@@ -535,8 +535,14 @@ export class EmailManager {
           },
         });
 
+        const fromSender =
+          defaultRelay.from_email ||
+          (defaultRelay.provider === "resend" || defaultRelay.host?.includes("resend")
+            ? "onboarding@resend.dev"
+            : mbox.email);
+
         const sendResult = await transporter.sendMail({
-          from: defaultRelay.from_email || mbox.email,
+          from: fromSender,
           to: to.trim().toLowerCase(),
           subject: subject.trim(),
           text: body_text || "",
