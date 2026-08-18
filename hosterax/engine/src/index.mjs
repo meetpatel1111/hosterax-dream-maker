@@ -2228,6 +2228,64 @@ function json(res, code, body) {
   });
   res.end(JSON.stringify(body));
 }
+
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+};
+
+function serveStaticDashboard(res, pathname) {
+  const possibleRoots = [
+    path.resolve(process.cwd(), ".output/public"),
+    path.resolve(process.cwd(), "dist"),
+    path.resolve(__dirname, "../../../.output/public"),
+    path.resolve(__dirname, "../../../dist"),
+  ];
+  let publicDir = possibleRoots.find((d) => fs.existsSync(d) && fs.statSync(d).isDirectory());
+  if (!publicDir) return false;
+
+  const safePath = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, "");
+  let filePath = path.join(publicDir, safePath);
+
+  // If path is a directory, look for index.html
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
+    filePath = path.join(filePath, "index.html");
+  }
+
+  // SPA fallback for HTML5 history routing
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+    const indexPath = path.join(publicDir, "index.html");
+    if (fs.existsSync(indexPath)) filePath = indexPath;
+    else return false;
+  }
+
+  try {
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[ext] || "application/octet-stream";
+    const data = fs.readFileSync(filePath);
+    res.writeHead(200, {
+      "content-type": contentType,
+      "cache-control": ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable",
+    });
+    res.end(data);
+    return true;
+  } catch {
+    return false;
+  }
+}
 function readBody(req, maxSizeBytes = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let s = "";
@@ -4054,6 +4112,9 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true });
     }
 
+    if (req.method === "GET" && serveStaticDashboard(res, url.pathname)) {
+      return;
+    }
     return json(res, 404, { error: "not found" });
   } catch (e) {
     return json(res, 500, { error: String(e) });

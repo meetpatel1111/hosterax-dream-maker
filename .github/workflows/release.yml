@@ -70,10 +70,14 @@ jobs:
 
       - name: Build & Pack NPM Tarball
         working-directory: ./hosterax/cli
+        env:
+          RELEASE_VER: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
         run: |
           npm pack
           mkdir -p ../../npm-dist
-          cp *.tgz ../../npm-dist/
+          TARBALL=$(ls hosterax-*.tgz | head -n 1)
+          cp "$TARBALL" "../../npm-dist/hosterax_${RELEASE_VER}.tgz"
+          cp "$TARBALL" "../../npm-dist/${TARBALL}"
 
       - name: Publish to NPM Registry
         working-directory: ./hosterax/cli
@@ -106,7 +110,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: HosteraX-NPM-Package
-          path: npm-dist/*.tgz
+          path: npm-dist/*
 
   # =========================================================================
   # 3. Multi-Architecture Docker Hub & GHCR Container Images
@@ -167,14 +171,14 @@ jobs:
       matrix:
         include:
           - os: windows-latest
+            os_name: windows
             artifact_name: HosteraX-Windows
-            pattern: 'hosterax/desktop/out/make/**/*.exe'
           - os: macos-latest
+            os_name: macos
             artifact_name: HosteraX-macOS
-            pattern: 'hosterax/desktop/out/make/**/*.dmg'
           - os: ubuntu-latest
+            os_name: linux
             artifact_name: HosteraX-Linux
-            pattern: 'hosterax/desktop/out/make/**/*'
 
     steps:
       - name: Checkout Code
@@ -196,13 +200,50 @@ jobs:
 
       - name: Package Desktop Binary
         working-directory: ./hosterax/desktop
-        run: npm run make || echo "Desktop build completed"
+        run: npm run make || echo "Desktop packaging step completed"
+
+      - name: Normalize Artifact Filenames
+        env:
+          OS_TYPE: ${{ matrix.os_name }}
+          RELEASE_VER: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+            const makeDir = path.join("hosterax", "desktop", "out", "make");
+            const normDir = path.join("hosterax", "desktop", "out", "normalized");
+            fs.mkdirSync(normDir, { recursive: true });
+            const osType = process.env.OS_TYPE || "desktop";
+            const ver = process.env.RELEASE_VER || "v1.0.0";
+
+            function scan(dir) {
+              if (!fs.existsSync(dir)) return [];
+              let out = [];
+              for (const item of fs.readdirSync(dir)) {
+                const full = path.join(dir, item);
+                if (fs.statSync(full).isDirectory()) out.push(...scan(full));
+                else out.push(full);
+              }
+              return out;
+            }
+
+            const files = scan(makeDir);
+            for (const f of files) {
+              const ext = path.extname(f).toLowerCase();
+              if ([".exe", ".dmg", ".deb", ".rpm", ".zip", ".appimage"].includes(ext)) {
+                let cleanName = `hosterax_${osType}_${ver}${ext}`;
+                if (ext === ".exe" && f.toLowerCase().includes("setup")) cleanName = `hosterax_${osType}_installer_${ver}.exe`;
+                fs.copyFileSync(f, path.join(normDir, cleanName));
+                console.log(`[Artifact] Generated clean release file: ${cleanName}`);
+              }
+            }
+          '
 
       - name: Upload Platform Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: hosterax/desktop/out/
+          path: hosterax/desktop/out/normalized/
           if-no-files-found: ignore
 
   # =========================================================================
@@ -221,10 +262,13 @@ jobs:
         with:
           path: release-artifacts
 
-      - name: Generate Checksums (SHA256)
-        working-directory: release-artifacts
+      - name: Prepare Clean Release Bundle & Checksums
         run: |
-          find . -type f -exec sha256sum {} + > ../SHA256SUMS.txt || true
+          mkdir -p final-dist
+          find release-artifacts -type f -exec cp {} final-dist/ \;
+          cd final-dist
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -234,7 +278,6 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            SHA256SUMS.txt
-            release-artifacts/**/*
+            final-dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
