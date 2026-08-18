@@ -891,10 +891,10 @@ try {
     case "ai:model": {
       const modelName = args[0] || flag("model");
       if (!modelName) {
-        console.log(`Current default AI model: ${cfg.aiModel || "gemini-2.5-flash"}`);
+        console.log(`Current default AI model: ${cfg.aiModel || "gemini-3.5-flash"}`);
         console.log("Usage: htx ai:model <modelName>");
         console.log("Examples:");
-        console.log("  htx ai:model gemini-2.5-flash");
+        console.log("  htx ai:model gemini-3.5-flash");
         console.log("  htx ai:model gpt-4o");
         console.log("  htx ai:model gpt-4o-mini");
         console.log("  htx ai:model claude-3-5-sonnet-20241022");
@@ -1127,7 +1127,7 @@ try {
         process.exit(1);
       }
 
-      const model = customModel || process.env.GEMINI_MODEL || "gemini-2.5-flash";
+      const model = customModel || process.env.GEMINI_MODEL || "gemini-3.5-flash";
       console.log(`\n🤖 HosteraX Autonomous Agent thinking (GEMINI / ${model})...`);
 
       const functionDeclarations = mcpTools.map((t) => ({
