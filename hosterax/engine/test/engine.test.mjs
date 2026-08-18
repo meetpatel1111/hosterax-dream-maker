@@ -326,6 +326,26 @@ test("model context protocol (MCP) JSON-RPC 2.0 server", async () => {
   });
   assert.equal(callCatalog.jsonrpc, "2.0");
   assert.ok(Array.isArray(JSON.parse(callCatalog.result.content[0].text)));
+
+  // JSON-RPC tools/call: list_email_domains
+  const callEmail = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 10,
+    method: "tools/call",
+    params: { name: "list_email_domains", arguments: {} },
+  });
+  assert.equal(callEmail.jsonrpc, "2.0");
+  assert.ok(Array.isArray(JSON.parse(callEmail.result.content[0].text)));
+
+  // JSON-RPC tools/call: list_organizations
+  const callOrgs = await api("POST", "/api/mcp", {
+    jsonrpc: "2.0",
+    id: 11,
+    method: "tools/call",
+    params: { name: "list_organizations", arguments: {} },
+  });
+  assert.equal(callOrgs.jsonrpc, "2.0");
+  assert.ok(Array.isArray(JSON.parse(callOrgs.result.content[0].text)));
 });
 
 test("multi-node server management CRUD and connection test", async () => {

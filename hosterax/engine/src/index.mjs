@@ -2472,6 +2472,9 @@ const mcpServer = new MCPServer({
   runDeployment,
   applyRoute,
   catalogApps: catalogAppsList,
+  emailManager,
+  webhookManager,
+  orgManager,
 });
 
 const server = http.createServer(async (req, res) => {

@@ -20,6 +20,9 @@ export class MCPServer {
     runDeployment,
     applyRoute,
     catalogApps = [],
+    emailManager,
+    webhookManager,
+    orgManager,
   }) {
     this.db = db;
     this.backupManager = backupManager;
@@ -33,6 +36,9 @@ export class MCPServer {
     this.runDeployment = runDeployment;
     this.applyRoute = applyRoute;
     this.catalogApps = catalogApps;
+    this.emailManager = emailManager;
+    this.webhookManager = webhookManager;
+    this.orgManager = orgManager;
 
     this.tools = [
       // ── Core & Observability ──
@@ -473,6 +479,130 @@ export class MCPServer {
             customName: { type: "string", description: "Optional custom project name" },
           },
           required: ["appName"],
+        },
+      },
+
+      // ── Email Stack & Mailboxes ──
+      {
+        name: "list_email_domains",
+        description: "List all configured custom email domains with SPF, DKIM, and DMARC verification statuses.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "add_email_domain",
+        description: "Register a new email domain and generate 2048-bit DKIM keys and DNS records.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            domain: { type: "string", description: "Domain name (e.g. 'mail.company.com')" },
+          },
+          required: ["domain"],
+        },
+      },
+      {
+        name: "list_mailboxes",
+        description: "List mailboxes and storage quotas for a domain or whole instance.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            domainId: { type: "string", description: "Optional domain ID filter" },
+          },
+        },
+      },
+      {
+        name: "create_mailbox",
+        description: "Create a new email address and mailbox on a configured domain.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            email: { type: "string", description: "Full email address (e.g. 'contact@company.com')" },
+            name: { type: "string", description: "Display name (e.g. 'Contact Desk')" },
+            password: { type: "string", description: "Mailbox password" },
+            quotaMb: { type: "number", description: "Quota in MB (default: 5120)" },
+          },
+          required: ["email", "name", "password"],
+        },
+      },
+      {
+        name: "list_mail_aliases",
+        description: "List email forwarding aliases and webhook routing rules.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "create_mail_alias",
+        description: "Create an inbound forwarding alias or webhook trigger for an email address.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            aliasAddress: { type: "string", description: "Inbound alias address (e.g. 'sales@company.com')" },
+            destinationEmail: { type: "string", description: "Forwarding destination email" },
+            webhookUrl: { type: "string", description: "Optional HTTP webhook endpoint for inbound emails" },
+          },
+          required: ["aliasAddress"],
+        },
+      },
+
+      // ── Webhooks & PR Preview Environments ──
+      {
+        name: "get_webhook_config",
+        description: "Get GitHub/Git push-to-deploy webhook secret and endpoint URL for a project.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectName: { type: "string", description: "Project name" },
+          },
+          required: ["projectName"],
+        },
+      },
+      {
+        name: "list_pr_previews",
+        description: "List all active ephemeral Pull Request preview containers for a project.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            projectName: { type: "string", description: "Project name" },
+          },
+          required: ["projectName"],
+        },
+      },
+      {
+        name: "delete_pr_preview",
+        description: "Tear down an ephemeral PR preview environment and free allocated ports.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            previewId: { type: "string", description: "Preview container ID" },
+          },
+          required: ["previewId"],
+        },
+      },
+
+      // ── Multi-Tenant Organizations & RBAC ──
+      {
+        name: "list_organizations",
+        description: "List all multi-tenant organizations and workspaces.",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "create_organization",
+        description: "Create a new isolated organization workspace.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", description: "Organization name" },
+            slug: { type: "string", description: "URL-safe workspace slug" },
+          },
+          required: ["name"],
+        },
+      },
+      {
+        name: "list_org_members",
+        description: "List team members and RBAC roles (Owner, Admin, Member, Viewer) in an organization.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            orgId: { type: "string", description: "Organization ID (default: default workspace)" },
+          },
         },
       },
     ];
@@ -1193,6 +1323,93 @@ export class MCPServer {
             await this.runDeployment(projName, { trigger: "mcp_catalog_deploy" });
           }
           return formatResponse({ ok: true, project: projName, app: app.name });
+        }
+
+        // ── Email Stack ──
+        case "list_email_domains": {
+          if (!this.emailManager) return formatResponse([]);
+          const domains = await this.emailManager.listDomains();
+          return formatResponse(domains);
+        }
+
+        case "add_email_domain": {
+          if (!this.emailManager) return formatResponse({ error: "Email manager not initialized" }, true);
+          const domain = await this.emailManager.addDomain(args.domain);
+          return formatResponse(domain);
+        }
+
+        case "list_mailboxes": {
+          if (!this.emailManager) return formatResponse([]);
+          const boxes = await this.emailManager.listMailboxes(args.domainId);
+          return formatResponse(boxes);
+        }
+
+        case "create_mailbox": {
+          if (!this.emailManager) return formatResponse({ error: "Email manager not initialized" }, true);
+          const box = await this.emailManager.createMailbox({
+            email: args.email,
+            name: args.name,
+            password: args.password,
+            quota_mb: args.quotaMb,
+          });
+          return formatResponse(box);
+        }
+
+        case "list_mail_aliases": {
+          if (!this.emailManager) return formatResponse([]);
+          const aliases = await this.emailManager.listAliases();
+          return formatResponse(aliases);
+        }
+
+        case "create_mail_alias": {
+          if (!this.emailManager) return formatResponse({ error: "Email manager not initialized" }, true);
+          const alias = await this.emailManager.createAlias({
+            alias_address: args.aliasAddress,
+            destination_email: args.destinationEmail,
+            webhook_url: args.webhookUrl,
+          });
+          return formatResponse(alias);
+        }
+
+        // ── Webhooks & PR Previews ──
+        case "get_webhook_config": {
+          if (!this.webhookManager) return formatResponse({ error: "Webhook manager not initialized" }, true);
+          const cfg = this.webhookManager.getProjectWebhookConfig(args.projectName);
+          return formatResponse(cfg);
+        }
+
+        case "list_pr_previews": {
+          if (!this.webhookManager) return formatResponse([]);
+          const previews = this.webhookManager.listPrPreviews(args.projectName);
+          return formatResponse(previews);
+        }
+
+        case "delete_pr_preview": {
+          if (!this.webhookManager) return formatResponse({ error: "Webhook manager not initialized" }, true);
+          const res = this.webhookManager.deletePrPreview(args.previewId);
+          return formatResponse(res);
+        }
+
+        // ── Organizations & RBAC ──
+        case "list_organizations": {
+          if (!this.orgManager) return formatResponse([]);
+          const orgs = this.orgManager.listOrganizations();
+          return formatResponse(orgs);
+        }
+
+        case "create_organization": {
+          if (!this.orgManager) return formatResponse({ error: "Org manager not initialized" }, true);
+          const org = this.orgManager.createOrganization({
+            name: args.name,
+            slug: args.slug,
+          });
+          return formatResponse(org);
+        }
+
+        case "list_org_members": {
+          if (!this.orgManager) return formatResponse([]);
+          const members = this.orgManager.listMembers(args.orgId);
+          return formatResponse(members);
         }
 
         default:

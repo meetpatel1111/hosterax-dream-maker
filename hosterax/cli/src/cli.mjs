@@ -170,15 +170,35 @@ function help() {
     s3:status                                 Check remote S3/R2 backup sync status
     s3:sync                                   Trigger remote backup sync to AWS S3/R2
 
+  Email Stack & Webmail:
+    mail:domains                              List configured email domains & SPF/DKIM
+    mail:domain:add <domain>                  Add custom email domain & generate keys
+    mail:boxes [domainId]                     List configured mailboxes
+    mail:box:new <email> <name> <password>    Create new email mailbox
+    mail:aliases                              List inbound forwarding aliases & webhooks
+    mail:alias:new <alias> <destination>      Create forwarding email alias
+
+  Webhooks & PR Previews:
+    webhooks <project>                        Inspect Git push-to-deploy webhook secret
+    previews [project]                        List ephemeral PR preview containers
+    preview:delete <previewId>                Destroy PR preview environment
+
+  Organizations & RBAC Teams:
+    orgs                                      List organizations and workspaces
+    org:new <name> [slug]                     Create new isolated organization workspace
+    org:members <orgId>                       List members and roles
+    org:member:add <orgId> <email> <name>     Add member to workspace
+
   App Store & AI / MCP (Claude, Cursor, Devin, OpenAI, Gemini):
     ai "<prompt>" [--provider <name>] [--model <name>] Universal autonomous AI copilot (Claude, OpenAI, Ollama, Gemini)
     ai:key <apiKey> [--provider <name>]       Save AI provider API key in CLI config
     ai:model <modelName>                      Set default AI model (e.g. gemini-3.5-flash, gpt-4o, claude-3-5-sonnet)
     catalog:search <query> [--category <cat>] Search 2,502+ open-source template apps
-    mcp:tools                                 List all 34 registered MCP tools
+    mcp                                       Run stdio MCP transport for AI IDEs (Cursor, Claude, Devin)
+    mcp:tools                                 List all registered MCP tools
     mcp:call <toolName> [jsonArgs]            Execute MCP JSON-RPC tool directly
     mcp:config [cursor|claude|devin|windsurf] Output ready-to-use IDE MCP configuration JSON
-    mcp:stdio                                 Run stdio MCP transport for IDEs (Cursor, Claude, Devin)
+    mcp:stdio                                 Run stdio MCP transport for IDEs
     tokens                                    List personal access tokens
     token:new <label>                         Mint personal access token
 `);
@@ -1415,6 +1435,118 @@ try {
 
     case "token:new": {
       console.log((await api("POST", "/api/tokens", { name: args[0] })).token);
+      break;
+    }
+
+    // ────────── Email Stack & Webmail ──────────
+    case "mail:domains": {
+      console.table(await api("GET", "/api/email/domains"));
+      break;
+    }
+
+    case "mail:domain:add": {
+      const domain = args[0];
+      if (!domain) {
+        console.error("Usage: htx mail:domain:add <domain.com>");
+        process.exit(1);
+      }
+      console.log(await api("POST", "/api/email/domains", { domain }));
+      break;
+    }
+
+    case "mail:boxes": {
+      const domainId = args[0];
+      const url = domainId ? `/api/email/mailboxes?domain=${domainId}` : "/api/email/mailboxes";
+      console.table(await api("GET", url));
+      break;
+    }
+
+    case "mail:box:new": {
+      const [email, name, password] = args;
+      if (!email || !name || !password) {
+        console.error("Usage: htx mail:box:new <email> <name> <password>");
+        process.exit(1);
+      }
+      console.log(await api("POST", "/api/email/mailboxes", { email, name, password }));
+      break;
+    }
+
+    case "mail:aliases": {
+      console.table(await api("GET", "/api/email/aliases"));
+      break;
+    }
+
+    case "mail:alias:new": {
+      const [alias_address, destination_email] = args;
+      if (!alias_address) {
+        console.error("Usage: htx mail:alias:new <alias@domain.com> [destination@domain.com]");
+        process.exit(1);
+      }
+      console.log(await api("POST", "/api/email/aliases", { alias_address, destination_email }));
+      break;
+    }
+
+    // ────────── Webhooks & PR Previews ──────────
+    case "webhooks": {
+      const project = args[0];
+      if (!project) {
+        console.error("Usage: htx webhooks <project_name>");
+        process.exit(1);
+      }
+      console.log(await api("GET", `/api/projects/${project}/webhook-config`));
+      break;
+    }
+
+    case "previews": {
+      const project = args[0];
+      const url = project ? `/api/projects/${project}/previews` : "/api/previews";
+      console.table(await api("GET", url));
+      break;
+    }
+
+    case "preview:delete": {
+      const previewId = args[0];
+      if (!previewId) {
+        console.error("Usage: htx preview:delete <previewId>");
+        process.exit(1);
+      }
+      console.log(await api("DELETE", `/api/previews/${previewId}`));
+      break;
+    }
+
+    // ────────── Organizations & RBAC ──────────
+    case "orgs": {
+      console.table(await api("GET", "/api/orgs"));
+      break;
+    }
+
+    case "org:new": {
+      const [name, slug] = args;
+      if (!name) {
+        console.error("Usage: htx org:new <name> [slug]");
+        process.exit(1);
+      }
+      console.log(await api("POST", "/api/orgs", { name, slug }));
+      break;
+    }
+
+    case "org:members": {
+      const orgId = args[0];
+      if (!orgId) {
+        console.error("Usage: htx org:members <orgId>");
+        process.exit(1);
+      }
+      console.table(await api("GET", `/api/orgs/${orgId}/members`));
+      break;
+    }
+
+    case "org:member:add": {
+      const [orgId, user_email, user_name, role] = args;
+      if (!orgId || !user_email || !user_name) {
+        console.error("Usage: htx org:member:add <orgId> <email> <name> [role]");
+        process.exit(1);
+      }
+      console.log(await api("POST", `/api/orgs/${orgId}/members`, { user_email, user_name, role: role || "member" }));
       break;
     }
 
