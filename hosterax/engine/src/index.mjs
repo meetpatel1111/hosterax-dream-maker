@@ -3282,6 +3282,19 @@ const server = http.createServer(async (req, res) => {
       const ok = emailManager.markMessageRead(m[1], b.is_read !== false);
       return json(res, 200, { ok });
     }
+    if ((m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/star$/)) && req.method === "POST") {
+      const resData = emailManager.toggleMessageStar(m[1]);
+      return json(res, 200, resData);
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)\/move$/)) && req.method === "POST") {
+      const b = await readBody(req);
+      const ok = emailManager.moveMessage(m[1], b.folder || "trash");
+      return json(res, 200, { ok });
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/mailboxes\/([^/]+)\/stats$/)) && req.method === "GET") {
+      const stats = emailManager.getMailboxStats(m[1]);
+      return json(res, 200, stats);
+    }
     if ((m = url.pathname.match(/^\/api\/email\/messages\/([^/]+)$/)) && req.method === "DELETE") {
       const ok = emailManager.deleteMessage(m[1]);
       return json(res, 200, { ok });
@@ -3297,6 +3310,14 @@ const server = http.createServer(async (req, res) => {
       try {
         const alias = emailManager.createAlias(b);
         return json(res, 201, alias);
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/email\/aliases\/([^/]+)\/test$/)) && req.method === "POST") {
+      try {
+        const testRes = await emailManager.testWebhookAlias(m[1]);
+        return json(res, 200, testRes);
       } catch (err) {
         return json(res, 400, { error: err.message });
       }

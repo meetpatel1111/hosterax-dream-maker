@@ -24,6 +24,11 @@ import {
   Zap,
   Radio,
   ExternalLink,
+  Eye,
+  Edit3,
+  Sparkles,
+  Archive,
+  ArrowRight,
 } from "lucide-react";
 import {
   useEngine,
@@ -57,6 +62,81 @@ export const Route = createFileRoute("/_app/mail")({
   component: MailboxesPage,
 });
 
+const EMAIL_TEMPLATES = [
+  {
+    id: "welcome",
+    name: "🚀 Welcome & Activation",
+    subject: "Welcome to your new cloud workspace on HosteraX",
+    body: `Hi there,\n\nWelcome to HosteraX! Your account and project environments have been successfully provisioned.\n\nYou can now deploy containers, databases, cron jobs, and background workers directly from your control plane.\n\nBest regards,\nThe HosteraX Infrastructure Team`,
+  },
+  {
+    id: "password_reset",
+    name: "🔐 Password Reset OTP",
+    subject: "Security Notification: Password Reset Request",
+    body: `Hello,\n\nA password reset request was initiated for your administrator account.\n\nUse the following one-time verification code to proceed:\n\n👉 SEC-849204\n\nThis verification code expires in 15 minutes. If you did not request this, please review your server security logs immediately.`,
+  },
+  {
+    id: "incident_alert",
+    name: "🚨 Server Crash / AutoHeal Alert",
+    subject: "[INCIDENT ALERT] Service Container Flapping Detected",
+    body: `CRITICAL ALERT:\n\nService: it-tools-app\nHost: node-primary (127.0.0.1:3000)\nEvent: AutoHeal Circuit Breaker Tripped to OPEN state\nRoot Cause: Consecutive connection timeouts on port 3000.\n\nRemediation: Autonomous Self-Healing Engine has isolated the container. Automatic canary probes will commence in 30s.`,
+  },
+  {
+    id: "invoice",
+    name: "🧾 Monthly Cloud Invoice",
+    subject: "Invoice #HX-2026-0818 for Cloud Services",
+    body: `Dear Customer,\n\nThank you for choosing HosteraX. Your monthly infrastructure statement is ready.\n\nPlan: Developer Free Tier\nTotal Amount Due: $0.00\nBilling Cycle: August 2026\nStatus: Paid / In Good Standing.\n\nView details inside your HosteraX Dashboard.`,
+  },
+];
+
+const PRESET_RELAYS = [
+  {
+    provider: "resend" as const,
+    name: "Resend",
+    host: "smtp.resend.com",
+    port: 587,
+    username: "resend",
+    help: "Free 3,000 emails/mo. Password is your Resend API Key (re_...).",
+    url: "https://resend.com/api-keys",
+  },
+  {
+    provider: "custom" as const,
+    name: "Gmail SMTP (Free 500/day)",
+    host: "smtp.gmail.com",
+    port: 587,
+    username: "your-email@gmail.com",
+    help: "Free 15,000 emails/mo. Password is a 16-character Google App Password.",
+    url: "https://myaccount.google.com/apppasswords",
+  },
+  {
+    provider: "custom" as const,
+    name: "Brevo / Sendinblue (Free 300/day)",
+    host: "smtp-relay.brevo.com",
+    port: 587,
+    username: "your-login",
+    help: "Free 9,000 emails/mo. Password is your Brevo SMTP key.",
+    url: "https://app.brevo.com/settings/keys/smtp",
+  },
+  {
+    provider: "ses" as const,
+    name: "Amazon SES",
+    host: "email-smtp.us-east-1.amazonaws.com",
+    port: 587,
+    username: "AKIA...",
+    help: "Free 62,000 emails/mo ($0.10 per 1k thereafter). High scale.",
+    url: "https://aws.amazon.com/ses/",
+  },
+  {
+    provider: "postmark" as const,
+    name: "Postmark",
+    host: "smtp.postmarkapp.com",
+    port: 587,
+    username: "postmark-token",
+    help: "Pristine IP reputation and fast transactional inbox delivery.",
+    url: "https://postmarkapp.com/",
+  },
+];
+
 function MailboxesPage() {
   const engine = useEngine();
   const [activeTab, setActiveTab] = useState<"webmail" | "aliases" | "relays">("webmail");
@@ -86,15 +166,18 @@ function MailboxesPage() {
   const [composeTo, setComposeTo] = useState("");
   const [composeSubject, setComposeSubject] = useState("");
   const [composeBody, setComposeBody] = useState("");
+  const [composeMode, setComposeMode] = useState<"edit" | "preview">("edit");
   const [sending, setSending] = useState(false);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [verifyingDns, setVerifyingDns] = useState(false);
 
-  // Alias modal
+  // Alias modal & Webhook test
   const [addAliasOpen, setAddAliasOpen] = useState(false);
   const [newAliasSource, setNewAliasSource] = useState("");
   const [newAliasType, setNewAliasType] = useState<"email" | "webhook">("email");
   const [newAliasTarget, setNewAliasTarget] = useState("");
+  const [testingAliasId, setTestingAliasId] = useState<string | null>(null);
+  const [aliasTestResult, setAliasTestResult] = useState<Record<string, any>>({});
 
   // Relay modal
   const [addRelayOpen, setAddRelayOpen] = useState(false);
@@ -176,6 +259,23 @@ function MailboxesPage() {
       refetchDomains();
     } catch (e: any) {
       toast.error(e.message || "Failed to create alias");
+    }
+  }
+
+  async function handleTestWebhook(aliasId: string) {
+    setTestingAliasId(aliasId);
+    try {
+      const res: any = await engine.call("POST", `/api/email/aliases/${aliasId}/test`);
+      setAliasTestResult((prev) => ({ ...prev, [aliasId]: res }));
+      if (res.ok) {
+        toast.success(`Webhook test passed (${res.status} ${res.statusText || "OK"} in ${res.latency_ms}ms)`);
+      } else {
+        toast.error(`Webhook test failed: ${res.error || `HTTP ${res.status}`}`);
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Webhook test error");
+    } finally {
+      setTestingAliasId(null);
     }
   }
 
@@ -268,12 +368,47 @@ function MailboxesPage() {
     }
   }
 
+  async function handleToggleStar(msg: EmailMessage) {
+    try {
+      await engine.call("POST", `/api/email/messages/${msg.id}/star`);
+      refetchMessages();
+      if (selectedMessage?.id === msg.id) {
+        setSelectedMessage({ ...selectedMessage, is_starred: selectedMessage.is_starred ? 0 : 1 });
+      }
+    } catch (e) {}
+  }
+
+  async function handleMoveToTrash(msgId: string) {
+    try {
+      if (folder === "trash") {
+        await engine.call("DELETE", `/api/email/messages/${msgId}`);
+        toast.success("Message permanently deleted");
+      } else {
+        await engine.call("POST", `/api/email/messages/${msgId}/move`, { folder: "trash" });
+        toast.success("Moved to Trash");
+      }
+      setSelectedMessage(null);
+      refetchMessages();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to move message");
+    }
+  }
+
+  function handleSelectTemplate(tpl: (typeof EMAIL_TEMPLATES)[0]) {
+    setComposeSubject(tpl.subject);
+    setComposeBody(tpl.body);
+    toast.success(`Loaded template: ${tpl.name}`);
+  }
+
   function handleCopy(text: string, id: string) {
     navigator.clipboard.writeText(text);
     setCopiedKey(id);
     toast.success("DNS record copied to clipboard!");
     setTimeout(() => setCopiedKey(null), 2000);
   }
+
+  const unreadCount = messages.filter((m) => !m.is_read && folder === "inbox").length;
+  const storageMb = (messages.length * 0.04).toFixed(2);
 
   return (
     <div className="space-y-6 p-6 max-w-7xl mx-auto">
@@ -284,13 +419,13 @@ function MailboxesPage() {
             <Badge variant="outline" className="bg-primary/10 text-primary border-primary/20 text-xs font-mono">
               <Mail className="w-3 h-3 mr-1" /> Self-Hosted Email Stack
             </Badge>
-            <span className="text-xs text-muted-foreground">Enhanced Parity+</span>
+            <span className="text-xs text-muted-foreground">Production Engine</span>
           </div>
           <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
             Mailboxes & Email Stack
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Custom domain mailboxes, real-time DNS anti-spam verification, inbound webhook forwarding, and outbound SMTP relays.
+            Domain mailboxes, DNS anti-spam verification, inbound webhook piping, and outbound SMTP relays.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -448,53 +583,84 @@ function MailboxesPage() {
                       <div className="text-[11px] text-muted-foreground truncate">{mbox.email}</div>
                     </div>
                     <Badge variant="outline" className="text-[10px] font-mono shrink-0 ml-1">
-                      {mbox.used_mb}MB
+                      {mbox.quota_mb}MB
                     </Badge>
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="pt-3 border-t border-border/40 space-y-1">
+            {/* Folders */}
+            <div>
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground block mb-2">Folders</span>
-              <button
-                onClick={() => {
-                  setFolder("inbox");
-                  setSelectedMessage(null);
-                }}
-                className={`w-full text-left p-2 rounded-lg text-xs flex items-center justify-between ${
-                  folder === "inbox" ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-muted-foreground"
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <Inbox className="w-4 h-4" /> Inbox
+              <div className="space-y-1">
+                <button
+                  onClick={() => {
+                    setFolder("inbox");
+                    setSelectedMessage(null);
+                  }}
+                  className={`w-full flex items-center justify-between p-2 rounded-lg text-xs transition-colors ${
+                    folder === "inbox" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/40 text-muted-foreground"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    <Inbox className="w-3.5 h-3.5" /> Inbox
+                  </div>
+                  {unreadCount > 0 && (
+                    <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                      {unreadCount}
+                    </Badge>
+                  )}
+                </button>
+                <button
+                  onClick={() => {
+                    setFolder("sent");
+                    setSelectedMessage(null);
+                  }}
+                  className={`w-full flex items-center gap-2 p-2 rounded-lg text-xs transition-colors ${
+                    folder === "sent" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/40 text-muted-foreground"
+                  }`}
+                >
+                  <Send className="w-3.5 h-3.5" /> Sent Messages
+                </button>
+                <button
+                  onClick={() => {
+                    setFolder("trash");
+                    setSelectedMessage(null);
+                  }}
+                  className={`w-full flex items-center gap-2 p-2 rounded-lg text-xs transition-colors ${
+                    folder === "trash" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/40 text-muted-foreground"
+                  }`}
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Trash
+                </button>
+              </div>
+            </div>
+
+            {/* Mailbox Storage Meter */}
+            <div className="border-t border-border/40 pt-4 space-y-2 text-xs">
+              <div className="flex items-center justify-between text-muted-foreground">
+                <span className="flex items-center gap-1.5">
+                  <HardDrive className="w-3.5 h-3.5" /> Storage Used
                 </span>
-                <span className="font-mono text-[10px]">{folder === "inbox" ? messages.length : ""}</span>
-              </button>
-              <button
-                onClick={() => {
-                  setFolder("sent");
-                  setSelectedMessage(null);
-                }}
-                className={`w-full text-left p-2 rounded-lg text-xs flex items-center justify-between ${
-                  folder === "sent" ? "bg-primary/10 text-primary font-medium" : "hover:bg-muted/40 text-muted-foreground"
-                }`}
-              >
-                <span className="flex items-center gap-2">
-                  <Send className="w-4 h-4" /> Sent
-                </span>
-                <span className="font-mono text-[10px]">{folder === "sent" ? messages.length : ""}</span>
-              </button>
+                <span className="font-mono text-[11px]">{storageMb} MB / {activeMailbox?.quota_mb || 1024} MB</span>
+              </div>
+              <div className="w-full bg-muted/40 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-primary h-full transition-all duration-300"
+                  style={{ width: `${Math.min(100, (Number(storageMb) / (activeMailbox?.quota_mb || 1024)) * 100)}%` }}
+                />
+              </div>
             </div>
           </div>
 
-          {/* Middle: Message List */}
-          <div className="lg:col-span-4 rounded-xl border bg-card/60 shadow-sm overflow-hidden min-h-[420px]">
-            <div className="p-3.5 border-b border-border/40 flex items-center justify-between">
+          {/* Middle: Email List */}
+          <div className="lg:col-span-4 rounded-xl border bg-card/60 shadow-sm overflow-hidden flex flex-col">
+            <div className="p-3.5 border-b border-border/40 flex items-center justify-between bg-muted/10">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground capitalize">
                 {folder} ({messages.length})
               </span>
-              <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => refetchMessages()}>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => refetchMessages()}>
                 <RefreshCw className="w-3.5 h-3.5" />
               </Button>
             </div>
@@ -505,20 +671,31 @@ function MailboxesPage() {
                 <p className="text-xs">No emails in {folder}</p>
               </div>
             ) : (
-              <div className="divide-y divide-border/30 max-h-[500px] overflow-y-auto">
+              <div className="divide-y divide-border/30 max-h-[520px] overflow-y-auto">
                 {messages.map((msg) => (
                   <div
                     key={msg.id}
                     onClick={() => setSelectedMessage(msg)}
-                    className={`p-3 text-xs cursor-pointer transition-colors ${
+                    className={`p-3 text-xs cursor-pointer transition-colors relative ${
                       selectedMessage?.id === msg.id ? "bg-primary/10" : msg.is_read ? "hover:bg-muted/30 opacity-75" : "hover:bg-muted/30 font-medium"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-semibold truncate text-foreground">{folder === "sent" ? msg.to_address : msg.from_address}</span>
-                      <span className="text-[10px] text-muted-foreground font-mono">
-                        {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleToggleStar(msg);
+                          }}
+                          className={`text-muted-foreground hover:text-amber-400 ${msg.is_starred ? "text-amber-400" : ""}`}
+                        >
+                          <Star className="w-3.5 h-3.5 fill-current" />
+                        </button>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {new Date(msg.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
                     </div>
                     <div className="text-foreground truncate font-medium">{msg.subject}</div>
                     <div className="text-muted-foreground text-[11px] truncate mt-0.5">{msg.body_text}</div>
@@ -529,26 +706,40 @@ function MailboxesPage() {
           </div>
 
           {/* Right: Message Detail Viewer */}
-          <div className="lg:col-span-5 rounded-xl border bg-card/60 p-5 shadow-sm min-h-[420px] flex flex-col justify-between">
+          <div className="lg:col-span-5 rounded-xl border bg-card/60 p-5 shadow-sm min-h-[440px] flex flex-col justify-between">
             {selectedMessage ? (
               <div className="space-y-4">
-                <div className="border-b border-border/40 pb-3">
-                  <h3 className="text-base font-bold text-foreground">{selectedMessage.subject}</h3>
-                  <div className="text-xs text-muted-foreground mt-1 space-y-0.5 font-mono">
-                    <div>From: {selectedMessage.from_address}</div>
-                    <div>To: {selectedMessage.to_address}</div>
-                    <div>Date: {new Date(selectedMessage.created_at).toLocaleString()}</div>
+                <div className="flex items-center justify-between border-b border-border/40 pb-3">
+                  <div>
+                    <h3 className="text-base font-bold text-foreground">{selectedMessage.subject}</h3>
+                    <div className="text-xs text-muted-foreground mt-1 space-y-0.5 font-mono">
+                      <div>From: <span className="text-foreground">{selectedMessage.from_address}</span></div>
+                      <div>To: <span className="text-foreground">{selectedMessage.to_address}</span></div>
+                      <div>Date: {new Date(selectedMessage.created_at).toLocaleString()}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleToggleStar(selectedMessage)}
+                      className={`p-1.5 rounded-md hover:bg-muted/40 ${selectedMessage.is_starred ? "text-amber-400" : "text-muted-foreground"}`}
+                    >
+                      <Star className="w-4 h-4 fill-current" />
+                    </button>
+                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleMoveToTrash(selectedMessage.id)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
                 </div>
 
-                <div className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">
+                <div className="text-xs text-foreground leading-relaxed whitespace-pre-wrap p-4 bg-muted/10 rounded-lg border border-border/30">
                   {selectedMessage.body_text}
                 </div>
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center p-16 text-center text-muted-foreground my-auto">
                 <FileText className="w-8 h-8 opacity-20 mb-2" />
-                <p className="text-xs">Select an email to read its contents</p>
+                <p className="text-xs font-medium">Select an email to read its contents</p>
+                <p className="text-[11px] text-muted-foreground mt-1">Or click Compose Email to transmit outbound mail.</p>
               </div>
             )}
           </div>
@@ -579,20 +770,43 @@ function MailboxesPage() {
             <div className="divide-y divide-border/30">
               {aliases.map((al) => (
                 <div key={al.id} className="py-3 flex items-center justify-between text-xs">
-                  <div className="space-y-0.5">
+                  <div className="space-y-1">
                     <div className="font-semibold text-foreground flex items-center gap-2">
                       {al.source_email}
                       <Badge variant="outline" className="text-[10px] uppercase font-mono">
                         {al.destination_type}
                       </Badge>
+                      {aliasTestResult[al.id] && (
+                        <Badge
+                          className={`text-[10px] font-mono ${
+                            aliasTestResult[al.id].ok ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" : "bg-destructive/10 text-destructive"
+                          }`}
+                        >
+                          {aliasTestResult[al.id].ok ? `HTTP ${aliasTestResult[al.id].status} (${aliasTestResult[al.id].latency_ms}ms)` : "Webhook Fail"}
+                        </Badge>
+                      )}
                     </div>
                     <div className="text-muted-foreground font-mono text-[11px] flex items-center gap-1.5">
                       <Forward className="w-3 h-3 text-primary" /> {al.destination_target}
                     </div>
                   </div>
-                  <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteAlias(al.id)}>
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {al.destination_type === "webhook" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-xs"
+                        disabled={testingAliasId === al.id}
+                        onClick={() => handleTestWebhook(al.id)}
+                      >
+                        {testingAliasId === al.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1 text-primary" />}
+                        Test Webhook
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteAlias(al.id)}>
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -607,7 +821,7 @@ function MailboxesPage() {
             <div>
               <h3 className="text-base font-semibold">Outbound SMTP Relays</h3>
               <p className="text-xs text-muted-foreground">
-                Connect Resend, AWS SES, Postmark, SendGrid, or custom SMTP relays for maximum outbound deliverability.
+                Connect Resend, Gmail, Brevo, AWS SES, Postmark, or SendGrid for 100% inbox deliverability.
               </p>
             </div>
             <Button size="sm" onClick={() => setAddRelayOpen(true)}>
@@ -615,10 +829,34 @@ function MailboxesPage() {
             </Button>
           </div>
 
+          {/* Quick Preset Selector Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5 pb-2">
+            {PRESET_RELAYS.map((preset) => (
+              <div
+                key={preset.name}
+                onClick={() => {
+                  setRelayName(`${preset.name} Relay`);
+                  setRelayProvider(preset.provider);
+                  setRelayHost(preset.host);
+                  setRelayPort(preset.port);
+                  setRelayUsername(preset.username);
+                  setAddRelayOpen(true);
+                }}
+                className="p-3 rounded-lg border bg-muted/20 hover:bg-muted/40 cursor-pointer transition-all border-border/40 hover:border-primary/40 space-y-1.5 text-xs"
+              >
+                <div className="font-semibold flex items-center justify-between text-foreground">
+                  <span>{preset.name}</span>
+                  <ArrowRight className="w-3 h-3 text-muted-foreground" />
+                </div>
+                <p className="text-[11px] text-muted-foreground leading-tight">{preset.help}</p>
+              </div>
+            ))}
+          </div>
+
           {relays.length === 0 ? (
             <div className="p-12 text-center text-muted-foreground">
               <Server className="w-8 h-8 opacity-20 mx-auto mb-2" />
-              <p className="text-xs">No external SMTP relays configured. Outbound mail uses direct server MX delivery.</p>
+              <p className="text-xs">No external SMTP relays configured. Click a preset above or connect a custom relay.</p>
             </div>
           ) : (
             <div className="divide-y divide-border/30">
@@ -649,7 +887,7 @@ function MailboxesPage() {
                       onClick={() => handleTestRelay(rel)}
                     >
                       {testingRelayId === rel.id ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Zap className="w-3 h-3 mr-1" />}
-                      Test
+                      Test Authentication
                     </Button>
                     <Button variant="ghost" size="sm" className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive" onClick={() => handleDeleteRelay(rel.id)}>
                       <Trash2 className="w-4 h-4" />
@@ -700,17 +938,17 @@ function MailboxesPage() {
               <Label>Email Username / Prefix</Label>
               <div className="flex items-center gap-2">
                 <Input
-                  placeholder="contact"
+                  placeholder="e.g. meet"
                   value={newMailboxEmail}
                   onChange={(e) => setNewMailboxEmail(e.target.value)}
                 />
-                <span className="font-mono text-xs text-muted-foreground">@{activeDomain?.domain}</span>
+                <span className="text-xs font-mono text-muted-foreground">@{activeDomain?.domain}</span>
               </div>
             </div>
             <div className="space-y-1.5">
               <Label>Display Name</Label>
               <Input
-                placeholder="Contact Support"
+                placeholder="e.g. Meet Patel"
                 value={newMailboxName}
                 onChange={(e) => setNewMailboxName(e.target.value)}
               />
@@ -727,21 +965,21 @@ function MailboxesPage() {
       <Dialog open={addAliasOpen} onOpenChange={setAddAliasOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Create Inbound Alias / Forwarder</DialogTitle>
+            <DialogTitle>Create Inbound Alias / Webhook</DialogTitle>
             <DialogDescription>
-              Forward inbound emails received at an alias to an external email or an HTTP Webhook.
+              Forward incoming emails to external inboxes or pipe directly to API endpoints.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2 text-xs">
+          <div className="space-y-3 py-2">
             <div className="space-y-1.5">
-              <Label>Alias Address</Label>
+              <Label>Source Alias</Label>
               <div className="flex items-center gap-2">
                 <Input
-                  placeholder="team"
+                  placeholder="support"
                   value={newAliasSource}
                   onChange={(e) => setNewAliasSource(e.target.value)}
                 />
-                <span className="font-mono text-xs text-muted-foreground">@{activeDomain?.domain}</span>
+                <span className="text-xs font-mono text-muted-foreground">@{activeDomain?.domain}</span>
               </div>
             </div>
             <div className="space-y-1.5">
@@ -808,10 +1046,11 @@ function MailboxesPage() {
                 className="w-full h-9 rounded-md border border-input bg-background px-3 text-xs"
               >
                 <option value="resend">Resend (smtp.resend.com)</option>
+                <option value="custom">Personal Gmail (smtp.gmail.com)</option>
+                <option value="custom">Brevo / Sendinblue (smtp-relay.brevo.com)</option>
                 <option value="postmark">Postmark (smtp.postmarkapp.com)</option>
                 <option value="ses">Amazon SES</option>
                 <option value="sendgrid">SendGrid</option>
-                <option value="custom">Custom SMTP Server</option>
               </select>
             </div>
             <div className="grid grid-cols-3 gap-2">
@@ -832,6 +1071,10 @@ function MailboxesPage() {
               <Label>Password / Secret</Label>
               <Input type="password" placeholder="••••••••••••" value={relayPassword} onChange={(e) => setRelayPassword(e.target.value)} />
             </div>
+            <div className="space-y-1">
+              <Label>From Email (Optional envelope override)</Label>
+              <Input placeholder="onboarding@resend.dev or verified domain" value={relayFromEmail} onChange={(e) => setRelayFromEmail(e.target.value)} />
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddRelayOpen(false)}>Cancel</Button>
@@ -840,42 +1083,95 @@ function MailboxesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Compose Email Modal */}
+      {/* Compose Email Modal with Live Preview & Templates */}
       <Dialog open={composeOpen} onOpenChange={setComposeOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Compose Email</DialogTitle>
+            <div className="flex items-center justify-between pr-6">
+              <DialogTitle>Compose Email</DialogTitle>
+              <div className="flex items-center gap-1 bg-muted/40 p-0.5 rounded-lg border border-border/40">
+                <button
+                  type="button"
+                  onClick={() => setComposeMode("edit")}
+                  className={`px-2 py-1 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                    composeMode === "edit" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Edit3 className="w-3 h-3" /> Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setComposeMode("preview")}
+                  className={`px-2 py-1 rounded text-[11px] font-medium transition-colors flex items-center gap-1 ${
+                    composeMode === "preview" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Eye className="w-3 h-3" /> Preview
+                </button>
+              </div>
+            </div>
             <DialogDescription>
-              Send an email from {activeMailbox?.email || "your mailbox"}.
+              Sending from <span className="font-mono font-medium text-foreground">{activeMailbox?.email || "active mailbox"}</span>
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-3 py-2 text-xs">
-            <div className="space-y-1">
-              <Label>Recipient (To:)</Label>
-              <Input
-                placeholder="user@example.com"
-                value={composeTo}
-                onChange={(e) => setComposeTo(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Subject</Label>
-              <Input
-                placeholder="Infrastructure Status Update"
-                value={composeSubject}
-                onChange={(e) => setComposeSubject(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label>Message Body</Label>
-              <textarea
-                className="w-full h-32 rounded-md border border-input bg-background p-3 text-xs outline-none focus:border-primary font-sans"
-                placeholder="Type your message here..."
-                value={composeBody}
-                onChange={(e) => setComposeBody(e.target.value)}
-              />
-            </div>
+
+          {/* Quick Insert Templates Pills */}
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+            <span className="text-[11px] text-muted-foreground shrink-0 flex items-center gap-1">
+              <Sparkles className="w-3 h-3 text-primary" /> Templates:
+            </span>
+            {EMAIL_TEMPLATES.map((tpl) => (
+              <button
+                key={tpl.id}
+                type="button"
+                onClick={() => handleSelectTemplate(tpl)}
+                className="px-2 py-0.5 rounded-md border bg-muted/20 hover:bg-muted/40 text-[11px] text-muted-foreground hover:text-foreground shrink-0 transition-colors"
+              >
+                {tpl.name}
+              </button>
+            ))}
           </div>
+
+          {composeMode === "edit" ? (
+            <div className="space-y-3 py-1 text-xs">
+              <div className="space-y-1">
+                <Label>Recipient (To:)</Label>
+                <Input
+                  placeholder="pmeet464@gmail.com"
+                  value={composeTo}
+                  onChange={(e) => setComposeTo(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Subject</Label>
+                <Input
+                  placeholder="Infrastructure Status Update"
+                  value={composeSubject}
+                  onChange={(e) => setComposeSubject(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Message Body</Label>
+                <textarea
+                  className="w-full h-36 rounded-md border border-input bg-background p-3 text-xs outline-none focus:border-primary font-sans leading-relaxed"
+                  placeholder="Type your message here..."
+                  value={composeBody}
+                  onChange={(e) => setComposeBody(e.target.value)}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3 py-2 text-xs border rounded-lg p-4 bg-muted/10">
+              <div className="border-b border-border/40 pb-2 space-y-1 font-mono text-[11px]">
+                <div><span className="text-muted-foreground">To:</span> {composeTo || "<recipient>"}</div>
+                <div><span className="text-muted-foreground">Subject:</span> <span className="font-bold text-foreground">{composeSubject || "No Subject"}</span></div>
+              </div>
+              <div className="whitespace-pre-wrap text-foreground leading-relaxed pt-1">
+                {composeBody || <span className="text-muted-foreground italic">Message body is empty...</span>}
+              </div>
+            </div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setComposeOpen(false)}>Cancel</Button>
             <Button onClick={handleSendMessage} disabled={sending}>

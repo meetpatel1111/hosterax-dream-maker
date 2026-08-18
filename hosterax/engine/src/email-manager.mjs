@@ -598,8 +598,79 @@ export class EmailManager {
     return true;
   }
 
+  toggleMessageStar(id) {
+    const msg = this.db.prepare("SELECT is_starred FROM email_messages WHERE id=?").get(id);
+    if (!msg) return false;
+    const newStar = msg.is_starred ? 0 : 1;
+    this.db.prepare("UPDATE email_messages SET is_starred=? WHERE id=?").run(newStar, id);
+    return { id, is_starred: newStar };
+  }
+
+  moveMessage(id, folder) {
+    this.db.prepare("UPDATE email_messages SET folder=? WHERE id=?").run(folder, id);
+    return true;
+  }
+
   deleteMessage(id) {
     const res = this.db.prepare("DELETE FROM email_messages WHERE id=?").run(id);
     return res.changes > 0;
+  }
+
+  async testWebhookAlias(aliasId) {
+    const alias = this.db.prepare("SELECT * FROM email_aliases WHERE id=?").get(aliasId);
+    if (!alias) throw new Error("Alias not found");
+    if (alias.destination_type !== "webhook" || !alias.destination_target.startsWith("http")) {
+      throw new Error("Alias is not configured with a valid HTTP webhook target");
+    }
+
+    const start = Date.now();
+    try {
+      const response = await fetch(alias.destination_target, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "HosteraX-Email-Webhook/1.0",
+        },
+        body: JSON.stringify({
+          event: "inbound_email_test",
+          test: true,
+          from: "demo-client@example.com",
+          to: alias.source_email,
+          subject: "Test Webhook Inbound Payload",
+          body: "This is a simulated incoming email payload dispatched from the HosteraX Inbound Webhook test harness.",
+          timestamp: Date.now(),
+        }),
+      });
+
+      const latencyMs = Date.now() - start;
+      let text = "";
+      try {
+        text = await response.text();
+      } catch {}
+
+      return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        latency_ms: latencyMs,
+        response_preview: text ? text.slice(0, 200) : "No body returned",
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        error: err.message,
+        latency_ms: Date.now() - start,
+      };
+    }
+  }
+
+  getMailboxStats(mailboxId) {
+    const total = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=?").get(mailboxId)?.c || 0;
+    const unread = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='inbox' AND is_read=0").get(mailboxId)?.c || 0;
+    const starred = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND is_starred=1").get(mailboxId)?.c || 0;
+    const sent = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='sent'").get(mailboxId)?.c || 0;
+    const trash = this.db.prepare("SELECT COUNT(*) as c FROM email_messages WHERE mailbox_id=? AND folder='trash'").get(mailboxId)?.c || 0;
+
+    return { total, unread, starred, sent, trash, storage_mb: (total * 0.04).toFixed(2) };
   }
 }
