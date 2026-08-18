@@ -197,4 +197,5 @@ node --test hosterax/engine/test/engine.test.mjs
 
 ## 📄 License
 
-MIT © HosteraX Contributors. Open-source and free for commercial and personal self-hosting.
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
+© 2026 HosteraX Contributors. Open-source and free for commercial and personal self-hosting.

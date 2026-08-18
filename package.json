@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "description": "HosteraX - Autonomous Self-Hosted Cloud Control Plane with Universal Model Context Protocol (MCP)",
   "private": true,
+  "license": "Apache-2.0",
   "sideEffects": false,
   "type": "module",
   "scripts": {
