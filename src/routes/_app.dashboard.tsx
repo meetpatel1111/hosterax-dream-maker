@@ -20,6 +20,7 @@ import {
   Activity,
   Archive,
   RotateCcw,
+  Wifi,
 } from "lucide-react";
 import { DeleteProjectModal } from "@/components/hx/delete-project-modal";
 import {
@@ -28,6 +29,7 @@ import {
   useEngineSystem,
   useEngineHealth,
   useMagicDnsSettings,
+  useNetworkInterfaces,
   formatMagicDnsUrl,
 } from "@/lib/engine";
 
@@ -75,6 +77,8 @@ function Dashboard() {
 
   const { data: sys } = useEngineSystem();
   const { data: magicDns } = useMagicDnsSettings();
+  const { data: netInfo } = useNetworkInterfaces();
+  const primaryLanIp = netInfo?.primaryIp && netInfo.primaryIp !== "127.0.0.1" ? netInfo.primaryIp : null;
 
   const [starred, setStarred] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
@@ -417,10 +421,20 @@ function Dashboard() {
                         )}
                       </span>
                     </div>
-                    <div className="flex items-center gap-1.5 font-mono truncate">
-                      <GitBranch className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{p.repo_url || p.branch || "local"}</span>
-                    </div>
+                    {primaryLanIp && p.port ? (
+                      <div className="flex items-center gap-1.5 truncate text-emerald-400 font-mono">
+                        <Wifi className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
+                        <span className="truncate">http://{primaryLanIp}:{p.port}</span>
+                        <span className="text-[9px] uppercase font-sans text-emerald-500 font-semibold px-1 bg-emerald-950/40 rounded border border-emerald-800/30">
+                          Wi-Fi
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 font-mono truncate">
+                        <GitBranch className="h-3.5 w-3.5 shrink-0" />
+                        <span className="truncate">{p.repo_url || p.branch || "local"}</span>
+                      </div>
+                    )}
                   </div>
                 </Link>
 

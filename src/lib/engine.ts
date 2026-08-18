@@ -249,6 +249,38 @@ export const FALLBACK_MAGIC_DNS_PROVIDERS: MagicDnsProviderInfo[] = [
   },
 ];
 
+export type NetworkInterfacesResponse = {
+  ok: boolean;
+  primaryIp: string;
+  interfaces: Array<{
+    name: string;
+    address: string;
+    netmask: string;
+    mac: string;
+  }>;
+};
+
+export function useNetworkInterfaces() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<NetworkInterfacesResponse>({
+    queryKey: ["network-interfaces", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        const res = await eng.call<NetworkInterfacesResponse>("GET", "/api/network/interfaces");
+        if (res && res.interfaces) return res;
+      } catch {}
+      return {
+        ok: true,
+        primaryIp: "127.0.0.1",
+        interfaces: [{ name: "Loopback", address: "127.0.0.1", netmask: "255.0.0.0", mac: "" }],
+      };
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 15000,
+  });
+}
+
 export function useMagicDnsSettings() {
   const eng = useEngine();
   const health = useEngineHealth();

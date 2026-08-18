@@ -8,6 +8,7 @@ import { STACKS, ENVIRONMENTS } from "@/lib/stacks";
 import {
   useEngine,
   useMagicDnsSettings,
+  useNetworkInterfaces,
   formatMagicDnsUrl,
   usePRPreviews,
   useProjectWebhookConfig,
@@ -35,6 +36,9 @@ import {
   GitPullRequest,
   Check,
   Radio,
+  Wifi,
+  Smartphone,
+  Share2,
 } from "lucide-react";
 import { SelfHealingPanel } from "@/components/hx/self-healing-panel";
 
@@ -69,6 +73,8 @@ function ProjectPage() {
   );
   const engine = useEngine();
   const { data: magicDns } = useMagicDnsSettings();
+  const { data: netInfo } = useNetworkInterfaces();
+  const primaryLanIp = netInfo?.primaryIp && netInfo.primaryIp !== "127.0.0.1" ? netInfo.primaryIp : null;
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", slug, engine.url, engine.token],
@@ -242,12 +248,30 @@ function ProjectPage() {
                 href={`https://${formatMagicDnsUrl(project.name, magicDns?.activeProvider || "sslip.io")}`}
                 target="_blank"
                 rel="noreferrer"
+                title="Open on Local Machine"
                 className="flex items-center gap-1 hover:text-primary transition-colors text-primary font-medium font-mono"
               >
                 <Globe className="h-3 w-3" /> https://
                 {formatMagicDnsUrl(project.name, magicDns?.activeProvider || "sslip.io")}{" "}
                 <ExternalLink className="h-3 w-3" />
               </a>
+
+              {primaryLanIp && (
+                <a
+                  href={`http://${primaryLanIp}:${project.port || 8080}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open on Local Network (Phone / Tablet on same Wi-Fi)"
+                  className="flex items-center gap-1.5 hover:bg-emerald-950/60 transition-colors text-emerald-400 font-medium font-mono bg-emerald-950/30 border border-emerald-800/40 px-2 py-0.5 rounded text-xs"
+                >
+                  <Wifi className="h-3 w-3 text-emerald-400" />
+                  <span>http://{primaryLanIp}:{project.port || 8080}</span>
+                  <span className="text-[10px] uppercase font-sans text-emerald-500 font-semibold ml-0.5 px-1 py-0.2 bg-emerald-900/50 rounded">
+                    Wi-Fi
+                  </span>
+                  <ExternalLink className="h-2.5 w-2.5 opacity-70" />
+                </a>
+              )}
             </div>
           </div>
         </div>
@@ -294,7 +318,9 @@ function ProjectPage() {
       {tab === "self-heal" && <SelfHealingPanel projectName={project.name} />}
       {tab === "logs" && <LiveLogs projectName={project.name} />}
       {tab === "env" && <EnvVars projectId={project.id} projectName={project.name} />}
-      {tab === "domains" && <ProjectDomains projectId={project.id} projectName={project.name} />}
+      {tab === "domains" && (
+        <ProjectDomains projectId={project.id} projectName={project.name} project={project} />
+      )}
       {tab === "databases" && <DatabasesTab projectId={project.id} projectName={project.name} />}
       {tab === "settings" && (
         <Settings project={project} onDelete={() => setDeleteModalOpen(true)} />
@@ -825,9 +851,18 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
   );
 }
 
-function ProjectDomains({ projectId, projectName }: { projectId: string; projectName: string }) {
+function ProjectDomains({
+  projectId,
+  projectName,
+  project,
+}: {
+  projectId: string;
+  projectName: string;
+  project?: any;
+}) {
   const engine = useEngine();
   const qc = useQueryClient();
+  const { data: netInfo } = useNetworkInterfaces();
   const [domainInput, setDomainInput] = useState("");
   const [adding, setAdding] = useState(false);
 
@@ -877,7 +912,71 @@ function ProjectDomains({ projectId, projectName }: { projectId: string; project
   return (
     <div className="space-y-6">
       {/* Magic Wildcard DNS Provider Selector */}
-      <MagicDnsSelector projectName={projectName} projectPort={3000} />
+      <MagicDnsSelector projectName={projectName} projectPort={project?.port || 3000} />
+
+      {/* Local Network (LAN / Wi-Fi) Access */}
+      <div className="rounded-xl border border-border bg-card p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="font-semibold text-sm flex items-center gap-2">
+              <Wifi className="h-4 w-4 text-emerald-400" />
+              <span>Local Network (Wi-Fi / LAN) Access</span>
+              <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-emerald-950/60 border border-emerald-800/60 text-emerald-400 rounded-full">
+                Auto-Discovered
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Access and test this project on smartphones, tablets, or other computers connected to the same local Wi-Fi.
+            </p>
+          </div>
+        </div>
+
+        {netInfo?.interfaces && netInfo.interfaces.length > 0 ? (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {netInfo.interfaces.map((iface) => {
+              const url = `http://${iface.address}:${project?.port || 8080}`;
+              return (
+                <div
+                  key={iface.address}
+                  className="flex items-center justify-between p-3 rounded-lg border border-border/80 bg-background/50 text-xs font-mono"
+                >
+                  <div className="space-y-0.5 truncate mr-2">
+                    <div className="text-[10px] text-muted-foreground uppercase font-sans font-semibold">
+                      {iface.name}
+                    </div>
+                    <div className="text-emerald-400 font-medium truncate">{url}</div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(url);
+                        toast.success("LAN URL copied to clipboard");
+                      }}
+                      className="p-1.5 hover:bg-surface-2 rounded text-muted-foreground hover:text-foreground transition-colors"
+                      title="Copy LAN URL"
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="p-1.5 hover:bg-surface-2 rounded text-muted-foreground hover:text-foreground transition-colors"
+                      title="Open in new tab"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-xs text-muted-foreground py-2">
+            No external Wi-Fi / LAN network interfaces detected. Loopback is active.
+          </div>
+        )}
+      </div>
 
       {/* Custom Domains */}
       <div className="rounded-xl border border-border bg-card p-6 space-y-4">
