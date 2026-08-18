@@ -484,3 +484,48 @@ test("ai container crash diagnostics and 1-click rollback endpoint", async () =>
   await api("DELETE", `/api/projects/${proj}`);
 });
 
+test("universal multi-framework zero-config dockerfile generation", async () => {
+  const { generateUniversalDockerfile } = await import("../src/dockerfile-generator.mjs");
+  const testDir = mkdtempSync(join(tmpdir(), "dockerfile-gen-test-"));
+
+  // 1. Next.js detection
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(join(testDir, "package.json"), JSON.stringify({ dependencies: { next: "14.0.0" } }));
+  const nextDf = generateUniversalDockerfile(testDir);
+  assert.ok(nextDf.includes("Next.js"));
+  assert.ok(nextDf.includes("NEXT_TELEMETRY_DISABLED"));
+
+  // 2. Bun detection
+  writeFileSync(join(testDir, "bun.lockb"), "dummy");
+  const bunDf = generateUniversalDockerfile(testDir);
+  assert.ok(bunDf.includes("oven/bun:alpine"));
+
+  // 3. Python FastAPI / Django
+  const pyDir = mkdtempSync(join(tmpdir(), "py-test-"));
+  writeFileSync(join(pyDir, "requirements.txt"), "fastapi\nuvicorn");
+  writeFileSync(join(pyDir, "main.py"), "from fastapi import FastAPI");
+  const pyDf = generateUniversalDockerfile(pyDir);
+  assert.ok(pyDf.includes("python:3.11-slim"));
+  assert.ok(pyDf.includes("uvicorn"));
+
+  // 4. Java Spring Boot
+  const javaDir = mkdtempSync(join(tmpdir(), "java-test-"));
+  writeFileSync(join(javaDir, "pom.xml"), "<project></project>");
+  const javaDf = generateUniversalDockerfile(javaDir);
+  assert.ok(javaDf.includes("eclipse-temurin:21-jdk-alpine"));
+
+  // 5. .NET Core
+  const dotnetDir = mkdtempSync(join(tmpdir(), "dotnet-test-"));
+  writeFileSync(join(dotnetDir, "App.csproj"), "<Project></Project>");
+  const dotnetDf = generateUniversalDockerfile(dotnetDir);
+  assert.ok(dotnetDf.includes("mcr.microsoft.com/dotnet/sdk:8.0-alpine"));
+
+  // Clean up
+  try {
+    rmSync(testDir, { recursive: true, force: true });
+    rmSync(pyDir, { recursive: true, force: true });
+    rmSync(javaDir, { recursive: true, force: true });
+    rmSync(dotnetDir, { recursive: true, force: true });
+  } catch {}
+});
+
