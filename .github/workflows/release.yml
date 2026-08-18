@@ -34,8 +34,8 @@ jobs:
 
       - name: Install Dependencies (Root & Engine)
         run: |
-          npm install --legacy-peer-deps
-          npm --prefix hosterax/engine install --legacy-peer-deps
+          npm install --legacy-peer-deps --no-audit --no-fund
+          npm --prefix hosterax/engine install --legacy-peer-deps --no-audit --no-fund
 
       - name: TypeScript Check
         run: npx tsc --noEmit
@@ -157,8 +157,8 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          npm install --legacy-peer-deps
-          npm --prefix hosterax/engine install --legacy-peer-deps
+          npm install --legacy-peer-deps --no-audit --no-fund
+          npm --prefix hosterax/engine install --legacy-peer-deps --no-audit --no-fund
 
       - name: Install Desktop Subsystem Dependencies
         working-directory: ./hosterax/desktop
