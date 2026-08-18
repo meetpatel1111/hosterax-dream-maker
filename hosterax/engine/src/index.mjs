@@ -880,50 +880,63 @@ function generateZeroConfigDockerfile(workdir) {
 // ---------- readiness health probe ----------
 /**
  * Poll a container's HTTP endpoint until healthy or timeout.
- * Falls back to TCP socket check if HTTP fails repeatedly.
+ * Correctly waits for the web server inside the container to listen without
+ * getting fooled by Docker host proxy TCP listeners.
  * @returns {{ healthy: boolean, attempts: number, latencyMs: number|null }}
  */
 async function waitForHealthy(deploymentId, containerPort, opts = {}) {
-  const { healthPath = "/", maxAttempts = 15, intervalMs = 2000, timeoutMs = 3000 } = opts;
+  const { healthPath = "/", maxAttempts = 30, intervalMs = 2000, timeoutMs = 3000 } = opts;
+  const isHttp = healthPath && healthPath !== "none";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     const start = Date.now();
-    try {
-      const result = await new Promise((resolve, reject) => {
-        const req = http.get(
-          {
-            hostname: "127.0.0.1",
-            port: containerPort,
-            path: healthPath,
-            timeout: timeoutMs,
-          },
-          (res) => {
-            // Drain the response body
-            res.resume();
-            resolve({ status: res.statusCode, latencyMs: Date.now() - start });
-          },
-        );
-        req.on("error", reject);
-        req.on("timeout", () => {
-          req.destroy();
-          reject(new Error("timeout"));
+    if (isHttp) {
+      try {
+        const result = await new Promise((resolve, reject) => {
+          const req = http.get(
+            {
+              hostname: "127.0.0.1",
+              port: containerPort,
+              path: healthPath.startsWith("/") ? healthPath : `/${healthPath}`,
+              timeout: timeoutMs,
+            },
+            (res) => {
+              // Drain response body
+              res.resume();
+              resolve({ status: res.statusCode, latencyMs: Date.now() - start });
+            },
+          );
+          req.on("error", reject);
+          req.on("timeout", () => {
+            req.destroy();
+            reject(new Error("timeout"));
+          });
         });
-      });
-      if (result.status >= 200 && result.status < 400) {
+
+        // Any HTTP response (2xx, 3xx, 4xx) confirms the web application is listening and serving requests!
+        if (result.status >= 200 && result.status < 500) {
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "system",
+            text: `[health] ✓ Container ready (HTTP ${result.status}, ${result.latencyMs}ms, attempt ${attempt}/${maxAttempts})`,
+          });
+          return { healthy: true, attempts: attempt, latencyMs: result.latencyMs };
+        }
+
         publish(deploymentId, {
           ts: Date.now(),
           stream: "system",
-          text: `[health] ✓ Container ready (HTTP ${result.status}, ${result.latencyMs}ms, attempt ${attempt}/${maxAttempts})`,
+          text: `[health] Probe ${attempt}/${maxAttempts}: HTTP ${result.status} (server initializing...)`,
         });
-        return { healthy: true, attempts: attempt, latencyMs: result.latencyMs };
+      } catch (err) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "system",
+          text: `[health] Probe ${attempt}/${maxAttempts}: waiting for HTTP service on port ${containerPort}...`,
+        });
       }
-      publish(deploymentId, {
-        ts: Date.now(),
-        stream: "system",
-        text: `[health] Probe ${attempt}/${maxAttempts}: HTTP ${result.status} (not ready)`,
-      });
-    } catch (err) {
-      // Try TCP fallback on first HTTP error to handle non-HTTP services
+    } else {
+      // Raw TCP service fallback (e.g. databases, workers, queues)
       try {
         await new Promise((resolve, reject) => {
           const sock = new net.Socket();
@@ -949,18 +962,20 @@ async function waitForHealthy(deploymentId, containerPort, opts = {}) {
         publish(deploymentId, {
           ts: Date.now(),
           stream: "system",
-          text: `[health] Probe ${attempt}/${maxAttempts}: waiting for port ${containerPort}...`,
+          text: `[health] Probe ${attempt}/${maxAttempts}: waiting for TCP port ${containerPort}...`,
         });
       }
     }
+
     if (attempt < maxAttempts) {
       await new Promise((r) => setTimeout(r, intervalMs));
     }
   }
+
   publish(deploymentId, {
     ts: Date.now(),
     stream: "stderr",
-    text: `[health] ✗ Container failed health check after ${maxAttempts} attempts`,
+    text: `[health] ✗ Container failed readiness health check after ${maxAttempts} attempts (${Math.round((maxAttempts * intervalMs) / 1000)}s)`,
   });
   return { healthy: false, attempts: maxAttempts, latencyMs: null };
 }

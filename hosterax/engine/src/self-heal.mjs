@@ -330,14 +330,14 @@ export class SelfHealEngine {
         probePath: proj?.health_check_path || "/",
         expectedStatus: 200,
         timeoutSeconds: 3,
-        startupDelaySeconds: 15,
+        startupDelaySeconds: 60,
       };
     } catch {
       return {
         probePath: "/",
         expectedStatus: 200,
         timeoutSeconds: 3,
-        startupDelaySeconds: 15,
+        startupDelaySeconds: 60,
       };
     }
   }
@@ -413,9 +413,9 @@ export class SelfHealEngine {
         : Infinity;
 
       const isWarmingUp =
-        elapsedSinceEngineBoot < 20000 ||
-        elapsedSinceRestart < 20000 ||
-        elapsedSinceDeploy < (cfg.startupDelaySeconds || 20) * 1000;
+        elapsedSinceEngineBoot < 30000 ||
+        elapsedSinceRestart < 30000 ||
+        elapsedSinceDeploy < (cfg.startupDelaySeconds || 60) * 1000;
 
       if (isWarmingUp) {
         const httpOk = await this.probeHttpEndpoint(
@@ -427,6 +427,7 @@ export class SelfHealEngine {
         );
         if (httpOk) {
           this.recordCircuitSuccess(name);
+          this.consecutiveFailures.delete(name);
           this.healthMap.set(name, {
             status: "healthy",
             lastProbeTs: Date.now(),
@@ -638,6 +639,7 @@ export class SelfHealEngine {
       if (this.backoffState.has(name)) {
         this.backoffState.delete(name);
       }
+      this.consecutiveFailures.delete(name);
       this.recordCircuitSuccess(name);
 
       this.healthMap.set(name, {
@@ -650,6 +652,25 @@ export class SelfHealEngine {
         tiers: { startup: "passed", readiness: "ready", liveness: "healthy" },
       });
     } else {
+      // If the container process is still running inside Docker, give it grace to complete initialization
+      if (isAlive) {
+        const fails = (this.consecutiveFailures.get(name) || 0) + 1;
+        this.consecutiveFailures.set(name, fails);
+
+        if (fails < 4) {
+          this.healthMap.set(name, {
+            status: "warming_up",
+            lastProbeTs: Date.now(),
+            message: `Service warming up on port :${port} (probe check ${fails}/4)...`,
+            latencyMs: 0,
+            memoryPercent,
+            circuitState: circuit.state,
+            tiers: { startup: "warming_up", readiness: "failing", liveness: "healthy" },
+          });
+          return;
+        }
+      }
+
       this.recordCircuitFailure(name);
       if (circuit.state === "OPEN") {
         this.healthMap.set(name, {
@@ -857,21 +878,23 @@ export class SelfHealEngine {
 
   probeHttpEndpoint(host, port, endpointPath = "/", expectedStatus = 200, timeoutMs = 3000) {
     return new Promise((resolve) => {
+      const cleanPath = endpointPath && endpointPath.startsWith("/") ? endpointPath : `/${endpointPath || ""}`;
       const req = http.request(
         {
           host,
           port,
-          path: endpointPath,
+          path: cleanPath,
           method: "GET",
           timeout: timeoutMs,
           headers: { "User-Agent": "HosteraX-AutoHeal/6.0" },
         },
         (res) => {
-          if (
-            expectedStatus
-              ? res.statusCode === expectedStatus
-              : res.statusCode >= 200 && res.statusCode < 400
-          ) {
+          // Drain body to prevent resource leak
+          res.resume();
+          // Any HTTP status code < 500 (2xx, 3xx, 4xx) confirms the web server process is live and serving requests!
+          if (expectedStatus && expectedStatus !== 200) {
+            resolve(res.statusCode === expectedStatus);
+          } else if (res.statusCode >= 200 && res.statusCode < 500) {
             resolve(true);
           } else {
             resolve(false);
