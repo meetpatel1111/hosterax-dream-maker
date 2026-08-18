@@ -1,7 +1,7 @@
 # ⚡ HosteraX — Autonomous Self-Hosted Cloud Control Plane
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/meetpatel1111/hosterax-dream-maker/main/public/favicon.ico" width="80" alt="HosteraX Logo" />
+  <img src="https://raw.githubusercontent.com/meetpatel1111/hosterax-dream-maker/main/public/logo.svg" width="280" alt="HosteraX Logo" />
 </p>
 
 <p align="center">
