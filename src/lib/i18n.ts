@@ -441,6 +441,8 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
   },
 };
 
+import { startLiveTranslator, updateLiveTranslationLanguage } from "./live-translator";
+
 const STORAGE_KEY = "hosterax_lang_pref";
 
 export function useTranslation() {
@@ -459,6 +461,7 @@ export function useTranslation() {
       const meta = LANGUAGES.find((l) => l.code === code) || LANGUAGES[0];
       document.documentElement.dir = meta.dir;
       document.documentElement.lang = meta.code;
+      updateLiveTranslationLanguage(code);
     }
   }, []);
 
@@ -467,6 +470,7 @@ export function useTranslation() {
     if (typeof document !== "undefined") {
       document.documentElement.dir = meta.dir;
       document.documentElement.lang = meta.code;
+      startLiveTranslator(language);
     }
   }, [language]);
 
