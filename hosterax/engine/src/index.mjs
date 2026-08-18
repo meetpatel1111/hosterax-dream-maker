@@ -888,7 +888,7 @@ function generateZeroConfigDockerfile(workdir) {
  * @returns {{ healthy: boolean, attempts: number, latencyMs: number|null }}
  */
 async function waitForHealthy(deploymentId, containerPort, opts = {}) {
-  const { healthPath = "/", maxAttempts = 30, intervalMs = 2000, timeoutMs = 3000 } = opts;
+  const { healthPath = "/", maxAttempts = 45, intervalMs = 2000, timeoutMs = 3000 } = opts;
   const isHttp = healthPath && healthPath !== "none";
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
