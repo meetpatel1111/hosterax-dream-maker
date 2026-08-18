@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { OneClickAppsCatalog } from "@/components/hx/one-click-apps-catalog";
 import { StarterTemplatesCatalog } from "@/components/hx/starter-templates-catalog";
-import { Sparkles, Layers, Box, Search, ShieldCheck } from "lucide-react";
+import { Sparkles } from "lucide-react";
+import { useTranslation } from "@/lib/i18n";
 
 export const Route = createFileRoute("/_app/apps")({
   head: () => ({
@@ -20,6 +21,7 @@ export const Route = createFileRoute("/_app/apps")({
 
 function AppsCatalogPage() {
   const [catalogSection, setCatalogSection] = useState<"one-click" | "templates">("one-click");
+  const { t } = useTranslation();
 
   return (
     <div className="mx-auto w-full max-w-[1600px] space-y-6">
@@ -28,12 +30,11 @@ function AppsCatalogPage() {
         <div>
           <div className="flex items-center gap-2 text-xs font-mono text-primary uppercase tracking-wider">
             <Sparkles className="h-3.5 w-3.5" />
-            <span>Software Directory & Templates</span>
+            <span>{t("softwareDirectory", "Software Directory & Templates")}</span>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight mt-1">App Store & Catalog</h1>
+          <h1 className="text-2xl font-semibold tracking-tight mt-1">{t("appStoreCatalog", "App Store & Catalog")}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Discover, install, and run 2,550+ self-hosted software packages and starter templates
-            with zero-config.
+            {t("appStoreDesc", "Discover, install, and run 2,550+ self-hosted software packages and starter templates with zero-config.")}
           </p>
         </div>
 
@@ -48,7 +49,7 @@ function AppsCatalogPage() {
             }`}
           >
             <span>🐳</span>
-            <span>One-Click Apps (2,550+)</span>
+            <span>{t("oneClickApps", "One-Click Apps")} (2,550+)</span>
           </button>
           <button
             onClick={() => setCatalogSection("templates")}
@@ -59,7 +60,7 @@ function AppsCatalogPage() {
             }`}
           >
             <span>⚡</span>
-            <span>Starter Templates (42+)</span>
+            <span>{t("starterTemplates", "Starter Templates")} (42+)</span>
           </button>
         </div>
       </div>

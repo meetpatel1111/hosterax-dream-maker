@@ -10,6 +10,7 @@ import {
 } from "@/lib/stacks";
 import { useEngine, useEngineHealth } from "@/lib/engine";
 import { AppLogo } from "@/components/hx/app-logo";
+import { useTranslation } from "@/lib/i18n";
 import {
   Search,
   Sparkles,
@@ -63,6 +64,7 @@ export function OneClickAppsCatalog({
   const qc = useQueryClient();
   const nav = useNavigate();
   const { data: health } = useEngineHealth();
+  const { t } = useTranslation();
 
   const [selectedTag, setSelectedTag] = useState<string>("all");
   const [selectedSource, setSelectedSource] = useState<OneClickAppSource>("all");
@@ -404,16 +406,13 @@ export function OneClickAppsCatalog({
             <div>
               <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/20 text-primary mb-2">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Complete 2,550+ Awesome-Selfhosted, SysAdmin & selfh.st Directory</span>
+                <span>{t("oneClickCatalogTitle", "Complete 2,550+ Awesome-Selfhosted, SysAdmin & selfh.st Directory")}</span>
               </div>
               <h2 className="text-2xl font-bold tracking-tight text-foreground">
-                One-Click Self-Hosted Software Catalog
+                {t("oneClickCatalogTitle", "One-Click Self-Hosted Software Catalog")}
               </h2>
               <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-                Browse 112+ tags and categories from <strong>awesome-selfhosted.net</strong>,{" "}
-                <strong>sysadmin.awesome-selfhosted.net</strong>, and <strong>selfh.st/apps</strong>
-                . Launch any application instantly with smart zero-config port discovery, persistent
-                volumes, and custom domains.
+                {t("oneClickCatalogDesc", "Browse 112+ tags and categories from awesome-selfhosted.net, sysadmin.awesome-selfhosted.net, and selfh.st/apps. Launch any application instantly with smart zero-config port discovery, persistent volumes, and custom domains.")}
               </p>
             </div>
 
@@ -448,7 +447,7 @@ export function OneClickAppsCatalog({
         <div className="flex items-center gap-2 mb-2">
           <Container className="w-4 h-4 text-primary" />
           <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-            Deploy Any Docker Image (Docker Hub / GHCR / Self-Hosted)
+            {t("deployAnyDockerImage", "Deploy Any Docker Image (Docker Hub / GHCR / Self-Hosted)")}
           </span>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium">
             ⚡ Smart Auto-Port & Auto-Volume
@@ -475,7 +474,7 @@ export function OneClickAppsCatalog({
               ) : (
                 <Search className="w-3 h-3" />
               )}
-              <span>Inspect</span>
+              <span>{t("inspect", "Inspect")}</span>
             </button>
           </div>
 
@@ -485,7 +484,7 @@ export function OneClickAppsCatalog({
             className="w-full sm:w-auto px-4 py-2 rounded-lg text-xs font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-all shadow-sm flex items-center justify-center gap-1.5 whitespace-nowrap disabled:opacity-50"
           >
             <Rocket className="w-3.5 h-3.5" />
-            <span>Launch Image</span>
+            <span>{t("launchImage", "Launch Image")}</span>
           </button>
         </div>
 
@@ -502,7 +501,7 @@ export function OneClickAppsCatalog({
                 </span>
               )}
             </div>
-            <span className="text-[11px] text-emerald-500 font-medium">✓ Ready to deploy</span>
+            <span className="text-[11px] text-emerald-500 font-medium">✓ {t("readyToDeploy", "Ready to deploy")}</span>
           </div>
         )}
       </div>
@@ -510,7 +509,7 @@ export function OneClickAppsCatalog({
       {/* Catalog Source Selector */}
       <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none border-b border-border/40 pb-2">
         <span className="text-xs text-muted-foreground font-medium mr-1 flex items-center gap-1">
-          <Filter className="w-3 h-3" /> Source:
+          <Filter className="w-3 h-3" /> {t("sourceFilter", "Source:")}
         </span>
         {ONE_CLICK_SOURCES.map((src) => {
           const isActive = selectedSource === src.id;
@@ -527,7 +526,7 @@ export function OneClickAppsCatalog({
                   : "bg-surface hover:bg-surface-2 text-muted-foreground hover:text-foreground border border-border/40"
               }`}
             >
-              <span>{src.label}</span>
+              <span>{t(src.label)}</span>
             </button>
           );
         })}
@@ -554,7 +553,7 @@ export function OneClickAppsCatalog({
                   }`}
                 >
                   <span>{cat.icon}</span>
-                  <span>{cat.label}</span>
+                  <span>{t(cat.label)}</span>
                 </button>
               );
             })}
@@ -565,7 +564,7 @@ export function OneClickAppsCatalog({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               type="text"
-              placeholder="Search across 2,550+ self-hosted apps..."
+              placeholder={t("searchAppsPlaceholder", "Search across 2,550+ self-hosted apps...")}
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);

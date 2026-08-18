@@ -126,7 +126,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <div className="flex items-center justify-between px-2 py-1 text-xs text-muted-foreground bg-sidebar-accent/30 rounded-md">
             <div className="flex items-center gap-1.5">
               <Languages className="w-3.5 h-3.5 text-primary" />
-              <span className="text-[11px]">Language</span>
+              <span className="text-[11px]">{t("language", "Language")}</span>
             </div>
             <select
               value={language}
@@ -147,7 +147,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             </div>
             <div className="min-w-0 flex-1 truncate text-xs">
               <div className="truncate font-medium">{user?.email || "admin@hosterax.internal"}</div>
-              <div className="text-muted-foreground text-[10px]">Primary Workspace</div>
+              <div className="text-muted-foreground text-[10px]">{t("primaryWorkspace", "Primary Workspace")}</div>
             </div>
           </div>
           <button
