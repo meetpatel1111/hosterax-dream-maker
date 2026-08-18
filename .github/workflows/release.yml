@@ -68,6 +68,15 @@ jobs:
           npm install --legacy-peer-deps --no-audit --no-fund
           npm --prefix hosterax/cli install --legacy-peer-deps --no-audit --no-fund
 
+      - name: Sync Package Version from Git Tag
+        working-directory: ./hosterax/cli
+        env:
+          RELEASE_TAG: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
+        run: |
+          RAW_VER=$(echo "$RELEASE_TAG" | sed 's/^v//')
+          echo "Auto-syncing CLI package version to $RAW_VER from git tag $RELEASE_TAG"
+          npm version "$RAW_VER" --no-git-tag-version --allow-same-version
+
       - name: Build & Pack NPM Tarball
         working-directory: ./hosterax/cli
         env:
@@ -197,6 +206,20 @@ jobs:
       - name: Install Desktop Subsystem Dependencies
         working-directory: ./hosterax/desktop
         run: npm install --legacy-peer-deps
+
+      - name: Sync Desktop Package Version from Git Tag
+        working-directory: ./hosterax/desktop
+        env:
+          RELEASE_TAG: ${{ github.ref_name || inputs.version || 'v1.0.0' }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const rawVer = (process.env.RELEASE_TAG || "v1.0.0").replace(/^v/, "");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.version = rawVer;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
+            console.log("[HosteraX Desktop] Stamped package version to:", rawVer);
+          '
 
       - name: Package Desktop Binary
         working-directory: ./hosterax/desktop
