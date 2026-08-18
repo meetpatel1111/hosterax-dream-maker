@@ -2730,6 +2730,15 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, selfHeal.getStatusSummary().projects[m[1]] || { status: "unknown" });
     }
     if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/reset-circuit$/)) &&
+      req.method === "POST"
+    ) {
+      const p = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
+      if (!p) return json(res, 404, { error: "project not found" });
+      const result = selfHeal.resetCircuit(m[1]);
+      return json(res, 200, result);
+    }
+    if (
       (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/pipeline-audit$/)) &&
       req.method === "POST"
     ) {
