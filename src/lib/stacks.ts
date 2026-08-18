@@ -1792,6 +1792,10 @@ export const ONE_CLICK_APPS_CATALOG: OneClickAppDef[] = [
     icon: "📄",
     image: "frooodle/s-pdf:latest",
     port: 8080,
+    healthPath: "/",
+    defaultEnv: {
+      SECURITY_ENABLE_LOGIN: "false",
+    },
     tags: ["pdf", "tools", "ocr", "converter"],
     popular: true,
     source: "verified",
