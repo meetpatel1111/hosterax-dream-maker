@@ -10,6 +10,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { spawn } from "node:child_process";
 import http from "node:http";
 import { ACME_HTTP01_PORT, LETSENCRYPT_DIR } from "./tls-manager.mjs";
@@ -220,17 +221,36 @@ export class EdgeManager {
   }
 
   /**
+   * Discovers loopback, local LAN/Wi-Fi IPs and explicit public server IPs
+   */
+  getLocalIps() {
+    const ips = new Set(["127.0.0.1"]);
+    try {
+      const nets = os.networkInterfaces();
+      for (const n of Object.keys(nets)) {
+        for (const net of nets[n] || []) {
+          if (net.family === "IPv4" && !net.internal && net.address) {
+            ips.add(net.address);
+          }
+        }
+      }
+    } catch {}
+    const envIp = process.env.SERVER_IP || process.env.HOSTERAX_PUBLIC_IP;
+    if (envIp) ips.add(envIp);
+    return Array.from(ips);
+  }
+
+  /**
    * Rebuild routing and synchronize edge configuration
    */
   async syncRoutes() {
     const settings = this.getSettings();
     const projects = this.db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all();
     const domains = this.db.prepare("SELECT * FROM domains ORDER BY created_at DESC").all();
+    const activeIps = this.getLocalIps();
 
     // Map projects with upstreams and hostnames
     const routeList = [];
-    const serverIp = process.env.SERVER_IP || process.env.HOSTERAX_PUBLIC_IP || "127.0.0.1";
-    const dashedServerIp = serverIp.replace(/\./g, "-");
 
     for (const p of projects) {
       if (!p.port) continue;
@@ -239,34 +259,27 @@ export class EdgeManager {
       const cleanName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
 
       const hostnames = new Set([
-        `${p.name}.127.0.0.1.nip.io`,
-        `${p.name}.127-0-0-1.nip.io`,
-        `${p.name}.127.0.0.1.sslip.io`,
-        `${p.name}.127-0-0-1.sslip.io`,
-        `${p.name}.127.0.0.1.traefik.me`,
-        `${p.name}.traefik.me`,
-        `${p.name}.127.0.0.1.ipq.co`,
-        `${p.name}.127.0.0.1.fdns.uk`,
         `${p.name}.localhost`,
+        `${p.name}.traefik.me`,
       ]);
 
-      if (serverIp && serverIp !== "127.0.0.1") {
-        hostnames.add(`${p.name}.${serverIp}.nip.io`);
-        hostnames.add(`${p.name}.${serverIp.replace(/\./g, "-")}.nip.io`);
-        hostnames.add(`${p.name}.${serverIp}.sslip.io`);
-        hostnames.add(`${p.name}.${dashedServerIp}.sslip.io`);
-        hostnames.add(`${p.name}.${serverIp}.ipq.co`);
-        hostnames.add(`${p.name}.${serverIp}.fdns.uk`);
-        if (cleanName !== p.name) {
-          hostnames.add(`${cleanName}.${serverIp}.nip.io`);
-          hostnames.add(`${cleanName}.${dashedServerIp}.sslip.io`);
-        }
+      if (cleanName !== p.name) {
+        hostnames.add(`${cleanName}.localhost`);
+        hostnames.add(`${cleanName}.traefik.me`);
       }
 
-      if (cleanName !== p.name) {
-        hostnames.add(`${cleanName}.127.0.0.1.nip.io`);
-        hostnames.add(`${cleanName}.127.0.0.1.sslip.io`);
-        hostnames.add(`${cleanName}.localhost`);
+      for (const ip of activeIps) {
+        const dashed = ip.replace(/\./g, "-");
+        hostnames.add(`${p.name}.${ip}.nip.io`);
+        hostnames.add(`${p.name}.${dashed}.nip.io`);
+        hostnames.add(`${p.name}.${ip}.sslip.io`);
+        hostnames.add(`${p.name}.${dashed}.sslip.io`);
+        hostnames.add(`${p.name}.${ip}.ipq.co`);
+        hostnames.add(`${p.name}.${ip}.fdns.uk`);
+        if (cleanName !== p.name) {
+          hostnames.add(`${cleanName}.${ip}.nip.io`);
+          hostnames.add(`${cleanName}.${dashed}.sslip.io`);
+        }
       }
 
       if (primary) hostnames.add(primary.hostname);
