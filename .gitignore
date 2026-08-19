@@ -61,3 +61,4 @@ selfhst_apps_script.js
 hosterax/engine/check-db.mjs
 hosterax/engine/test-query.mjs
 public/catalog.json
+hosterax_competitive_landscape.md
