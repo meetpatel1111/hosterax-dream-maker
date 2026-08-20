@@ -30,6 +30,8 @@ import { WebhookManager } from "./webhook-manager.mjs";
 import { OrgManager } from "./org-manager.mjs";
 import { EmailManager } from "./email-manager.mjs";
 import { S3StorageClient } from "./s3-storage.mjs";
+import { GpuManager } from "./gpu-manager.mjs";
+import { ScaleToZeroManager } from "./scale-to-zero.mjs";
 import { generateUniversalDockerfile } from "./dockerfile-generator.mjs";
 import { fileURLToPath } from "node:url";
 
@@ -718,6 +720,9 @@ const serverManager = new ServerManager({ db, HOME });
 const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
 const orgManager = new OrgManager({ db });
 const emailManager = new EmailManager({ db, HOME });
+const gpuManager = new GpuManager(db);
+const scaleToZeroManager = new ScaleToZeroManager(db);
+scaleToZeroManager.start();
 
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
@@ -4174,6 +4179,48 @@ const server = http.createServer(async (req, res) => {
         primaryIp: list[0]?.address || "127.0.0.1",
         interfaces: list,
       });
+    }
+
+    // GET /api/system/gpu - Live NVIDIA GPU and VRAM Telemetry
+    if (url.pathname === "/api/system/gpu" && req.method === "GET") {
+      const data = await gpuManager.getGpuMetrics();
+      return json(res, 200, data);
+    }
+
+    // POST /api/ai/vram-check - Pre-flight VRAM estimation for AI models
+    if (url.pathname === "/api/ai/vram-check" && req.method === "POST") {
+      const b = await readBody(req);
+      const data = await gpuManager.checkVramRequirement(b.modelName || "", b.customRequirementMb || null);
+      return json(res, 200, data);
+    }
+
+    // Scale-to-Zero Configuration
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/scale-to-zero$/))) {
+      const projectName = decodeURIComponent(m[1]);
+      if (req.method === "GET") {
+        const cfg = scaleToZeroManager.getConfig(projectName);
+        return json(res, 200, cfg);
+      }
+      if (req.method === "POST") {
+        const b = await readBody(req);
+        const cfg = scaleToZeroManager.setConfig(projectName, {
+          enabled: Boolean(b.enabled),
+          idleTimeoutMinutes: Number(b.idleTimeoutMinutes) || 15,
+        });
+        return json(res, 200, cfg);
+      }
+    }
+
+    // Manual Sleep & Wake
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/sleep$/)) && req.method === "POST") {
+      const projectName = decodeURIComponent(m[1]);
+      const r = await scaleToZeroManager.sleepProject(projectName);
+      return json(res, r.ok ? 200 : 400, r);
+    }
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/wake$/)) && req.method === "POST") {
+      const projectName = decodeURIComponent(m[1]);
+      const r = await scaleToZeroManager.wakeProject(projectName);
+      return json(res, r.ok ? 200 : 400, r);
     }
 
     if (req.method === "GET" && serveStaticDashboard(res, url.pathname)) {

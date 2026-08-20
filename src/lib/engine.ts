@@ -281,6 +281,90 @@ export function useNetworkInterfaces() {
   });
 }
 
+export type GpuInfo = {
+  index: number;
+  name: string;
+  driverVersion: string;
+  memoryTotalMb: number;
+  memoryUsedMb: number;
+  memoryFreeMb: number;
+  memoryUsagePercent: number;
+  temperatureC: number;
+  utilizationGpuPercent: number;
+  powerDrawWatts: number;
+  status: string;
+  cudaSupported: boolean;
+};
+
+export type GpuMetricsResponse = {
+  hasGpu: boolean;
+  provider: string;
+  count: number;
+  primary: GpuInfo | null;
+  gpus: GpuInfo[];
+  timestamp: number;
+  message?: string;
+};
+
+export function useGpuTelemetry() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<GpuMetricsResponse>({
+    queryKey: ["gpu-metrics", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        const res = await eng.call<GpuMetricsResponse>("GET", "/api/system/gpu");
+        if (res) return res;
+      } catch {}
+      return {
+        hasGpu: false,
+        provider: "none",
+        count: 0,
+        primary: null,
+        gpus: [],
+        timestamp: Date.now(),
+      };
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 4000,
+  });
+}
+
+export type ScaleToZeroConfig = {
+  project: string;
+  enabled: boolean;
+  idleTimeoutMinutes: number;
+  isSleeping: boolean;
+  lastRequestAt: number;
+  lastSleptAt: number;
+  lastWokenAt: number;
+};
+
+export function useScaleToZero(projectName: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<ScaleToZeroConfig>({
+    queryKey: ["scale-to-zero", projectName, eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        const res = await eng.call<ScaleToZeroConfig>("GET", `/api/projects/${projectName}/scale-to-zero`);
+        if (res) return res;
+      } catch {}
+      return {
+        project: projectName,
+        enabled: false,
+        idleTimeoutMinutes: 15,
+        isSleeping: false,
+        lastRequestAt: Date.now(),
+        lastSleptAt: 0,
+        lastWokenAt: 0,
+      };
+    },
+    enabled: !!health.data?.ok && !!projectName,
+    refetchInterval: 5000,
+  });
+}
+
 export function useMagicDnsSettings() {
   const eng = useEngine();
   const health = useEngineHealth();

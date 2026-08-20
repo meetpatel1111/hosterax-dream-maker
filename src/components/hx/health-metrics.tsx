@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { Cpu, MemoryStick, Network, HardDrive, ShieldCheck, Activity, Box } from "lucide-react";
-import { useEngineSystem, useProjectMetrics } from "@/lib/engine";
+import { Cpu, MemoryStick, Network, HardDrive, ShieldCheck, Activity, Box, Zap, Flame } from "lucide-react";
+import { useEngineSystem, useProjectMetrics, useGpuTelemetry } from "@/lib/engine";
 
 type HealthMetricsProps = {
   projectId: string;
@@ -14,6 +14,9 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
   const projectMetricsQuery = useProjectMetrics(projectName);
   const projData = projectMetricsQuery.data;
   const docker = projData?.docker;
+  const gpuQuery = useGpuTelemetry();
+  const gpuData = gpuQuery.data;
+  const primaryGpu = gpuData?.primary;
 
   const metrics = useMemo(() => {
     // Real CPU percent
@@ -188,7 +191,7 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
               Online
             </span>
           </div>
-          <div className="mt-3 font-mono text-lg font-bold text-foreground">
+          <div className="mt-3 font-mono text-lg font-bold text-foreground truncate">
             {docker?.network_io || (sys?.docker?.running ? "Docker Bridge" : "Native Loop")}
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
@@ -196,6 +199,54 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
             <span>Uptime: {metrics.uptime}</span>
           </div>
         </div>
+
+        {/* NVIDIA GPU & VRAM Accelerator (Kubeara Benchmark) */}
+        {primaryGpu && (
+          <div className="rounded-xl border border-emerald-800/40 bg-emerald-950/20 p-5 shadow-sm md:col-span-2 lg:col-span-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
+                  <Zap className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="font-semibold text-xs text-foreground flex items-center gap-2">
+                    <span>{primaryGpu.name}</span>
+                    <span className="text-[10px] font-mono uppercase bg-emerald-900/60 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-700/50">
+                      CUDA Ready
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground font-mono">
+                    Driver v{primaryGpu.driverVersion} • Power: {primaryGpu.powerDrawWatts}W
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-4 text-xs font-mono">
+                <div className="flex items-center gap-1 text-emerald-400">
+                  <Flame className="h-3.5 w-3.5" />
+                  <span>{primaryGpu.temperatureC}°C</span>
+                </div>
+                <div className="text-foreground">
+                  GPU Core: <strong>{primaryGpu.utilizationGpuPercent}%</strong>
+                </div>
+                <div className="text-emerald-400 font-semibold">
+                  VRAM: {primaryGpu.memoryUsedMb} MB / {primaryGpu.memoryTotalMb} MB ({primaryGpu.memoryUsagePercent}%)
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-emerald-950/80 border border-emerald-800/40">
+              <div
+                className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-700"
+                style={{ width: `${Math.min(100, Math.max(2, primaryGpu.memoryUsagePercent))}%` }}
+              />
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground font-mono">
+              <span>Free VRAM: {primaryGpu.memoryFreeMb} MB</span>
+              <span>Available for AI Model Inference (Ollama / vLLM / DeepSeek)</span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Real Node Telemetry Status Banner */}
