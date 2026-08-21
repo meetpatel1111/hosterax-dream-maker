@@ -1345,7 +1345,7 @@ export class AIOpsManager {
     const deploymentId = `d_${crypto.randomBytes(4).toString("hex")}`;
     const now = Date.now();
 
-    // Map well-known template image names
+    // Comprehensive registry of curated self-hosted & cloud apps
     const templateImages = {
       "it-tools": "corentinth/it-tools:latest",
       "stirling-pdf": "frooodle/s-pdf:latest",
@@ -1358,11 +1358,51 @@ export class AIOpsManager {
       "plausible": "plausible/analytics:latest",
       "redis": "redis:alpine",
       "postgres": "postgres:16-alpine",
+      "mysql": "mysql:8.0",
+      "mongo": "mongo:7.0",
+      "mongodb": "mongo:7.0",
+      "ollama": "ollama/ollama:latest",
+      "libretranslate": "libretranslate/libretranslate:latest",
+      "whisper": "onerahmet/openai-whisper-asr-webservice:latest",
+      "qdrant": "qdrant/qdrant:latest",
+      "chromadb": "chromadb/chroma:latest",
+      "minio": "minio/minio:latest",
+      "meilisearch": "getmeili/meilisearch:latest",
+      "grafana": "grafana/grafana:latest",
+      "prometheus": "prom/prometheus:latest",
+      "searxng": "searxng/searxng:latest",
+      "nocodb": "nocodb/nocodb:latest",
+      "pocketbase": "ghcr.io/muchobien/pocketbase:latest",
+      "strapi": "strapi/strapi:latest",
+      "directus": "directus/directus:latest",
+      "affine": "ghcr.io/toeverything/affine:latest",
+      "penpot": "penpotapp/frontend:latest",
+      "rustdesk": "rustdesk/rustdesk-server:latest",
+      "paperless-ngx": "ghcr.io/paperless-ngx/paperless-ngx:latest",
+      "photoprism": "photoprism/photoprism:latest",
+      "immich": "ghcr.io/immich-app/immich-server:latest",
+      "metabase": "metabase/metabase:latest",
+      "wikijs": "requarks/wiki:latest",
     };
 
-    const targetImage = image || templateImages[cleanName] || `${cleanName}:latest`;
-    const port = 8082;
-    const domain = `${cleanName}.127.0.0.1.nip.io`;
+    // If user passed a full Docker Hub / GHCR image or repo, use directly
+    let targetImage = image;
+    if (!targetImage) {
+      if (cleanName.includes("/") || cleanName.includes(":")) {
+        targetImage = cleanName;
+      } else {
+        targetImage = templateImages[cleanName] || `${cleanName}:latest`;
+      }
+    }
+
+    // Dynamic port allocation to guarantee zero collisions
+    const existingPorts = this.db.prepare("SELECT port FROM projects WHERE port IS NOT NULL").all().map((r) => r.port);
+    let port = 8082;
+    while (existingPorts.includes(port)) {
+      port++;
+    }
+
+    const domain = `${cleanName.replace(/[^a-z0-9_-]/g, "-")}.127.0.0.1.nip.io`;
 
     // Ensure record exists in database
     const existing = this.db.prepare("SELECT * FROM projects WHERE name=? OR slug=?").get(cleanName, cleanName);
@@ -1382,7 +1422,9 @@ export class AIOpsManager {
       }
     } else {
       try {
-        this.db.prepare("UPDATE projects SET status='running', updated_at=? WHERE name=? OR slug=?").run(now, cleanName, cleanName);
+        this.db
+          .prepare("UPDATE projects SET status='running', port=?, domain=?, updated_at=? WHERE name=? OR slug=?")
+          .run(port, domain, now, cleanName, cleanName);
       } catch {}
     }
 
