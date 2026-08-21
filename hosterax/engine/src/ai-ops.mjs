@@ -595,6 +595,80 @@ export class AIOpsManager {
     return { success: false, message: `Unknown fix type: ${fixType}` };
   }
 
+  // ── Gemini LLM Engine ──
+  async callGemini(prompt, conversationHistory = []) {
+    const apiKey = process.env.GEMINI_API_KEY || this.getConfig()["api_key"];
+    if (!apiKey) return null;
+
+    const model = this.getConfig()["gemini_model"] || "gemini-2.5-flash";
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+
+    const toolsDeclarations = this.tools.map((t) => ({
+      name: t.name,
+      description: t.description,
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          projectName: { type: "STRING", description: "Target application or project name" },
+          hostname: { type: "STRING", description: "Domain name or hostname" },
+          databaseName: { type: "STRING", description: "Database name" },
+          modelName: { type: "STRING", description: "AI/LLM model name for VRAM sizing" },
+          idleTimeoutMinutes: { type: "INTEGER", description: "Idle sleep timeout in minutes" },
+          lines: { type: "INTEGER", description: "Number of log lines" },
+          email: { type: "STRING", description: "Email address" },
+          role: { type: "STRING", description: "Role: member, admin, viewer, operator" },
+          query: { type: "STRING", description: "Search query" },
+          domain: { type: "STRING", description: "Domain name" },
+          provider: { type: "STRING", description: "Edge provider: caddy or openresty" },
+        },
+      },
+    }));
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text: "You are HosteraX AIOps Engine Copilot. You have full operational control over the user's infrastructure stack (Docker containers, edge proxy, domains, TLS, databases, backups, GPU telemetry, scale-to-zero, scheduled tasks). When the user asks you to inspect, troubleshoot, diagnose, deploy, restart, scale, or control the system, invoke the corresponding tool.",
+              },
+            ],
+          },
+          contents: [
+            ...conversationHistory.slice(-8).map((h) => ({
+              role: h.role === "assistant" ? "model" : "user",
+              parts: [{ text: h.content }],
+            })),
+            { role: "user", parts: [{ text: prompt }] },
+          ],
+          tools: [{ functionDeclarations: toolsDeclarations }],
+        }),
+      });
+
+      if (!response.ok) {
+        return null;
+      }
+
+      const data = await response.json();
+      const candidate = data.candidates?.[0]?.content?.parts?.[0];
+      if (candidate?.functionCall) {
+        return {
+          toolName: candidate.functionCall.name,
+          parameters: candidate.functionCall.args || {},
+        };
+      } else if (candidate?.text) {
+        return {
+          textReply: candidate.text,
+        };
+      }
+    } catch (e) {
+      console.warn("[ai-ops] Gemini API call fallback:", e.message);
+    }
+    return null;
+  }
+
   // ── Natural Language Conversational Turn ──
   async handleChatTurn({ prompt, conversationHistory = [], userRole = "admin", userEmail = "admin@hosterax.local", confirmedAction = null }) {
     if (!prompt && !confirmedAction) {
@@ -640,8 +714,31 @@ export class AIOpsManager {
       }
     }
 
-    // 2. Parse User Intent using Local Heuristic Semantic Engine
-    const intent = this.parseIntent(prompt);
+    // 2. Try Gemini Engine first (if GEMINI_API_KEY is present)
+    let intent = null;
+    let geminiDirectReply = null;
+
+    if (process.env.GEMINI_API_KEY || this.getConfig()["provider"] === "gemini") {
+      const geminiRes = await this.callGemini(prompt, conversationHistory);
+      if (geminiRes?.toolName) {
+        intent = { toolName: geminiRes.toolName, parameters: geminiRes.parameters || {} };
+      } else if (geminiRes?.textReply) {
+        geminiDirectReply = geminiRes.textReply;
+      }
+    }
+
+    // Fallback to local heuristic semantic parser if Gemini didn't return a tool
+    if (!intent && !geminiDirectReply) {
+      intent = this.parseIntent(prompt);
+    }
+
+    if (geminiDirectReply && !intent) {
+      return {
+        reply: geminiDirectReply,
+        toolCalls: [],
+        confirmationRequired: null,
+      };
+    }
 
     if (intent) {
       const tool = this.tools.find((t) => t.name === intent.toolName);
