@@ -157,6 +157,12 @@ export class AIOpsManager {
         requiredPermission: "read",
         execute: async ({ projectName }) => this.diagnoseProject(projectName),
       },
+      {
+        name: "diagnose_cluster",
+        description: "Run comprehensive diagnostic failure scan across all containers and services in the cluster.",
+        requiredPermission: "read",
+        execute: async () => this.diagnoseCluster(),
+      },
 
       // Operational Controls (Write)
       {
@@ -358,7 +364,7 @@ export class AIOpsManager {
   // ── Deep Diagnostic & Auto-Fix Engine ──
   async diagnoseProject(projectName) {
     if (!projectName) {
-      return { status: "error", message: "Project name is required for diagnosis." };
+      return { status: "error", message: "Project name is required for diagnosis.", issues: [], fixes: [] };
     }
 
     const cleanName = projectName.trim().toLowerCase();
@@ -368,6 +374,17 @@ export class AIOpsManager {
       return {
         status: "not_found",
         projectName: cleanName,
+        isRunning: false,
+        exitCode: null,
+        port: 8080,
+        domain: `${cleanName}.127.0.0.1.nip.io`,
+        target: "docker",
+        issues: [{
+          type: "PROJECT_NOT_FOUND",
+          title: `Project '${cleanName}' Not Found`,
+          description: `No active project matching '${cleanName}' was found in the database.`,
+        }],
+        fixes: [],
         message: `Project "${cleanName}" was not found in the HosteraX database.`,
         recommendations: ["Check project name spelling", "List active projects with 'list_projects'"],
       };
@@ -514,6 +531,35 @@ export class AIOpsManager {
       fixes,
       recentLogs: logs.split("\n").slice(-25).join("\n"),
       timestamp: Date.now(),
+    };
+  }
+
+  async diagnoseCluster() {
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    const projects = this.db.prepare("SELECT * FROM projects").all();
+    const reports = [];
+    const failingProjects = [];
+
+    for (const p of projects) {
+      const diag = await this.diagnoseProject(p.name);
+      reports.push(diag);
+      if (diag.status !== "healthy") {
+        failingProjects.push(diag);
+      }
+    }
+
+    return {
+      healthyCount: projects.length - failingProjects.length,
+      failingCount: failingProjects.length,
+      totalCount: projects.length,
+      cpuLoad: Math.min(100, Math.round((os.loadavg()[0] || 0.1) * 20)),
+      usedMemoryMb: Math.round(usedMem / 1024 / 1024),
+      totalMemoryMb: Math.round(totalMem / 1024 / 1024),
+      memoryPercent: Math.round((usedMem / totalMem) * 100),
+      failingProjects,
+      allProjects: reports,
     };
   }
 
@@ -674,12 +720,15 @@ export class AIOpsManager {
     const text = prompt.toLowerCase().trim();
 
     // 1. Troubleshoot / Diagnose
-    if (text.includes("diagnos") || text.includes("troubleshoot") || text.includes("why did") || text.includes("failing") || text.includes("fix ") || text.includes("what broke") || text.includes("check error")) {
+    if (text.includes("diagnos") || text.includes("troubleshoot") || text.includes("why did") || text.includes("failing") || text.includes("fix ") || text.includes("what broke") || text.includes("check error") || text.includes("cluster health") || text.includes("unhealthy")) {
+      if (text.includes("cluster") || text.includes("all") || text.includes("containers") || text.includes("services") || text.includes("failing") || text.includes("system")) {
+        return { toolName: "diagnose_cluster", parameters: {} };
+      }
       const proj = this.extractProjectName(text);
       if (proj) {
         return { toolName: "diagnose_project", parameters: { projectName: proj } };
       }
-      return { toolName: "get_cluster_health", parameters: {} };
+      return { toolName: "diagnose_cluster", parameters: {} };
     }
 
     // 2. GPU & VRAM
@@ -877,9 +926,16 @@ export class AIOpsManager {
       }
     }
 
-    // Fallback: look for patterns like 'for <name>', 'project <name>', '<name>'
-    const match = text.match(/(?:project|for|app|container|of)\s+([a-z0-9_-]+)/i);
-    if (match && !["the", "all", "my", "this", "our"].includes(match[1])) {
+    // Stopwords to ignore
+    const stopwords = new Set([
+      "the", "all", "my", "this", "our", "cluster", "health", "failing", "containers",
+      "apps", "projects", "services", "system", "nodes", "errors", "issues", "logs",
+      "ram", "cpu", "memory", "vram", "gpu", "dns", "ssl", "mail", "s3", "cron", "check"
+    ]);
+
+    // Fallback: look for patterns like 'project <name>', 'app <name>', 'container <name>'
+    const match = text.match(/(?:project|app|container)\s+([a-z0-9_-]+)/i);
+    if (match && !stopwords.has(match[1].toLowerCase())) {
       return match[1];
     }
 
@@ -887,14 +943,44 @@ export class AIOpsManager {
   }
 
   formatToolResult(toolName, result, parameters) {
+    if (toolName === "diagnose_cluster") {
+      const r = result;
+      let out = `### 🔍 Cluster Health & Container Diagnostic Report\n\n`;
+      out += `- **Overall Status:** ${r.failingCount === 0 ? "🟢 All Systems Operational" : `🔴 **${r.failingCount} Unhealthy / Failing Service(s)**`}\n`;
+      out += `- **Cluster Workloads:** **${r.healthyCount}/${r.totalCount} Healthy** (${r.failingCount} failing)\n`;
+      out += `- **System Resources:** CPU Load: **${r.cpuLoad}%** · RAM: **${r.usedMemoryMb} MB** / **${r.totalMemoryMb} MB** (${r.memoryPercent}%)\n\n`;
+
+      if (r.failingProjects && r.failingProjects.length > 0) {
+        out += `#### ⚠️ Attention Required on Failing Services:\n`;
+        for (const fp of r.failingProjects) {
+          out += `\n##### 📦 Project: \`${fp.projectName}\` (${fp.status.toUpperCase()})\n`;
+          for (const iss of (fp.issues || [])) {
+            out += `- **${iss.title}**: ${iss.description}\n`;
+            if (iss.evidence) {
+              out += `  > \`Log Evidence:\` *${iss.evidence.trim()}*\n`;
+            }
+          }
+          for (const fix of (fp.fixes || [])) {
+            out += `  > ⚡ *Suggested Auto-Fix:* **${fix.title}** (${fix.description})\n`;
+          }
+        }
+      } else {
+        out += `✨ All containers are running smoothly with no detected memory leaks, crash loops, or port collisions.`;
+      }
+      return out;
+    }
+
     if (toolName === "diagnose_project") {
       const r = result;
+      if (r.status === "not_found") {
+        return `⚠️ **Project Not Found:** Project \`${r.projectName}\` does not exist in HosteraX. Use \`list_projects\` to see active applications.`;
+      }
       let out = `### 🔍 Deep Diagnostic Report: \`${r.projectName}\`\n\n`;
       out += `**Status:** ${r.status === "healthy" ? "🟢 Healthy" : r.status === "warning" ? "🟡 Warning" : "🔴 Critical Issue Detected"}\n`;
       out += `**Container State:** ${r.isRunning ? "Running" : "Stopped"} (Exit code: \`${r.exitCode ?? "N/A"}\`)\n`;
-      out += `**Ingress Routing:** \`${r.domain}\` $\\to$ \`:${r.port}\`\n\n`;
+      out += `**Ingress Routing:** \`${r.domain || "N/A"}\` $\\to$ \`:${r.port || "N/A"}\`\n\n`;
 
-      if (r.issues.length > 0) {
+      if (r.issues && r.issues.length > 0) {
         out += `#### ⚠️ Identified Root Causes:\n`;
         for (const iss of r.issues) {
           out += `- **${iss.title}**: ${iss.description}\n`;
@@ -905,7 +991,7 @@ export class AIOpsManager {
         out += `\n`;
       }
 
-      if (r.fixes.length > 0) {
+      if (r.fixes && r.fixes.length > 0) {
         out += `#### ⚡ Available 1-Click Automated Remediations:\n`;
         for (const fix of r.fixes) {
           out += `- **${fix.title}**: ${fix.description}\n`;
