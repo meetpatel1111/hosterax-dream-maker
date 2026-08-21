@@ -1,5 +1,5 @@
 import { useSyncExternalStore, useCallback, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 export * from "./schema";
 
 type EngineState = { url: string; token: string };
@@ -1021,3 +1021,134 @@ export function useProjectDiagnostics(projectName?: string) {
     refetchInterval: 10000,
   });
 }
+
+// ────────── AIOps Conversational Platform Control & Diagnostics ──────────
+export type AiToolCall = {
+  toolName: string;
+  status: "success" | "failed" | "denied_rbac";
+  result?: any;
+  error?: string;
+};
+
+export type AiConfirmationRequired = {
+  toolName: string;
+  parameters: Record<string, any>;
+  title: string;
+  warning: string;
+};
+
+export type AiChatResponse = {
+  reply: string;
+  toolCalls: AiToolCall[];
+  confirmationRequired?: AiConfirmationRequired | null;
+};
+
+export type AiDiagnosticIssue = {
+  type: string;
+  title: string;
+  description: string;
+  evidence?: string;
+};
+
+export type AiDiagnosticFix = {
+  id: string;
+  type: string;
+  title: string;
+  description: string;
+  parameters: Record<string, any>;
+};
+
+export type AiDiagnosticResult = {
+  projectName: string;
+  status: "healthy" | "warning" | "critical" | "not_found" | "error";
+  isRunning: boolean;
+  exitCode: number | null;
+  port: number;
+  domain: string;
+  target: string;
+  issues: AiDiagnosticIssue[];
+  fixes: AiDiagnosticFix[];
+  recentLogs: string;
+  timestamp: number;
+  message?: string;
+};
+
+export type AiConfig = {
+  provider: string;
+  ollama_url?: string;
+  ollama_model?: string;
+  api_key?: string;
+};
+
+export function useAiChat() {
+  const eng = useEngine();
+  return useMutation({
+    mutationFn: async (payload: {
+      prompt?: string;
+      conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
+      userRole?: string;
+      userEmail?: string;
+      confirmedAction?: { toolName: string; parameters: Record<string, any> } | null;
+    }) => {
+      return await eng.call<AiChatResponse>("POST", "/api/ai/chat", payload);
+    },
+  });
+}
+
+export function useAiDiagnose() {
+  const eng = useEngine();
+  return useMutation({
+    mutationFn: async (projectName: string) => {
+      return await eng.call<AiDiagnosticResult>("POST", "/api/ai/diagnose", { projectName });
+    },
+  });
+}
+
+export function useAiExecuteFix() {
+  const eng = useEngine();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: {
+      projectName: string;
+      fixType: string;
+      parameters?: Record<string, any>;
+      userRole?: string;
+    }) => {
+      return await eng.call<{ success: boolean; message: string }>("POST", "/api/ai/execute-fix", payload);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["system-stats"] });
+    },
+  });
+}
+
+export function useAiConfig() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<AiConfig>({
+    queryKey: ["ai-config", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<AiConfig>("GET", "/api/ai/config");
+      } catch {
+        return { provider: "heuristic", ollama_url: "http://localhost:11434", ollama_model: "llama3:latest" };
+      }
+    },
+    enabled: !!health.data?.ok,
+  });
+}
+
+export function useUpdateAiConfig() {
+  const eng = useEngine();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (updates: Partial<AiConfig>) => {
+      return await eng.call<AiConfig>("POST", "/api/ai/config", updates);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["ai-config"] });
+    },
+  });
+}
+

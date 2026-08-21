@@ -32,6 +32,7 @@ import { EmailManager } from "./email-manager.mjs";
 import { S3StorageClient } from "./s3-storage.mjs";
 import { GpuManager } from "./gpu-manager.mjs";
 import { ScaleToZeroManager } from "./scale-to-zero.mjs";
+import { AIOpsManager } from "./ai-ops.mjs";
 import { generateUniversalDockerfile } from "./dockerfile-generator.mjs";
 import { fileURLToPath } from "node:url";
 
@@ -2512,6 +2513,21 @@ const mcpServer = new MCPServer({
   orgManager,
 });
 
+const aiOpsManager = new AIOpsManager({
+  db,
+  projectsApi,
+  gpuManager,
+  scaleToZero: scaleToZeroManager,
+  backupManager,
+  s3Storage,
+  edgeManager,
+  tlsManager,
+  selfHeal,
+  cronManager,
+  serverManager,
+  orgManager,
+});
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
@@ -4221,6 +4237,51 @@ const server = http.createServer(async (req, res) => {
       const projectName = decodeURIComponent(m[1]);
       const r = await scaleToZeroManager.wakeProject(projectName);
       return json(res, r.ok ? 200 : 400, r);
+    }
+
+    // ────────── AIOps Conversational Platform Control & Diagnostics ──────────
+    if (url.pathname === "/api/ai/chat" && req.method === "POST") {
+      const b = await readBody(req);
+      const userRole = b.userRole || "admin";
+      const userEmail = b.userEmail || "admin@hosterax.local";
+      const r = await aiOpsManager.handleChatTurn({
+        prompt: b.prompt,
+        conversationHistory: b.conversationHistory || [],
+        userRole,
+        userEmail,
+        confirmedAction: b.confirmedAction || null,
+      });
+      return json(res, 200, r);
+    }
+
+    if (url.pathname === "/api/ai/diagnose" && req.method === "POST") {
+      const b = await readBody(req);
+      const r = await aiOpsManager.diagnoseProject(b.projectName);
+      return json(res, 200, r);
+    }
+
+    if (url.pathname === "/api/ai/execute-fix" && req.method === "POST") {
+      const b = await readBody(req);
+      const userRole = b.userRole || "admin";
+      if (!aiOpsManager.checkPermission(userRole, "write")) {
+        return json(res, 403, {
+          success: false,
+          error: "RBAC Permission Denied: Only operators or admins can execute automated remediations.",
+        });
+      }
+      const r = await aiOpsManager.executeAutoFix(b.projectName, b.fixType, b.parameters);
+      return json(res, r.success ? 200 : 400, r);
+    }
+
+    if (url.pathname === "/api/ai/config") {
+      if (req.method === "GET") {
+        return json(res, 200, aiOpsManager.getConfig());
+      }
+      if (req.method === "POST") {
+        const b = await readBody(req);
+        const cfg = aiOpsManager.updateConfig(b);
+        return json(res, 200, cfg);
+      }
     }
 
     if (req.method === "GET" && serveStaticDashboard(res, url.pathname)) {

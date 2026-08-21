@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
+import { AICopilot } from "./ai-copilot";
 import { useAuth } from "@/lib/auth-context";
 import { useOrganizations } from "@/lib/engine";
 import { useTranslation, LANGUAGES, type LanguageCode } from "@/lib/i18n";
@@ -186,6 +187,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         </header>
         <div className="p-6">{children}</div>
       </main>
+      <AICopilot />
     </div>
   );
 }

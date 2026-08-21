@@ -19,6 +19,7 @@ import { HealthMetrics } from "@/components/hx/health-metrics";
 import { ServiceTopologyGraph } from "@/components/hx/service-topology-graph";
 import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
 import { DeleteProjectModal } from "@/components/hx/delete-project-modal";
+import { AiTroubleshootModal } from "@/components/hx/ai-troubleshoot-modal";
 import {
   ArrowLeft,
   Copy,
@@ -44,6 +45,7 @@ import {
   Moon,
   Sun,
   Zap,
+  Sparkles,
 } from "lucide-react";
 import { SelfHealingPanel } from "@/components/hx/self-healing-panel";
 
@@ -76,6 +78,7 @@ function ProjectPage() {
   const [environment, setEnvironment] = useState<"production" | "preview" | "development">(
     "production",
   );
+  const [isTroubleshootOpen, setIsTroubleshootOpen] = useState(false);
   const engine = useEngine();
   const { data: magicDns } = useMagicDnsSettings();
   const { data: netInfo } = useNetworkInterfaces();
@@ -293,6 +296,14 @@ function ProjectPage() {
             ))}
           </select>
           <button
+            onClick={() => setIsTroubleshootOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-md bg-primary/15 border border-primary/30 px-3.5 py-2 text-xs font-semibold text-primary hover:bg-primary/25 transition-all shadow-sm active:scale-95"
+            title="Open Autonomous AI Troubleshooter"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>AI Troubleshoot</span>
+          </button>
+          <button
             onClick={() => deploy("manual")}
             className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 shadow-sm"
           >
@@ -342,6 +353,12 @@ function ProjectPage() {
         projectName={project.name}
         onClose={() => setDeleteModalOpen(false)}
         onConfirm={handleConfirmDelete}
+      />
+
+      <AiTroubleshootModal
+        projectName={project?.name || slug}
+        isOpen={isTroubleshootOpen}
+        onClose={() => setIsTroubleshootOpen(false)}
       />
     </div>
   );
