@@ -1,10 +1,10 @@
-// hosterax/engine/src/ai-ops.mjs
-// HosteraX AIOps Engine: Natural Language Platform Control, RBAC Enforcement & Autonomous Troubleshooting
-// Provides full-platform control via natural language with dual-engine execution (Local Heuristic + LLM)
-// and strict Role-Based Access Control (RBAC) security boundaries.
-
 import crypto from "node:crypto";
 import os from "node:os";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ── RBAC Permission Hierarchy ──
 // 'read'        -> viewer, member, admin, owner
@@ -54,8 +54,30 @@ export class AIOpsManager {
     this.serverManager = serverManager;
     this.orgManager = orgManager;
 
+    this.initCatalog();
     this.initSchema();
     this.initTools();
+  }
+
+  initCatalog() {
+    this.catalogMap = new Map();
+    try {
+      const dbPath = path.join(__dirname, "awesome-selfhosted-db.json");
+      if (fs.existsSync(dbPath)) {
+        const data = JSON.parse(fs.readFileSync(dbPath, "utf8"));
+        if (Array.isArray(data.apps)) {
+          for (const app of data.apps) {
+            if (app.slug && app.image) {
+              this.catalogMap.set(app.slug.toLowerCase(), app);
+              this.catalogMap.set(app.name.toLowerCase(), app);
+              this.catalogMap.set(app.id.toLowerCase(), app);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("[ai-ops] Could not load catalog database:", err.message);
+    }
   }
 
   initSchema() {
@@ -714,22 +736,18 @@ export class AIOpsManager {
       }
     }
 
-    // 2. Try Gemini Engine first (if GEMINI_API_KEY is present)
-    let intent = null;
+    // 2. Parse Intent with Local Heuristics + Gemini Engine
+    const localIntent = this.parseIntent(prompt);
+    let intent = localIntent;
     let geminiDirectReply = null;
 
-    if (process.env.GEMINI_API_KEY || this.getConfig()["provider"] === "gemini") {
+    if (!intent && (process.env.GEMINI_API_KEY || this.getConfig()["provider"] === "gemini")) {
       const geminiRes = await this.callGemini(prompt, conversationHistory);
       if (geminiRes?.toolName) {
         intent = { toolName: geminiRes.toolName, parameters: geminiRes.parameters || {} };
       } else if (geminiRes?.textReply) {
         geminiDirectReply = geminiRes.textReply;
       }
-    }
-
-    // Fallback to local heuristic semantic parser if Gemini didn't return a tool
-    if (!intent && !geminiDirectReply) {
-      intent = this.parseIntent(prompt);
     }
 
     if (geminiDirectReply && !intent) {
@@ -871,8 +889,19 @@ export class AIOpsManager {
       return { toolName: "scale_to_zero", parameters: { projectName: proj, enabled, idleTimeoutMinutes: minutes } };
     }
 
-    // 7. Deploy Project
-    if (text.startsWith("deploy ") || text.includes("trigger deploy") || text.includes("redeploy")) {
+    // 7. Deploy Project / Launch App from Catalog or Registries
+    if (
+      text.startsWith("deploy ") ||
+      text.includes("deploy ") ||
+      text.startsWith("spin up ") ||
+      text.includes("spin up ") ||
+      text.startsWith("install ") ||
+      text.includes("install ") ||
+      text.startsWith("launch ") ||
+      text.includes("launch ") ||
+      text.includes("trigger deploy") ||
+      text.includes("redeploy")
+    ) {
       const proj = this.extractProjectName(text);
       if (proj) {
         return { toolName: "deploy_project", parameters: { projectName: proj } };
@@ -1027,8 +1056,31 @@ export class AIOpsManager {
     const stopwords = new Set([
       "the", "all", "my", "this", "our", "cluster", "health", "failing", "containers",
       "apps", "projects", "services", "system", "nodes", "errors", "issues", "logs",
-      "ram", "cpu", "memory", "vram", "gpu", "dns", "ssl", "mail", "s3", "cron", "check"
+      "ram", "cpu", "memory", "vram", "gpu", "dns", "ssl", "mail", "s3", "cron", "check",
+      "catalog", "registry", "registries", "docker", "image", "service", "template"
     ]);
+
+    // Check full container registry pattern (e.g. ghcr.io/immich-app/immich-server:latest or redis:alpine)
+    const registryMatch = text.match(/(?:(?:[a-z0-9_.-]+\.[a-z]{2,}\/)?(?:[a-z0-9_.-]+\/)?[a-z0-9_.-]+(?::[a-z0-9_.-]+)?)/i);
+    if (registryMatch && (registryMatch[0].includes("/") || registryMatch[0].includes(":"))) {
+      return registryMatch[0];
+    }
+
+    // Check action commands: "deploy <name>", "spin up <name>", "install <name>", "launch <name>"
+    const actionMatch = text.match(/(?:deploy|spin up|install|launch|run|create|start|stop|restart|logs for|diagnose)\s+([a-z0-9_./:-]+)/i);
+    if (actionMatch && !stopwords.has(actionMatch[1].toLowerCase())) {
+      return actionMatch[1];
+    }
+
+    // Check 2,502+ app catalog map
+    if (this.catalogMap) {
+      for (const word of text.split(/\s+/)) {
+        const clean = word.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+        if (clean && !stopwords.has(clean) && this.catalogMap.has(clean)) {
+          return clean;
+        }
+      }
+    }
 
     // Fallback: look for patterns like 'project <name>', 'app <name>', 'container <name>'
     const match = text.match(/(?:project|app|container)\s+([a-z0-9_-]+)/i);
