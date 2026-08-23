@@ -33,6 +33,7 @@ import { S3StorageClient } from "./s3-storage.mjs";
 import { GpuManager } from "./gpu-manager.mjs";
 import { ScaleToZeroManager } from "./scale-to-zero.mjs";
 import { AIOpsManager } from "./ai-ops.mjs";
+import { MetricsManager } from "./metrics-manager.mjs";
 import { generateUniversalDockerfile } from "./dockerfile-generator.mjs";
 import { fileURLToPath } from "node:url";
 
@@ -727,6 +728,7 @@ const emailManager = new EmailManager({ db, HOME });
 const gpuManager = new GpuManager(db);
 const scaleToZeroManager = new ScaleToZeroManager(db);
 scaleToZeroManager.start();
+const metricsManager = new MetricsManager({ db, HOME, LOGDIR });
 
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
@@ -2531,6 +2533,7 @@ const aiOpsManager = new AIOpsManager({
   orgManager,
   webhookManager,
   emailManager,
+  metricsManager,
 });
 
 const server = http.createServer(async (req, res) => {
@@ -2648,6 +2651,42 @@ const server = http.createServer(async (req, res) => {
         databases: dbCount,
       },
     });
+  }
+
+  // ── Real-Time Metrics & Log Analytics API Endpoints ──
+  if (url.pathname === "/api/metrics" && req.method === "GET") {
+    return json(res, 200, {
+      system: metricsManager.getSystemMetrics(),
+      ...metricsManager.getServiceMetrics(),
+    });
+  }
+
+  if (url.pathname.startsWith("/api/metrics/") && req.method === "GET") {
+    const proj = url.pathname.replace("/api/metrics/", "").trim();
+    return json(res, 200, metricsManager.getServiceMetrics(proj));
+  }
+
+  if (url.pathname === "/api/logs/search" && req.method === "GET") {
+    const proj = url.searchParams.get("project") || "";
+    const query = url.searchParams.get("query") || "";
+    const level = url.searchParams.get("level") || "all";
+    const limit = Number(url.searchParams.get("limit") || 100);
+    return json(res, 200, metricsManager.searchLogs(proj, { query, level, limit }));
+  }
+
+  if (url.pathname === "/api/alerts" && req.method === "GET") {
+    const proj = url.searchParams.get("project");
+    return json(res, 200, {
+      activeAlerts: metricsManager.listActiveAlerts(),
+      rules: metricsManager.listAlertRules(proj),
+    });
+  }
+
+  if (url.pathname === "/api/alerts/rule" && req.method === "POST") {
+    const b = await readBody(req);
+    if (!b.project) return json(res, 400, { error: "project is required" });
+    const rule = metricsManager.setAlertRule(b.project, b.metricType || "memory", b.threshold || 85);
+    return json(res, 200, { ok: true, rule });
   }
   if (url.pathname === "/api/auth/login" && req.method === "POST") {
     const b = await readBody(req);
