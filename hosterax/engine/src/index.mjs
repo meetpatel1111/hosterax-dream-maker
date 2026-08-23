@@ -2529,6 +2529,8 @@ const aiOpsManager = new AIOpsManager({
   cronManager,
   serverManager,
   orgManager,
+  webhookManager,
+  emailManager,
 });
 
 const server = http.createServer(async (req, res) => {
