@@ -34,6 +34,7 @@ import { GpuManager } from "./gpu-manager.mjs";
 import { ScaleToZeroManager } from "./scale-to-zero.mjs";
 import { AIOpsManager } from "./ai-ops.mjs";
 import { MetricsManager } from "./metrics-manager.mjs";
+import { DockerApiClient } from "./docker-api.mjs";
 import { generateUniversalDockerfile } from "./dockerfile-generator.mjs";
 import { fileURLToPath } from "node:url";
 
@@ -729,6 +730,7 @@ const gpuManager = new GpuManager(db);
 const scaleToZeroManager = new ScaleToZeroManager(db);
 scaleToZeroManager.start();
 const metricsManager = new MetricsManager({ db, HOME, LOGDIR });
+const dockerApi = new DockerApiClient();
 
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
@@ -2534,6 +2536,7 @@ const aiOpsManager = new AIOpsManager({
   webhookManager,
   emailManager,
   metricsManager,
+  dockerApi,
 });
 
 const server = http.createServer(async (req, res) => {
@@ -2687,6 +2690,170 @@ const server = http.createServer(async (req, res) => {
     if (!b.project) return json(res, 400, { error: "project is required" });
     const rule = metricsManager.setAlertRule(b.project, b.metricType || "memory", b.threshold || 85);
     return json(res, 200, { ok: true, rule });
+  }
+
+  // ── Native Docker Engine REST API Endpoints ──
+  if (url.pathname === "/api/docker/containers" && req.method === "GET") {
+    try {
+      const all = url.searchParams.get("all") !== "0";
+      const list = await dockerApi.listContainers({ all });
+      return json(res, 200, list);
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname.startsWith("/api/docker/containers/") && req.method === "GET") {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const nameOrId = parts[3];
+    const subAction = parts[4];
+
+    try {
+      if (!subAction || subAction === "inspect") {
+        const inspectData = await dockerApi.inspectContainer(nameOrId);
+        return json(res, 200, inspectData);
+      }
+      if (subAction === "stats") {
+        const stats = await dockerApi.getContainerStats(nameOrId);
+        return json(res, 200, stats);
+      }
+      if (subAction === "top") {
+        const psArgs = url.searchParams.get("ps_args") || "-ef";
+        const top = await dockerApi.getContainerTop(nameOrId, psArgs);
+        return json(res, 200, top);
+      }
+      if (subAction === "changes") {
+        const changes = await dockerApi.getContainerChanges(nameOrId);
+        return json(res, 200, changes);
+      }
+      if (subAction === "logs") {
+        const tail = Number(url.searchParams.get("tail") || 100);
+        const logs = await dockerApi.getContainerLogs(nameOrId, { tail });
+        return json(res, 200, { name: nameOrId, logs });
+      }
+    } catch (err) {
+      return json(res, err.statusCode || 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname.startsWith("/api/docker/containers/") && req.method === "POST") {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const nameOrId = parts[3];
+    const subAction = parts[4];
+    const b = await readBody(req);
+
+    try {
+      if (subAction === "start") {
+        await dockerApi.startContainer(nameOrId);
+        return json(res, 200, { ok: true, action: "started", container: nameOrId });
+      }
+      if (subAction === "stop") {
+        await dockerApi.stopContainer(nameOrId, b.timeout || 10);
+        return json(res, 200, { ok: true, action: "stopped", container: nameOrId });
+      }
+      if (subAction === "restart") {
+        await dockerApi.restartContainer(nameOrId, b.timeout || 10);
+        return json(res, 200, { ok: true, action: "restarted", container: nameOrId });
+      }
+      if (subAction === "update") {
+        const result = await dockerApi.updateContainer(nameOrId, b.resources || b);
+        return json(res, 200, { ok: true, action: "updated", container: nameOrId, result });
+      }
+      if (subAction === "exec") {
+        if (!b.cmd) return json(res, 400, { error: "cmd is required for in-container exec" });
+        const result = await dockerApi.execCommand(nameOrId, b.cmd, { workingDir: b.workingDir, env: b.env });
+        return json(res, 200, result);
+      }
+    } catch (err) {
+      return json(res, err.statusCode || 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname.startsWith("/api/docker/containers/") && req.method === "DELETE") {
+    const parts = url.pathname.split("/").filter(Boolean);
+    const nameOrId = parts[3];
+    try {
+      await dockerApi.removeContainer(nameOrId, { force: true });
+      return json(res, 200, { ok: true, action: "removed", container: nameOrId });
+    } catch (err) {
+      return json(res, err.statusCode || 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/docker/images" && req.method === "GET") {
+    try {
+      const list = await dockerApi.listImages();
+      return json(res, 200, list);
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/docker/images/pull" && req.method === "POST") {
+    const b = await readBody(req);
+    if (!b.image) return json(res, 400, { error: "image tag is required" });
+    try {
+      const result = await dockerApi.pullImage(b.image);
+      return json(res, 200, { ok: true, image: b.image, result });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/docker/images/prune" && req.method === "POST") {
+    try {
+      const result = await dockerApi.pruneImages();
+      return json(res, 200, { ok: true, result });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/docker/volumes" && req.method === "GET") {
+    try {
+      const list = await dockerApi.listVolumes();
+      return json(res, 200, list);
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/docker/volumes/create" && req.method === "POST") {
+    const b = await readBody(req);
+    if (!b.name) return json(res, 400, { error: "volume name is required" });
+    try {
+      const result = await dockerApi.createVolume(b.name, { driver: b.driver, labels: b.labels });
+      return json(res, 200, result);
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/docker/networks" && req.method === "GET") {
+    try {
+      const list = await dockerApi.listNetworks();
+      return json(res, 200, list);
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/docker/system/df" && req.method === "GET") {
+    try {
+      const df = await dockerApi.getDiskUsage();
+      return json(res, 200, df);
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
+  if (url.pathname === "/api/docker/system/prune" && req.method === "POST") {
+    try {
+      const result = await dockerApi.pruneAll();
+      return json(res, 200, { ok: true, result });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
   }
   if (url.pathname === "/api/auth/login" && req.method === "POST") {
     const b = await readBody(req);
