@@ -820,6 +820,7 @@ export class SelfHealEngine {
         this.lastRestartTs.set(name, Date.now());
         this.logEvent(name, "restart_complete", `Service restarted successfully.`, "success");
       } catch (err) {
+        this.lastRestartTs.set(name, Date.now());
         this.logEvent(name, "restart_failed", `Restart failed: ${err.message}`, "error");
       }
     }

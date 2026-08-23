@@ -48,6 +48,9 @@ for (const d of [HOME, WORK, LOGDIR, EDGEDIR]) fs.mkdirSync(d, { recursive: true
 
 const db = new Database(path.join(HOME, "hosterax.db"));
 db.pragma("journal_mode = WAL");
+db.pragma("busy_timeout = 5000");
+db.pragma("synchronous = NORMAL");
+db.pragma("foreign_keys = ON");
 db.exec(`
 CREATE TABLE IF NOT EXISTS projects (
   name TEXT PRIMARY KEY,
@@ -4325,3 +4328,41 @@ server.listen(PORT, () => {
   console.log(`HosteraX engine listening on http://localhost:${PORT}`);
   selfHeal.start();
 });
+
+// ── Global Process Resilience & Crash Traps ──
+process.on("uncaughtException", (err) => {
+  console.error(`[hosterax-engine][CRITICAL] Uncaught Exception:`, err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error(`[hosterax-engine][WARN] Unhandled Rejection:`, reason);
+});
+
+// ── Graceful Shutdown Handler ──
+function handleGracefulShutdown(signal) {
+  console.log(`\n[hosterax-engine] Received ${signal}. Starting graceful shutdown...`);
+  try {
+    selfHeal?.stop?.();
+    scaleToZero?.stop?.();
+    server.close(() => {
+      console.log("[hosterax-engine] HTTP server closed.");
+      try {
+        db.pragma("wal_checkpoint(TRUNCATE)");
+        db.close();
+        console.log("[hosterax-engine] Database safely flushed and closed.");
+      } catch {}
+      process.exit(0);
+    });
+    setTimeout(() => {
+      console.warn("[hosterax-engine] Forced shutdown after timeout.");
+      process.exit(0);
+    }, 5000).unref();
+  } catch (err) {
+    console.error("[hosterax-engine] Error during shutdown:", err);
+    process.exit(1);
+  }
+}
+
+process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
+

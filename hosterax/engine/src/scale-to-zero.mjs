@@ -5,6 +5,7 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
 import http from "node:http";
+import net from "node:net";
 
 const execAsync = promisify(exec);
 
@@ -168,12 +169,14 @@ export class ScaleToZeroManager {
 
   pingPort(port) {
     return new Promise((resolve) => {
-      const req = http.get(`http://127.0.0.1:${port}/`, { timeout: 300 }, (res) => {
+      const socket = net.createConnection({ port: Number(port), host: "127.0.0.1", timeout: 400 });
+      socket.on("connect", () => {
+        socket.destroy();
         resolve(true);
       });
-      req.on("error", () => resolve(false));
-      req.on("timeout", () => {
-        req.destroy();
+      socket.on("error", () => resolve(false));
+      socket.on("timeout", () => {
+        socket.destroy();
         resolve(false);
       });
     });

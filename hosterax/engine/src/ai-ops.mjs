@@ -1362,9 +1362,10 @@ export class AIOpsManager {
 
   async toolRestartProject(projectName) {
     const cleanName = projectName.trim().toLowerCase();
+    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
     try {
       const { execSync } = await import("node:child_process");
-      execSync(`docker restart hx_${cleanName}`, { stdio: "ignore" });
+      execSync(`docker restart hx_${containerSlug}`, { stdio: "ignore" });
     } catch {
       // fallback
     }
@@ -1374,9 +1375,10 @@ export class AIOpsManager {
 
   async toolStopProject(projectName) {
     const cleanName = projectName.trim().toLowerCase();
+    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
     try {
       const { execSync } = await import("node:child_process");
-      execSync(`docker stop hx_${cleanName}`, { stdio: "ignore" });
+      execSync(`docker stop hx_${containerSlug}`, { stdio: "ignore" });
     } catch {}
     this.db.prepare("UPDATE projects SET status='stopped', updated_at=? WHERE name=? OR slug=?").run(Date.now(), cleanName, cleanName);
     return { projectName: cleanName, status: "stopped" };
@@ -1384,9 +1386,10 @@ export class AIOpsManager {
 
   async toolStartProject(projectName) {
     const cleanName = projectName.trim().toLowerCase();
+    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
     try {
       const { execSync } = await import("node:child_process");
-      execSync(`docker start hx_${cleanName}`, { stdio: "ignore" });
+      execSync(`docker start hx_${containerSlug}`, { stdio: "ignore" });
     } catch {}
     this.db.prepare("UPDATE projects SET status='running', updated_at=? WHERE name=? OR slug=?").run(Date.now(), cleanName, cleanName);
     return { projectName: cleanName, status: "running" };
@@ -1480,10 +1483,14 @@ export class AIOpsManager {
       } catch {}
     }
 
-    // Try starting docker container
+    // Try starting docker container with sanitized container name
+    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
     try {
       const { execSync } = await import("node:child_process");
-      execSync(`docker run -d --name hx_${cleanName} -p ${port}:80 ${targetImage}`, { stdio: "ignore" });
+      try {
+        execSync(`docker rm -f hx_${containerSlug}`, { stdio: "ignore" });
+      } catch {}
+      execSync(`docker run -d --name hx_${containerSlug} -p ${port}:80 ${targetImage}`, { stdio: "ignore" });
     } catch {}
 
     return {
@@ -1525,9 +1532,10 @@ export class AIOpsManager {
 
   async toolDeleteProject(projectName) {
     const cleanName = projectName.trim().toLowerCase();
+    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
     try {
       const { execSync } = await import("node:child_process");
-      execSync(`docker rm -f hx_${cleanName}`, { stdio: "ignore" });
+      execSync(`docker rm -f hx_${containerSlug}`, { stdio: "ignore" });
     } catch {}
     this.db.prepare("DELETE FROM projects WHERE name=? OR slug=?").run(cleanName, cleanName);
     return { projectName: cleanName, deleted: true };
