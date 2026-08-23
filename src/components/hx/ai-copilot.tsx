@@ -43,10 +43,13 @@ interface ChatMessage {
 
 const QUICK_PROMPTS = [
   { label: "🔍 Diagnose Cluster", prompt: "Diagnose cluster health and check for failing containers" },
-  { label: "⚡ Reclaim Idle RAM", prompt: "Scale stirling-pdf to zero after 15m of inactivity" },
-  { label: "🧠 Check GPU VRAM", prompt: "Show NVIDIA GPU VRAM allocation and check if llama3:8b fits" },
+  { label: "📊 Live Metrics", prompt: "Show system metrics and node telemetry" },
+  { label: "⚡ Reclaim RAM", prompt: "Reclaim idle memory across all containers" },
+  { label: "📜 Error Logs", prompt: "Search error logs in stirling-pdf" },
+  { label: "🌿 PR Previews", prompt: "List active ephemeral PR preview environments" },
+  { label: "🧠 Check GPU", prompt: "Show NVIDIA GPU VRAM allocation and check if llama3:8b fits" },
   { label: "🚀 Restart Service", prompt: "Restart stirling-pdf and verify readiness probe" },
-  { label: "🛡️ SSL & DNS Check", prompt: "Check edge routing and SSL status" },
+  { label: "🛡️ SSL & DNS", prompt: "Check edge routing and SSL status" },
 ];
 
 export function AICopilot() {
