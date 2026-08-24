@@ -58,7 +58,7 @@ async function startEngineAndOpenDashboard(port = 7777, shouldOpen = true) {
   }
 
   console.log(`[HosteraX] Launching HosteraX Cloud Control Plane on ${url}...`);
-  const child = spawn("node", [enginePath], {
+  const child = spawn("node", ["--max-old-space-size=256", enginePath], {
     env: { ...process.env, HOSTERAX_PORT: String(port) },
     stdio: "inherit",
     detached: false,
@@ -328,7 +328,7 @@ try {
 
       const engineScript = path.resolve(__dirname, "../../engine/src/index.mjs");
       if (fs.existsSync(engineScript)) {
-        spawn(process.execPath, [engineScript], {
+        spawn(process.execPath, ["--max-old-space-size=256", engineScript], {
           detached: true,
           stdio: "ignore",
           env: { ...process.env, HOSTERAX_PORT: String(port) },

@@ -62,15 +62,18 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
         cmd: targetCmd,
       });
 
-      setHistory((prev) => [
-        ...prev,
-        {
-          command: targetCmd,
-          output: res.output || "(Command completed with no output)",
-          exitCode: res.exitCode,
-          time: new Date().toLocaleTimeString(),
-        },
-      ]);
+      setHistory((prev) => {
+        const next = [
+          ...prev,
+          {
+            command: targetCmd,
+            output: res.output || "(Command completed with no output)",
+            exitCode: res.exitCode,
+            time: new Date().toLocaleTimeString(),
+          },
+        ];
+        return next.length > 50 ? next.slice(-50) : next;
+      });
       setCmd("");
     } catch (e: any) {
       toast.error(e.message || "Failed to execute command inside container");

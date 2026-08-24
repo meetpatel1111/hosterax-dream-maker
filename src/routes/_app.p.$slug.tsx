@@ -618,7 +618,8 @@ function LiveLogs({ projectName }: { projectName: string }) {
         return [];
       }
     },
-    refetchInterval: 3000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 
   const active = selected ?? deployments[0]?.id ?? null;
@@ -633,7 +634,7 @@ function LiveLogs({ projectName }: { projectName: string }) {
         .call<{ lines: any[] }>("GET", `/api/projects/${projectName}/deployments/${active}/logs`)
         .then((res) => {
           if (res?.lines && res.lines.length > 0) {
-            setLogs(res.lines);
+            setLogs(res.lines.slice(-500));
           }
         })
         .catch(() => {});
@@ -673,7 +674,8 @@ function LiveLogs({ projectName }: { projectName: string }) {
                         ) {
                           return prev;
                         }
-                        return [...prev, payload];
+                        const next = [...prev, payload];
+                        return next.length > 500 ? next.slice(-500) : next;
                       });
                     }
                   } catch {}
