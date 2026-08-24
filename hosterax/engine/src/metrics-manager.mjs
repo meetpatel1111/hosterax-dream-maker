@@ -8,15 +8,17 @@ import path from "node:path";
 import os from "node:os";
 
 export class MetricsManager {
-  constructor({ db, HOME, LOGDIR }) {
+  constructor({ db, HOME, LOGDIR, dockerApi }) {
     this.db = db;
     this.HOME = HOME;
-    this.LOGDIR = LOGDIR || path.join(HOME, "logs");
+    this.LOGDIR = LOGDIR;
+    this.dockerApi = dockerApi;
     
-    // In-memory ring buffers: projectName -> Array of 60 metrics snapshots
+    // In-memory ring buffers: projectName -> Array of max 30 metrics snapshots
     this.metricsHistory = new Map();
     // In-memory active alerts: projectName -> [alerts]
     this.activeAlerts = new Map();
+    this.isCollecting = false;
 
     this.initSchema();
     this.startMetricsCollector();
@@ -56,65 +58,122 @@ export class MetricsManager {
   }
 
   /**
-   * Collect real-time metrics across all active Docker containers
+   * Collect real-time metrics across all active Docker containers (zero child-process overhead)
    */
-  collectDockerMetrics() {
+  async collectDockerMetrics() {
+    if (this.isCollecting) return;
+    this.isCollecting = true;
     const now = Date.now();
+
     try {
+      if (this.dockerApi) {
+        const containers = await this.dockerApi.listContainers({ all: false });
+        if (!Array.isArray(containers)) return;
+
+        for (const c of containers) {
+          const names = c.Names || [];
+          const primaryName = names[0] ? names[0].replace(/^\//, "") : "";
+          if (!primaryName.startsWith("hx_")) continue;
+
+          const projectName = primaryName.slice(3).toLowerCase();
+          try {
+            const rawStats = await this.dockerApi.getContainerStats(c.Id);
+            if (!rawStats || !rawStats.memory_stats) continue;
+
+            let cpuDelta = 0;
+            let systemDelta = 0;
+            let cpuPercent = 0;
+
+            if (rawStats.cpu_stats && rawStats.precpu_stats) {
+              cpuDelta = (rawStats.cpu_stats.cpu_usage?.total_usage || 0) - (rawStats.precpu_stats.cpu_usage?.total_usage || 0);
+              systemDelta = (rawStats.cpu_stats.system_cpu_usage || 0) - (rawStats.precpu_stats.system_cpu_usage || 0);
+              const onlineCpus = rawStats.cpu_stats.online_cpus || (rawStats.cpu_stats.cpu_usage?.percpu_usage?.length || 1);
+              if (systemDelta > 0 && cpuDelta > 0) {
+                cpuPercent = (cpuDelta / systemDelta) * onlineCpus * 100.0;
+              }
+            }
+
+            const memUsage = (rawStats.memory_stats.usage || 0) - (rawStats.memory_stats.stats?.cache || 0);
+            const memLimit = rawStats.memory_stats.limit || (1024 * 1024 * 1024);
+            const usedMb = Math.round((memUsage / 1048576) * 10) / 10;
+            const limitMb = Math.round((memLimit / 1048576) * 10) / 10;
+            const memPerc = limitMb > 0 ? Math.round((usedMb / limitMb) * 1000) / 10 : 0;
+
+            const snapshot = {
+              timestamp: now,
+              projectName,
+              containerId: c.Id.slice(0, 12),
+              cpuPercent: Math.round(cpuPercent * 10) / 10,
+              memoryUsedMb: usedMb,
+              memoryLimitMb: limitMb,
+              memoryPercent: memPerc,
+              networkIo: "0B / 0B",
+              blockIo: "0B / 0B",
+            };
+
+            if (!this.metricsHistory.has(projectName)) {
+              this.metricsHistory.set(projectName, []);
+            }
+            const buf = this.metricsHistory.get(projectName);
+            buf.push(snapshot);
+            if (buf.length > 30) buf.shift();
+
+            this.evaluateAlerts(projectName, snapshot);
+          } catch {}
+        }
+        return;
+      }
+
+      // Fallback only if native socket unavailable
       const res = spawnSync(
         "docker",
         ["stats", "--no-stream", "--format", '{"id":"{{.ID}}","name":"{{.Name}}","cpu":"{{.CPUPerc}}","mem":"{{.MemUsage}}","memPerc":"{{.MemPerc}}","net":"{{.NetIO}}","block":"{{.BlockIO}}"}'],
         { encoding: "utf8", timeout: 4000 }
       );
 
-      if (res.status !== 0 || !res.stdout) {
-        return;
+      if (res.status === 0 && res.stdout) {
+        const lines = res.stdout.trim().split("\n").filter(Boolean);
+        for (const line of lines) {
+          try {
+            const raw = JSON.parse(line);
+            const rawName = raw.name || "";
+            const projectName = rawName.startsWith("hx_") ? rawName.slice(3).toLowerCase() : rawName.toLowerCase();
+            const cpu = parseFloat(raw.cpu.replace("%", "")) || 0;
+            const memPerc = parseFloat(raw.memPerc.replace("%", "")) || 0;
+            let usedMb = 0;
+            let limitMb = 0;
+            if (raw.mem && raw.mem.includes("/")) {
+              const parts = raw.mem.split("/");
+              usedMb = this.parseSizeToMb(parts[0]?.trim());
+              limitMb = this.parseSizeToMb(parts[1]?.trim());
+            }
+
+            const snapshot = {
+              timestamp: now,
+              projectName,
+              containerId: raw.id,
+              cpuPercent: Math.round(cpu * 10) / 10,
+              memoryUsedMb: Math.round(usedMb * 10) / 10,
+              memoryLimitMb: Math.round(limitMb * 10) / 10,
+              memoryPercent: Math.round(memPerc * 10) / 10,
+              networkIo: raw.net || "0B / 0B",
+              blockIo: raw.block || "0B / 0B",
+            };
+
+            if (!this.metricsHistory.has(projectName)) {
+              this.metricsHistory.set(projectName, []);
+            }
+            const buf = this.metricsHistory.get(projectName);
+            buf.push(snapshot);
+            if (buf.length > 30) buf.shift();
+
+            this.evaluateAlerts(projectName, snapshot);
+          } catch {}
+        }
       }
-
-      const lines = res.stdout.trim().split("\n").filter(Boolean);
-      for (const line of lines) {
-        try {
-          const raw = JSON.parse(line);
-          const rawName = raw.name || "";
-          const projectName = rawName.startsWith("hx_") ? rawName.slice(3).toLowerCase() : rawName.toLowerCase();
-
-          const cpu = parseFloat(raw.cpu.replace("%", "")) || 0;
-          const memPerc = parseFloat(raw.memPerc.replace("%", "")) || 0;
-
-          // Parse memory usage (e.g. "45.2MiB / 1.95GiB")
-          let usedMb = 0;
-          let limitMb = 0;
-          if (raw.mem && raw.mem.includes("/")) {
-            const parts = raw.mem.split("/");
-            usedMb = this.parseSizeToMb(parts[0]?.trim());
-            limitMb = this.parseSizeToMb(parts[1]?.trim());
-          }
-
-          const snapshot = {
-            timestamp: now,
-            projectName,
-            containerId: raw.id,
-            cpuPercent: Math.round(cpu * 10) / 10,
-            memoryUsedMb: Math.round(usedMb * 10) / 10,
-            memoryLimitMb: Math.round(limitMb * 10) / 10,
-            memoryPercent: Math.round(memPerc * 10) / 10,
-            networkIo: raw.net || "0B / 0B",
-            blockIo: raw.block || "0B / 0B",
-          };
-
-          // Store in circular buffer (max 60 samples)
-          if (!this.metricsHistory.has(projectName)) {
-            this.metricsHistory.set(projectName, []);
-          }
-          const buf = this.metricsHistory.get(projectName);
-          buf.push(snapshot);
-          if (buf.length > 60) buf.shift();
-
-          // Evaluate alerts
-          this.evaluateAlerts(projectName, snapshot);
-        } catch {}
-      }
-    } catch {}
+    } catch {} finally {
+      this.isCollecting = false;
+    }
   }
 
   parseSizeToMb(str) {
@@ -363,8 +422,8 @@ export class MetricsManager {
   startMetricsCollector() {
     // Initial run
     this.collectDockerMetrics();
-    // Poll every 10 seconds
-    this.timer = setInterval(() => this.collectDockerMetrics(), 10000);
+    // Poll every 15 seconds
+    this.timer = setInterval(() => this.collectDockerMetrics(), 15000);
   }
 
   stop() {

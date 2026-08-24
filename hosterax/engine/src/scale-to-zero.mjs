@@ -10,8 +10,9 @@ import net from "node:net";
 const execAsync = promisify(exec);
 
 export class ScaleToZeroManager {
-  constructor(db) {
+  constructor(db, dockerApi) {
     this.db = db;
+    this.dockerApi = dockerApi;
     this.activityMap = new Map(); // projectName -> lastRequestTimestamp
     this.wakingMap = new Map(); // projectName -> Promise
     this.initDb();
@@ -92,9 +93,13 @@ export class ScaleToZeroManager {
     const project = this.db.prepare("SELECT * FROM projects WHERE LOWER(name)=?").get(clean);
     if (!project) return { ok: false, error: "Project not found" };
 
-    const containerName = `hx_${clean.replace(/[^a-z0-9]/g, "_")}`;
+    const containerName = `hx_${clean.replace(/[^a-z0-9_]/g, "_")}`;
     try {
-      await execAsync(`docker stop ${containerName}`, { timeout: 10000 });
+      if (this.dockerApi) {
+        await this.dockerApi.stopContainer(containerName);
+      } else {
+        await execAsync(`docker stop ${containerName}`, { timeout: 10000 });
+      }
       this.db.prepare(`
         INSERT INTO scale_to_zero_config (project, enabled, is_sleeping, last_slept_at)
         VALUES (?, 1, 1, ?)
@@ -122,12 +127,16 @@ export class ScaleToZeroManager {
         return { ok: false, error: "Project or port not found" };
       }
 
-      const containerName = `hx_${clean.replace(/[^a-z0-9]/g, "_")}`;
+      const containerName = `hx_${clean.replace(/[^a-z0-9_]/g, "_")}`;
       const startTime = Date.now();
 
       try {
-        await execAsync(`docker start ${containerName}`, { timeout: 10000 });
-      } catch (e) {
+        if (this.dockerApi) {
+          await this.dockerApi.startContainer(containerName);
+        } else {
+          await execAsync(`docker start ${containerName}`, { timeout: 10000 });
+        }
+      } catch {
         // Might already be running
       }
 

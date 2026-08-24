@@ -128,7 +128,8 @@ export function useEngineHealth() {
         return null;
       }
     },
-    refetchInterval: 5000,
+    refetchInterval: 15000,
+    staleTime: 10000,
     retry: false,
   });
 }
@@ -140,7 +141,8 @@ export function useEngineProjects() {
     queryKey: ["engine-projects", eng.url, eng.token],
     queryFn: async () => (await eng.call<any[]>("GET", "/api/projects").catch(() => [])) ?? [],
     enabled: !!health.data?.ok,
-    refetchInterval: 3000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 }
 
@@ -151,7 +153,8 @@ export function useEngineSystem() {
     queryKey: ["engine-system", eng.url, eng.token],
     queryFn: async () => await eng.call<any>("GET", "/api/system").catch(() => null),
     enabled: !!health.data?.ok,
-    refetchInterval: 4000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 }
 
@@ -165,7 +168,8 @@ export function useProjectMetrics(projectName: string) {
         ? await eng.call<any>("GET", `/api/projects/${projectName}/metrics`).catch(() => null)
         : null,
     enabled: !!health.data?.ok && !!projectName,
-    refetchInterval: 3000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 }
 
@@ -1177,7 +1181,8 @@ export function useDockerContainers() {
       }
     },
     enabled: !!health.data?.ok,
-    refetchInterval: 5000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 }
 
@@ -1195,7 +1200,8 @@ export function useDockerInspect(containerName: string) {
       }
     },
     enabled: !!health.data?.ok && !!containerName,
-    refetchInterval: 8000,
+    refetchInterval: 15000,
+    staleTime: 8000,
     retry: false,
   });
 }
@@ -1214,7 +1220,8 @@ export function useDockerTop(containerName: string) {
       }
     },
     enabled: !!health.data?.ok && !!containerName,
-    refetchInterval: 10000,
+    refetchInterval: 20000,
+    staleTime: 10000,
     retry: false,
   });
 }

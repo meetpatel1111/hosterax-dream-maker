@@ -53,6 +53,9 @@ db.pragma("journal_mode = WAL");
 db.pragma("busy_timeout = 5000");
 db.pragma("synchronous = NORMAL");
 db.pragma("foreign_keys = ON");
+db.pragma("cache_size = -8000"); // 8MB memory cache ceiling
+db.pragma("temp_store = MEMORY");
+db.pragma("mmap_size = 33554432"); // 32MB max memory mapped I/O
 db.exec(`
 CREATE TABLE IF NOT EXISTS projects (
   name TEXT PRIMARY KEY,
@@ -726,11 +729,23 @@ const serverManager = new ServerManager({ db, HOME });
 const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
 const orgManager = new OrgManager({ db });
 const emailManager = new EmailManager({ db, HOME });
-const gpuManager = new GpuManager(db);
-const scaleToZeroManager = new ScaleToZeroManager(db);
-scaleToZeroManager.start();
-const metricsManager = new MetricsManager({ db, HOME, LOGDIR });
 const dockerApi = new DockerApiClient();
+const gpuManager = new GpuManager(db);
+const scaleToZeroManager = new ScaleToZeroManager(db, dockerApi);
+scaleToZeroManager.start();
+const metricsManager = new MetricsManager({ db, HOME, LOGDIR, dockerApi });
+
+// Periodic Database Maintenance & Memory Trim
+setInterval(() => {
+  try {
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    db.prepare("DELETE FROM alert_history WHERE created_at < ?").run(sevenDaysAgo);
+    db.prepare("DELETE FROM self_heal_events WHERE created_at < ?").run(sevenDaysAgo);
+    db.prepare("DELETE FROM ai_audit_logs WHERE created_at < ?").run(sevenDaysAgo);
+    db.pragma("wal_checkpoint(PASSIVE)");
+    if (global.gc) global.gc();
+  } catch {}
+}, 60 * 60 * 1000);
 
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
@@ -2411,6 +2426,7 @@ const catalogApi = createCatalogApi({ db, HOME, readBody });
 
 const selfHeal = new SelfHealEngine({
   db,
+  dockerApi,
   publish: (project, msg) => {
     const dep = db
       .prepare("SELECT id FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")

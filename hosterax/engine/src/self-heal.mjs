@@ -5,12 +5,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 export class SelfHealEngine {
-  constructor({ db, publish, restartService, rollbackService, HOME }) {
+  constructor({ db, publish, restartService, rollbackService, HOME, dockerApi }) {
     this.db = db;
     this.publish = publish;
     this.restartService = restartService;
     this.rollbackService = rollbackService;
     this.HOME = HOME;
+    this.dockerApi = dockerApi;
 
     // Track crash history: projectName -> [{ ts: timestamp }]
     this.crashHistory = new Map();
@@ -156,12 +157,12 @@ export class SelfHealEngine {
     if (this.running) return;
     this.running = true;
     this.reconciling = false;
-    console.log("[self-heal] Autonomous Self-Healing Engine started (AutoHeal v6 Mesh)");
+    console.log("[self-heal] Autonomous Self-Healing Engine started (AutoHeal v6 Mesh - Zero Spawn Mode)");
 
-    // Run watchdog probe every 5 seconds (with overlap guard)
+    // Run watchdog probe every 15 seconds (with overlap guard to minimize background CPU/RAM)
     this.timer = setInterval(() => {
       if (!this.reconciling) this.runReconciliationLoop();
-    }, 5000);
+    }, 15000);
 
     // Run AutoPrune disk cleaner every 30 minutes
     this.pruneTimer = setInterval(() => this.runAutoPrune(), 30 * 60 * 1000);
@@ -176,8 +177,34 @@ export class SelfHealEngine {
     if (this.pruneTimer) clearInterval(this.pruneTimer);
   }
 
-  probeDockerDaemon() {
+  async probeDockerDaemon() {
     try {
+      if (this.dockerApi) {
+        const ver = await this.dockerApi.getVersion();
+        const isOk = Boolean(ver && ver.Version);
+        if (isOk !== this.daemonHealthy) {
+          if (!isOk) {
+            this.logEvent(
+              "system",
+              "daemon_unresponsive",
+              "Docker daemon socket is unresponsive or offline. Suspending container probes.",
+              "error",
+            );
+          } else {
+            this.logEvent(
+              "system",
+              "daemon_recovered",
+              `Docker daemon connected (Engine v${ver.Version}). Resuming probes.`,
+              "info",
+            );
+          }
+        }
+        this.daemonHealthy = isOk;
+        this.daemonVersion = isOk ? ver.Version : null;
+        this.lastDaemonCheckTs = Date.now();
+        return this.daemonHealthy;
+      }
+
       const res = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
         encoding: "utf8",
         timeout: 2500,
@@ -501,67 +528,58 @@ export class SelfHealEngine {
 
     if (target === "docker") {
       try {
-        const inspectRes = await new Promise((resolve) => {
-          const child = spawn(
-            "docker",
-            [
-              "inspect",
-              "--format",
-              "{{.State.Status}}|{{.State.OOMKilled}}|{{.State.ExitCode}}",
-              `hx_${cleanName}`,
-            ],
-            { encoding: "utf8" },
-          );
-          let out = "";
-          child.stdout.on("data", (d) => (out += d.toString()));
-          child.on("close", (code) => {
-            resolve({ stdout: out, status: code });
-          });
-          child.on("error", () => resolve({ stdout: "", status: 1 }));
-          setTimeout(() => {
-            try {
-              child.kill();
-            } catch {}
-            resolve({ stdout: out, status: 1 });
-          }, 3000);
-        });
-        out = inspectRes.stdout?.trim() || "";
-        const parts = out.split("|");
-        statusText = parts[0] || "unknown";
-        oomKilled = parts[1] === "true";
-        exitCode = parseInt(parts[2] || "0", 10);
-
-        if (statusText === "running") {
-          isAlive = true;
-
-          // Non-blocking predictive memory sampling
+        if (this.dockerApi) {
           try {
+            const inspectData = await this.dockerApi.inspectContainer(`hx_${cleanName}`);
+            if (inspectData && inspectData.State) {
+              statusText = inspectData.State.Status || "unknown";
+              oomKilled = Boolean(inspectData.State.OOMKilled);
+              exitCode = inspectData.State.ExitCode || 0;
+              if (statusText === "running") {
+                isAlive = true;
+              }
+            }
+          } catch {
+            statusText = "exited";
+            isAlive = false;
+          }
+        } else {
+          const inspectRes = await new Promise((resolve) => {
             const child = spawn(
               "docker",
-              ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`],
-              { stdio: ["ignore", "pipe", "ignore"] },
+              [
+                "inspect",
+                "--format",
+                "{{.State.Status}}|{{.State.OOMKilled}}|{{.State.ExitCode}}",
+                `hx_${cleanName}`,
+              ],
+              { encoding: "utf8" },
             );
-            let raw = "";
-            child.stdout?.on("data", (d) => (raw += d.toString()));
-            child.on("close", () => {
-              const rawMem = raw.replace("%", "").trim();
-              const memVal = parseFloat(rawMem) || 0;
-              if (memVal >= 90) {
-                this.logEvent(
-                  name,
-                  "memory_warning_near_oom",
-                  `Memory utilization reached ${memVal}%. Approaching potential OOM threshold!`,
-                  "warning",
-                );
-              }
+            let out = "";
+            child.stdout.on("data", (d) => (out += d.toString()));
+            child.on("close", (code) => {
+              resolve({ stdout: out, status: code });
             });
+            child.on("error", () => resolve({ stdout: "", status: 1 }));
             setTimeout(() => {
               try {
                 child.kill();
               } catch {}
+              resolve({ stdout: out, status: 1 });
             }, 3000);
-          } catch {}
-        } else if (statusText === "dead" || statusText === "removing") {
+          });
+          out = inspectRes.stdout?.trim() || "";
+          const parts = out.split("|");
+          statusText = parts[0] || "unknown";
+          oomKilled = parts[1] === "true";
+          exitCode = parseInt(parts[2] || "0", 10);
+
+          if (statusText === "running") {
+            isAlive = true;
+          }
+        }
+
+        if (statusText === "dead" || statusText === "removing") {
           this.logEvent(
             name,
             "dead_container_evicted",
@@ -569,20 +587,12 @@ export class SelfHealEngine {
             "warning",
           );
           try {
-            await new Promise((resolve) => {
-              const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`], { encoding: "utf8" });
-              child.on("close", (code) => resolve(code));
-              child.on("error", () => resolve(1));
-              setTimeout(() => {
-                try {
-                  child.kill();
-                } catch {}
-                resolve(1);
-              }, 5000);
-            });
+            if (this.dockerApi) {
+              await this.dockerApi.removeContainer(`hx_${cleanName}`, { force: true });
+            } else {
+              spawnSync("docker", ["rm", "-f", `hx_${cleanName}`]);
+            }
           } catch {}
-          isAlive = false;
-        } else {
           isAlive = false;
         }
       } catch {
