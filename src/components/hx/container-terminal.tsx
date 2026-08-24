@@ -303,6 +303,50 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
           </div>
         </div>
       </div>
+
+      {/* ── Live In-Container Processes (Docker Top) ── */}
+      <div className="p-5 rounded-xl bg-card border border-border/70 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Layers className="h-4 w-4 text-emerald-400" />
+            <h4 className="font-semibold text-sm">Live Container Processes (Docker Top)</h4>
+          </div>
+          <span className="text-xs text-muted-foreground font-mono">
+            {top?.Processes ? `${top.Processes.length} running threads` : "Polling live threads..."}
+          </span>
+        </div>
+
+        {top?.Processes && top.Processes.length > 0 ? (
+          <div className="rounded-lg border border-border/60 overflow-x-auto bg-zinc-950/60 font-mono text-xs">
+            <table className="w-full text-left">
+              <thead className="bg-muted/40 text-muted-foreground text-[11px] border-b border-border/60">
+                <tr>
+                  <th className="px-3 py-2">UID</th>
+                  <th className="px-3 py-2">PID</th>
+                  <th className="px-3 py-2">PPID</th>
+                  <th className="px-3 py-2">TIME</th>
+                  <th className="px-3 py-2">COMMAND</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40 text-zinc-300">
+                {top.Processes.slice(0, 10).map((p: any[], idx: number) => (
+                  <tr key={idx} className="hover:bg-muted/20 transition-colors">
+                    <td className="px-3 py-1.5 text-zinc-400">{p[0]}</td>
+                    <td className="px-3 py-1.5 font-semibold text-emerald-400">{p[1]}</td>
+                    <td className="px-3 py-1.5 text-zinc-400">{p[2]}</td>
+                    <td className="px-3 py-1.5 text-zinc-400">{p[6]}</td>
+                    <td className="px-3 py-1.5 truncate max-w-md text-zinc-200">{p[7]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="p-4 rounded-lg bg-zinc-950/40 border border-border/40 text-xs text-muted-foreground text-center">
+            Container process monitor active. Polling in-kernel process table via native Docker API.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

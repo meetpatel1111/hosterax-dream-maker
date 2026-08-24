@@ -1196,6 +1196,7 @@ export function useDockerInspect(containerName: string) {
     },
     enabled: !!health.data?.ok && !!containerName,
     refetchInterval: 8000,
+    retry: false,
   });
 }
 
@@ -1214,6 +1215,7 @@ export function useDockerTop(containerName: string) {
     },
     enabled: !!health.data?.ok && !!containerName,
     refetchInterval: 10000,
+    retry: false,
   });
 }
 
