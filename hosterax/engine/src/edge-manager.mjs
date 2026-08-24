@@ -344,6 +344,7 @@ export class EdgeManager {
         if (isPrivate) {
           // Serve both plain HTTP and TLS internal so local devs can browse with 0 friction
           content += `http://${host} {\n`;
+          content += `  encode zstd gzip\n`;
           content += `  header X-Forwarded-Proto http\n`;
           content += `  header X-Real-IP {remote_host}\n`;
           content += `  reverse_proxy host.docker.internal:${r.port} {\n`;
@@ -354,6 +355,7 @@ export class EdgeManager {
 
           content += `https://${host} {\n`;
           content += `  tls internal\n`;
+          content += `  encode zstd gzip\n`;
           if (settings.hsts_enabled) {
             content += `  header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"\n`;
           }
@@ -369,6 +371,7 @@ export class EdgeManager {
           const tlsDirective = settings.on_demand_tls ? "tls {\n    on_demand\n  }" : "";
 
           content += `${host} {\n`;
+          content += `  encode zstd gzip\n`;
           if (tlsDirective) content += `  ${tlsDirective}\n`;
           if (settings.hsts_enabled) {
             content += `  header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"\n`;
@@ -612,6 +615,12 @@ http {
   keepalive_timeout 65;
   server_tokens off;
   resolver 1.1.1.1 8.8.8.8 ipv6=off;
+
+  # Gzip compression for static & API payloads
+  gzip on;
+  gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript image/svg+xml;
+  gzip_min_length 1024;
+  gzip_comp_level 5;
 
   # HosteraX Lua engine (shared memory, no Redis / no hot-path file I/O)
   lua_package_path "${luaRoot}/?.lua;/usr/local/openresty/site/lualib/?.lua;;";

@@ -1749,13 +1749,23 @@ pages:
       portFlag += ` -p 127.0.0.1:${consoleHostPort}:9001`;
     }
 
+    // Resource limits (memory and CPU capping)
+    const projRow = db.prepare("SELECT memory_mb_limit, cpu_limit FROM projects WHERE name=?").get(project);
+    let resFlags = "";
+    if (projRow?.memory_mb_limit && projRow.memory_mb_limit > 0) {
+      resFlags += ` --memory ${projRow.memory_mb_limit}m --memory-swap ${projRow.memory_mb_limit * 2}m`;
+    }
+    if (projRow?.cpu_limit && projRow.cpu_limit > 0) {
+      resFlags += ` --cpus ${projRow.cpu_limit}`;
+    }
+
     // Step 1: Launch green container (old container still serves traffic)
     publish(deploymentId, {
       ts: Date.now(),
       stream: "system",
       text: `[blue/green] Launching candidate container ${greenName}...`,
     });
-    const runCmd = `docker run -d --init --name ${greenName} --restart unless-stopped --add-host host.docker.internal:host-gateway ${portFlag}${volFlags} ${envFlags} ${sanitizeImageTag(tag)}${extraArgs}`;
+    const runCmd = `docker run -d --init --name ${greenName} --restart unless-stopped --add-host host.docker.internal:host-gateway ${portFlag}${volFlags}${resFlags} ${envFlags} ${sanitizeImageTag(tag)}${extraArgs}`;
     publish(deploymentId, { ts: Date.now(), stream: "system", text: runCmd });
     const rc = await runStep(deploymentId, workdir, runCmd, {});
     if (rc !== 0) {
@@ -2333,12 +2343,13 @@ function serveStaticDashboard(res, pathname) {
   try {
     const ext = path.extname(filePath).toLowerCase();
     const contentType = MIME_TYPES[ext] || "application/octet-stream";
-    const data = fs.readFileSync(filePath);
+    const stat = fs.statSync(filePath);
     res.writeHead(200, {
       "content-type": contentType,
+      "content-length": stat.size,
       "cache-control": ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable",
     });
-    res.end(data);
+    fs.createReadStream(filePath).pipe(res);
     return true;
   } catch {
     return false;
@@ -2503,14 +2514,6 @@ const selfHeal = new SelfHealEngine({
   },
   HOME,
 });
-
-let catalogAppsList = [];
-try {
-  const dbJson = path.join(__dirname, "awesome-selfhosted-db.json");
-  if (fs.existsSync(dbJson)) {
-    catalogAppsList = JSON.parse(fs.readFileSync(dbJson, "utf8")).apps || [];
-  }
-} catch {}
 
 let s3Storage = null;
 try {
