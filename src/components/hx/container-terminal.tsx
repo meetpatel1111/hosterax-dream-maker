@@ -32,7 +32,7 @@ interface ContainerTerminalProps {
 }
 
 export function ContainerTerminal({ projectName, containerName }: ContainerTerminalProps) {
-  const actualContainer = containerName || `hx_${projectName.replace(/[^a-z0-9_-]/g, "_")}`;
+  const actualContainer = containerName || `hx_${projectName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
   
   const [cmd, setCmd] = useState("");
   const [history, setHistory] = useState<Array<{ command: string; output: string; exitCode: number; time: string }>>([
