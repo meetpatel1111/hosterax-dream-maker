@@ -132,10 +132,60 @@ export class DockerApiClient {
   }
 
   /**
+   * Automatically resolves container name or ID flexibly (e.g. stirling-pdf -> hx_stirling_pdf)
+   */
+  async resolveContainerId(nameOrId) {
+    if (!nameOrId) return nameOrId;
+    const clean = nameOrId.trim();
+
+    // 1. Direct inspect check
+    try {
+      const res = await this.request("GET", `/containers/${encodeURIComponent(clean)}/json`);
+      if (res && res.Id) return res.Id;
+    } catch {}
+
+    // 2. Candidate list
+    const candidates = [
+      clean,
+      `hx_${clean}`,
+      `hx_${clean.replace(/[^a-z0-9_]/g, "_")}`,
+      clean.replace(/[^a-z0-9_]/g, "_"),
+      clean.replace(/_/g, "-"),
+      `hx_${clean.replace(/_/g, "-")}`,
+    ];
+
+    for (const c of candidates) {
+      try {
+        const res = await this.request("GET", `/containers/${encodeURIComponent(c)}/json`);
+        if (res && res.Id) return res.Id;
+      } catch {}
+    }
+
+    // 3. Fallback to container list scan
+    try {
+      const list = await this.listContainers({ all: true });
+      const found = list.find((c) => {
+        const names = c.Names || [];
+        return names.some((n) => {
+          const stripped = n.replace(/^\//, "");
+          return stripped === clean ||
+                 stripped === `hx_${clean}` ||
+                 stripped === `hx_${clean.replace(/[^a-z0-9_]/g, "_")}` ||
+                 stripped.includes(clean);
+        });
+      });
+      if (found) return found.Id;
+    } catch {}
+
+    return clean;
+  }
+
+  /**
    * Inspect a container by name or ID (returns deep metadata, state, ports, mounts)
    */
   async inspectContainer(nameOrId) {
-    return this.request("GET", `/containers/${encodeURIComponent(nameOrId)}/json`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("GET", `/containers/${encodeURIComponent(target)}/json`);
   }
 
   /**
@@ -150,35 +200,40 @@ export class DockerApiClient {
    * Start a container
    */
   async startContainer(nameOrId) {
-    return this.request("POST", `/containers/${encodeURIComponent(nameOrId)}/start`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("POST", `/containers/${encodeURIComponent(target)}/start`);
   }
 
   /**
    * Stop a container with timeout
    */
   async stopContainer(nameOrId, timeout = 10) {
-    return this.request("POST", `/containers/${encodeURIComponent(nameOrId)}/stop?t=${timeout}`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("POST", `/containers/${encodeURIComponent(target)}/stop?t=${timeout}`);
   }
 
   /**
    * Restart a container
    */
   async restartContainer(nameOrId, timeout = 10) {
-    return this.request("POST", `/containers/${encodeURIComponent(nameOrId)}/restart?t=${timeout}`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("POST", `/containers/${encodeURIComponent(target)}/restart?t=${timeout}`);
   }
 
   /**
    * Kill a container with signal
    */
   async killContainer(nameOrId, signal = "SIGKILL") {
-    return this.request("POST", `/containers/${encodeURIComponent(nameOrId)}/kill?signal=${signal}`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("POST", `/containers/${encodeURIComponent(target)}/kill?signal=${signal}`);
   }
 
   /**
    * Remove a container
    */
   async removeContainer(nameOrId, { force = true, removeVolumes = true } = {}) {
-    return this.request("DELETE", `/containers/${encodeURIComponent(nameOrId)}?force=${force ? "1" : "0"}&v=${removeVolumes ? "1" : "0"}`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("DELETE", `/containers/${encodeURIComponent(target)}?force=${force ? "1" : "0"}&v=${removeVolumes ? "1" : "0"}`);
   }
 
   /**
@@ -187,35 +242,40 @@ export class DockerApiClient {
    * @param {object} resources e.g. { Memory: 1073741824, NanoCPUs: 2000000000, MemorySwap: -1 }
    */
   async updateContainer(nameOrId, resources = {}) {
-    return this.request("POST", `/containers/${encodeURIComponent(nameOrId)}/update`, { body: resources });
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("POST", `/containers/${encodeURIComponent(target)}/update`, { body: resources });
   }
 
   /**
    * Get single-shot resource stats for a container (CPU, Memory, Network, Block I/O)
    */
   async getContainerStats(nameOrId) {
-    return this.request("GET", `/containers/${encodeURIComponent(nameOrId)}/stats?stream=false`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("GET", `/containers/${encodeURIComponent(target)}/stats?stream=false`);
   }
 
   /**
    * Fetch stdout/stderr logs from a container
    */
   async getContainerLogs(nameOrId, { tail = 100, timestamps = false } = {}) {
-    return this.request("GET", `/containers/${encodeURIComponent(nameOrId)}/logs?stdout=1&stderr=1&tail=${tail}&timestamps=${timestamps ? "1" : "0"}`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("GET", `/containers/${encodeURIComponent(target)}/logs?stdout=1&stderr=1&tail=${tail}&timestamps=${timestamps ? "1" : "0"}`);
   }
 
   /**
    * Inspect processes running inside a container (top)
    */
   async getContainerTop(nameOrId, psArgs = "-ef") {
-    return this.request("GET", `/containers/${encodeURIComponent(nameOrId)}/top?ps_args=${encodeURIComponent(psArgs)}`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("GET", `/containers/${encodeURIComponent(target)}/top?ps_args=${encodeURIComponent(psArgs)}`);
   }
 
   /**
    * Inspect filesystem changes inside a container
    */
   async getContainerChanges(nameOrId) {
-    return this.request("GET", `/containers/${encodeURIComponent(nameOrId)}/changes`);
+    const target = await this.resolveContainerId(nameOrId);
+    return this.request("GET", `/containers/${encodeURIComponent(target)}/changes`);
   }
 
   /**
@@ -224,10 +284,11 @@ export class DockerApiClient {
    * @param {string|string[]} cmd e.g. ["ls", "-la"] or "node --version"
    */
   async execCommand(nameOrId, cmd, { workingDir = null, env = [] } = {}) {
+    const target = await this.resolveContainerId(nameOrId);
     const cmdArray = Array.isArray(cmd) ? cmd : ["sh", "-c", cmd];
     
     // 1. Create Exec Instance
-    const execInstance = await this.request("POST", `/containers/${encodeURIComponent(nameOrId)}/exec`, {
+    const execInstance = await this.request("POST", `/containers/${encodeURIComponent(target)}/exec`, {
       body: {
         AttachStdout: true,
         AttachStderr: true,
