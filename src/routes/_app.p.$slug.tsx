@@ -20,6 +20,7 @@ import { ServiceTopologyGraph } from "@/components/hx/service-topology-graph";
 import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
 import { DeleteProjectModal } from "@/components/hx/delete-project-modal";
 import { AiTroubleshootModal } from "@/components/hx/ai-troubleshoot-modal";
+import { ContainerTerminal } from "@/components/hx/container-terminal";
 import {
   ArrowLeft,
   Copy,
@@ -61,6 +62,7 @@ export const Route = createFileRoute("/_app/p/$slug")({
 
 type Tab =
   | "overview"
+  | "terminal"
   | "deployments"
   | "webhooks"
   | "self-heal"
@@ -200,6 +202,7 @@ function ProjectPage() {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
+    { id: "terminal", label: "Terminal & Docker Exec" },
     { id: "deployments", label: "Deployments" },
     { id: "webhooks", label: "Git & PR Previews" },
     { id: "self-heal", label: "Self-Healing & Health" },
@@ -333,6 +336,7 @@ function ProjectPage() {
           lanIp={primaryLanIp}
         />
       )}
+      {tab === "terminal" && <ContainerTerminal projectName={project.name} />}
       {tab === "deployments" && (
         <DeploymentsTab projectId={project.id} projectName={project.name} />
       )}

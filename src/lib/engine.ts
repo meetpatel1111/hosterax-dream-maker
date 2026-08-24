@@ -1152,3 +1152,146 @@ export function useUpdateAiConfig() {
   });
 }
 
+// ────────── Native Docker Engine API Subsystem ──────────
+export interface DockerContainerItem {
+  Id: string;
+  Names: string[];
+  Image: string;
+  Command: string;
+  Created: number;
+  State: string;
+  Status: string;
+  Ports: Array<{ IP?: string; PrivatePort: number; PublicPort?: number; Type: string }>;
+}
+
+export function useDockerContainers() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<DockerContainerItem[]>({
+    queryKey: ["docker-containers", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<DockerContainerItem[]>("GET", "/api/docker/containers");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 5000,
+  });
+}
+
+export function useDockerInspect(containerName: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<any>({
+    queryKey: ["docker-inspect", containerName, eng.url, eng.token],
+    queryFn: async () => {
+      if (!containerName) return null;
+      try {
+        return await eng.call<any>("GET", `/api/docker/containers/${containerName}/inspect`);
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!health.data?.ok && !!containerName,
+    refetchInterval: 8000,
+  });
+}
+
+export function useDockerTop(containerName: string) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<any>({
+    queryKey: ["docker-top", containerName, eng.url, eng.token],
+    queryFn: async () => {
+      if (!containerName) return null;
+      try {
+        return await eng.call<any>("GET", `/api/docker/containers/${containerName}/top`);
+      } catch {
+        return null;
+      }
+    },
+    enabled: !!health.data?.ok && !!containerName,
+    refetchInterval: 10000,
+  });
+}
+
+export function useDockerExec() {
+  const eng = useEngine();
+  return useMutation({
+    mutationFn: async ({ containerName, cmd, workingDir }: { containerName: string; cmd: string; workingDir?: string }) => {
+      return await eng.call<{ execId: string; exitCode: number; running: boolean; output: string }>(
+        "POST",
+        `/api/docker/containers/${containerName}/exec`,
+        { cmd, workingDir }
+      );
+    },
+  });
+}
+
+export function useDockerUpdateResources() {
+  const eng = useEngine();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ containerName, memoryMb, cpus }: { containerName: string; memoryMb: number; cpus: number }) => {
+      const resources = {
+        Memory: memoryMb * 1048576,
+        NanoCPUs: Math.round(cpus * 1e9),
+      };
+      return await eng.call<any>("POST", `/api/docker/containers/${containerName}/update`, { resources });
+    },
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: ["docker-inspect", vars.containerName] });
+      qc.invalidateQueries({ queryKey: ["docker-containers"] });
+    },
+  });
+}
+
+export function useDockerVolumes() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<any>({
+    queryKey: ["docker-volumes", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<any>("GET", "/api/docker/volumes");
+      } catch {
+        return { Volumes: [] };
+      }
+    },
+    enabled: !!health.data?.ok,
+  });
+}
+
+export function useDockerNetworks() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<any[]>({
+    queryKey: ["docker-networks", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<any[]>("GET", "/api/docker/networks");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+  });
+}
+
+export function useDockerPruneSystem() {
+  const eng = useEngine();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      return await eng.call<any>("POST", "/api/docker/system/prune");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["docker-containers"] });
+      qc.invalidateQueries({ queryKey: ["docker-volumes"] });
+    },
+  });
+}
+
+
