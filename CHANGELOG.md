@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **API contract:** `scripts/api-contract.mjs` extracts the engine's routes, generates `hosterax/engine/src/openapi.json` (served at `GET /api/openapi.json`) and fails the test suite when the CLI or dashboard call a route the engine does not serve or use the wrong method (`npm run api:check` / `api:write`).
+
 ### 🔒 Security
 
 - **Authentication is no longer implicit.** Only genuine same-machine, same-origin requests skip the token; everything else needs `Authorization: Bearer`. `GET /api/auth/me` tells the dashboard who it is. New `HOSTERAX_REQUIRE_AUTH`, `HOSTERAX_TRUSTED_ORIGINS` and `HOSTERAX_DEV` switches.

@@ -162,6 +162,16 @@ test("projects CRUD", async () => {
   assert.ok(!leftover || leftover.isArchived === true);
 });
 
+test("the engine serves its OpenAPI description to authenticated callers only", async () => {
+  const spec = await api("GET", "/api/openapi.json");
+  assert.match(spec.openapi, /^3\./);
+  assert.ok(spec.paths["/api/projects"], "the spec lists /api/projects");
+  const anon = await fetch(`${baseUrl}/api/openapi.json`, {
+    headers: { "x-forwarded-for": "203.0.113.9" },
+  });
+  assert.equal(anon.status, 401);
+});
+
 test("catalog endpoints serve from bundled JSON", async () => {
   const tags = await api("GET", "/api/catalog/tags");
   assert.ok(Array.isArray(tags.tags) && tags.tags.length > 0);
