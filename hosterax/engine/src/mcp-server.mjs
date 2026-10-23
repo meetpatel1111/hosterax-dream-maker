@@ -3,8 +3,39 @@
 // Allows AI Agents (Claude Desktop, Cursor, Antigravity, ChatGPT) to inspect and manage infrastructure.
 // Implements MCP 2024-11-05 JSON-RPC 2.0 specification over HTTP POST and Server-Sent Events.
 
+import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
+import { ENGINE_VERSION } from "./version.mjs";
+
+// Tools that only read state. Everything else needs at least a "deploy" scoped token.
+const READ_ONLY_TOOLS = new Set([
+  "get_system_stats",
+  "get_system_metrics",
+  "get_activity_logs",
+  "list_projects",
+  "get_project",
+  "get_deployment",
+  "get_project_logs",
+  "list_databases",
+  "list_backups",
+  "list_domains",
+  "get_edge_status",
+  "list_servers",
+  "list_cron_jobs",
+  "get_s3_storage_status",
+  "diagnose_project_crash",
+  "search_catalog",
+  "list_email_domains",
+  "list_mailboxes",
+  "list_mail_aliases",
+  "get_webhook_config",
+  "list_pr_previews",
+  "list_organizations",
+  "list_org_members",
+]);
+// Tools that can reveal or reconfigure infrastructure credentials.
+const ADMIN_TOOLS = new Set(["test_server_connection", "create_organization"]);
 
 export class MCPServer {
   constructor({
@@ -23,8 +54,14 @@ export class MCPServer {
     emailManager,
     webhookManager,
     orgManager,
+    lifecycle,
+    provisionDatabase,
+    diagnoseProject,
   }) {
     this.db = db;
+    this.lifecycle = lifecycle;
+    this.provisionDatabase = provisionDatabase;
+    this.diagnoseProject = diagnoseProject;
     this.backupManager = backupManager;
     this.cronManager = cronManager;
     this.serverManager = serverManager;
@@ -622,7 +659,7 @@ export class MCPServer {
   /**
    * Handle MCP JSON-RPC 2.0 request
    */
-  async handleJsonRpc(reqBody) {
+  async handleJsonRpc(reqBody, ctx = { level: 3 }) {
     const { jsonrpc, id, method, params } = reqBody || {};
 
     if (jsonrpc !== "2.0") {
@@ -648,7 +685,7 @@ export class MCPServer {
               },
               serverInfo: {
                 name: "hosterax-engine",
-                version: "1.1.0",
+                version: ENGINE_VERSION,
                 description: "HosteraX Autonomous Self-Hosted Cloud Operating System",
               },
             },
@@ -670,7 +707,7 @@ export class MCPServer {
           };
 
         case "tools/call":
-          return await this.handleToolCall(id, params);
+          return await this.handleToolCall(id, params, ctx);
 
         default:
           return {
@@ -691,7 +728,7 @@ export class MCPServer {
   /**
    * Tool execution dispatcher
    */
-  async handleToolCall(rpcId, params = {}) {
+  async handleToolCall(rpcId, params = {}, ctx = { level: 3 }) {
     const { name, arguments: args = {} } = params;
 
     const formatResponse = (data, isError = false) => ({
@@ -707,6 +744,21 @@ export class MCPServer {
         isError,
       },
     });
+
+    const level = ctx?.level ?? 0;
+    const need = ADMIN_TOOLS.has(name)
+      ? 3
+      : name === "get_project_env" || !READ_ONLY_TOOLS.has(name)
+        ? 2
+        : 1;
+    if (level < need) {
+      return formatResponse(
+        {
+          error: `Permission denied: '${name}' requires a ${need === 3 ? "admin" : need === 2 ? "deploy" : "read"}-scoped token.`,
+        },
+        true,
+      );
+    }
 
     try {
       switch (name) {
@@ -735,15 +787,17 @@ export class MCPServer {
               this.db.prepare("SELECT COUNT(*) as count FROM servers").get()?.count || 0;
           } catch {}
           try {
-            if (this.edgeManager?.settings?.provider) {
+            const provider = this.edgeManager?.getSettings?.().provider;
+            if (provider)
               edgeProxy =
-                this.edgeManager.settings.provider === "openresty"
-                  ? "OpenResty 1.27 (Lua Edge)"
-                  : "Caddy 2 (On-Demand TLS)";
-            }
+                provider === "openresty"
+                  ? "OpenResty (Lua Edge)"
+                  : provider === "external"
+                    ? "External proxy (unmanaged)"
+                    : "Caddy 2 (On-Demand TLS)";
           } catch {}
           return formatResponse({
-            engine: "HosteraX v0.2.0",
+            engine: `HosteraX v${ENGINE_VERSION}`,
             status: "online",
             totalProjects: projsCount,
             totalBackups: backupsCount,
@@ -815,7 +869,7 @@ export class MCPServer {
           let domains = [];
           let route = null;
           try {
-            if (this.selfHeal) health = this.selfHeal.getProjectHealth(p.name);
+            if (this.selfHeal) health = this.selfHeal.getStatusSummary().projects[p.name] ?? null;
           } catch {}
           try {
             domains = this.db.prepare("SELECT * FROM domains WHERE project=?").all(p.name);
@@ -825,7 +879,10 @@ export class MCPServer {
           } catch {}
           return formatResponse({
             ...p,
-            env: JSON.parse(p.env_json || "{}"),
+            env_json: undefined,
+            clone_token: undefined,
+            // values are revealed only through get_project_env
+            envKeys: Object.keys(JSON.parse(p.env_json || "{}")),
             resources: JSON.parse(p.resources_json || "{}"),
             domains,
             route,
@@ -979,36 +1036,26 @@ export class MCPServer {
         }
 
         case "get_project_logs": {
-          let deploy;
-          if (args.deploymentId) {
-            deploy = this.db
-              .prepare("SELECT logs FROM deployments WHERE id=?")
-              .get(args.deploymentId);
-          } else {
-            deploy = this.db
+          const want = Math.min(Math.max(parseInt(args.lines, 10) || 50, 1), 2000);
+          let depId = args.deploymentId;
+          if (!depId) {
+            depId = this.db
               .prepare(
-                "SELECT logs FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1",
+                "SELECT id FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1",
               )
-              .get(args.projectName);
+              .get(args.projectName)?.id;
           }
-          const logText = deploy?.logs || `[no logs found for ${args.projectName}]`;
-          const lines = logText
-            .split("\n")
-            .slice(-(args.lines || 50))
-            .join("\n");
-          return formatResponse(lines);
+          let text = depId ? this.lifecycle.readDeploymentLog(depId, want) : "";
+          if (!text && args.projectName)
+            text = await this.lifecycle.runtimeLogs(args.projectName, want);
+          return formatResponse(
+            text || `[no logs found for ${args.projectName || args.deploymentId}]`,
+          );
         }
 
         case "restart_project": {
-          if (!this.selfHeal)
-            return formatResponse({ error: "Self-healing subsystem unavailable" }, true);
-          const p = this.db.prepare("SELECT * FROM projects WHERE name=?").get(args.projectName);
-          if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
-          const res = await this.selfHeal.autoRestartService(p);
-          return formatResponse({
-            ok: res,
-            message: `Restart command executed for ${args.projectName}`,
-          });
+          const res = await this.lifecycle.restart(args.projectName);
+          return formatResponse(res, !res.ok);
         }
 
         // ── Environment Variables & Quotas ──
@@ -1021,19 +1068,19 @@ export class MCPServer {
         }
 
         case "set_project_env": {
-          const p = this.db
-            .prepare("SELECT env_json FROM projects WHERE name=?")
-            .get(args.projectName);
-          if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
-          const current = JSON.parse(p.env_json || "{}");
-          const merged = { ...current, ...(args.env || {}) };
-          this.db
-            .prepare("UPDATE projects SET env_json=?, updated_at=? WHERE name=?")
-            .run(JSON.stringify(merged), Date.now(), p.name);
+          if (!this.db.prepare("SELECT 1 FROM projects WHERE name=?").get(args.projectName))
+            return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
+          try {
+            this.projectsApi.putEnv(args.projectName, args.env || {});
+          } catch (e) {
+            return formatResponse({ error: e.message }, true);
+          }
+          const merged = this.projectsApi.readEnv(args.projectName);
           return formatResponse({
             ok: true,
             keys: Object.keys(merged),
             count: Object.keys(merged).length,
+            note: "Redeploy or restart the project for the new variables to take effect.",
           });
         }
 
@@ -1081,45 +1128,13 @@ export class MCPServer {
         }
 
         case "provision_database": {
-          const id = "db_" + crypto.randomBytes(6).toString("hex");
-          const engine = (args.engine || "postgres").toLowerCase();
-          const connStr = engine.includes("post")
-            ? `postgresql://postgres:postgres@localhost:5432/${args.name}`
-            : engine.includes("my")
-              ? `mysql://root:root@localhost:3306/${args.name}`
-              : engine.includes("mongo")
-                ? `mongodb://localhost:27017/${args.name}`
-                : `redis://localhost:6379`;
-          try {
-            this.db
-              .prepare(
-                `INSERT INTO managed_dbs (id, project, name, engine, size_mb, status, connection_string, created_at)
-                VALUES (?,?,?,?,?,'running',?,?)`,
-              )
-              .run(
-                id,
-                args.projectName,
-                args.name,
-                engine,
-                args.sizeMb || 1024,
-                connStr,
-                Date.now(),
-              );
-          } catch {
-            this.db
-              .prepare(
-                `INSERT INTO databases (id, project, name, engine, size_mb, status, created_at)
-                VALUES (?,?,?,?,?,'running',?)`,
-              )
-              .run(id, args.projectName, args.name, engine, args.sizeMb || 1024, Date.now());
-          }
-          return formatResponse({
-            ok: true,
-            id,
+          const res = await this.provisionDatabase({
+            project: args.projectName,
             name: args.name,
-            engine,
-            connectionString: connStr,
+            engine: args.engine || "postgres",
+            sizeMb: args.sizeMb,
           });
+          return formatResponse(res, !res.ok);
         }
 
         case "list_backups": {
@@ -1134,6 +1149,8 @@ export class MCPServer {
           const res = await this.backupManager.createBackup({
             databaseName: args.databaseName,
             dbType: args.dbType || "volume",
+            containerName: args.containerName,
+            projectName: args.projectName,
           });
           return formatResponse(res);
         }
@@ -1154,6 +1171,13 @@ export class MCPServer {
         }
 
         case "add_domain": {
+          let hostname;
+          try {
+            hostname = normalizeDomain(args.hostname);
+            assertDomainAvailable(this.db, hostname, args.projectName);
+          } catch (e) {
+            return formatResponse({ error: e.message }, true);
+          }
           const id = "dom_" + crypto.randomBytes(6).toString("hex");
           if (args.isPrimary) {
             this.db
@@ -1164,19 +1188,13 @@ export class MCPServer {
             .prepare(
               `INSERT INTO domains (id, project, hostname, is_primary, verified, ssl_status, created_at)
               VALUES (?,?,?,?,0,'none',?)
-              ON CONFLICT(hostname) DO UPDATE SET project=excluded.project, is_primary=excluded.is_primary`,
+              ON CONFLICT(hostname) DO UPDATE SET is_primary=excluded.is_primary`,
             )
-            .run(
-              id,
-              args.projectName,
-              args.hostname.toLowerCase(),
-              args.isPrimary ? 1 : 0,
-              Date.now(),
-            );
+            .run(id, args.projectName, hostname, args.isPrimary ? 1 : 0, Date.now());
           return formatResponse({
             ok: true,
             id,
-            hostname: args.hostname,
+            hostname,
             isPrimary: !!args.isPrimary,
           });
         }
@@ -1184,18 +1202,27 @@ export class MCPServer {
         case "verify_domain_ssl": {
           const dom = this.db.prepare("SELECT * FROM domains WHERE id=?").get(args.domainId);
           if (!dom) return formatResponse({ error: `Domain '${args.domainId}' not found` }, true);
-          this.db
-            .prepare("UPDATE domains SET verified=1, ssl_status='active' WHERE id=?")
-            .run(dom.id);
-          return formatResponse({ ok: true, hostname: dom.hostname, sslStatus: "active" });
+          if (!this.tlsManager) return formatResponse({ error: "TLS manager unavailable" }, true);
+          try {
+            // 1. prove DNS ownership, 2. only then request the certificate
+            const dns = await this.tlsManager.verifyDomainDns(dom.id);
+            if (!dns.verified)
+              return formatResponse({ ok: false, hostname: dom.hostname, dns }, true);
+            const ssl = await this.tlsManager.provisionAcmeSsl(
+              dom.id,
+              this.edgeManager?.getSettings?.().provider,
+            );
+            await this.edgeManager?.syncRoutes?.().catch(() => {});
+            return formatResponse({ ok: true, hostname: dom.hostname, dns, ssl });
+          } catch (e) {
+            return formatResponse({ ok: false, hostname: dom.hostname, error: e.message }, true);
+          }
         }
 
         case "get_edge_status": {
           let provider = "Caddy 2";
           try {
-            if (this.edgeManager?.settings?.provider) {
-              provider = this.edgeManager.settings.provider;
-            }
+            provider = this.edgeManager?.getSettings?.().provider || provider;
           } catch {}
           let routes = [];
           try {
@@ -1234,31 +1261,51 @@ export class MCPServer {
         }
 
         case "get_s3_storage_status": {
-          if (!this.s3Storage) {
-            const row = this.db.prepare("SELECT * FROM s3_config LIMIT 1").get();
-            return formatResponse({
-              configured: !!row,
-              bucket: row?.bucket || null,
-              provider: row?.provider || "aws",
-            });
-          }
-          return formatResponse(this.s3Storage.getStatus());
+          if (!this.backupManager)
+            return formatResponse({ error: "Backup manager unavailable" }, true);
+          const cfg = this.backupManager.getS3Config();
+          return formatResponse({
+            configured: cfg.configured,
+            provider: cfg.provider_type,
+            bucket: cfg.bucket || null,
+            endpoint: cfg.endpoint || null,
+            prefix: cfg.prefix,
+            autoSync: !!cfg.auto_sync,
+          });
         }
 
         case "trigger_s3_sync": {
-          if (!this.s3Storage)
-            return formatResponse({ ok: true, message: "S3 remote sync triggered" });
-          const res = await this.s3Storage.syncRemote();
-          return formatResponse(res);
+          if (!this.backupManager)
+            return formatResponse({ error: "Backup manager unavailable" }, true);
+          if (!this.backupManager.getS3Config().configured)
+            return formatResponse({ error: "S3 remote storage is not configured." }, true);
+          const pending = this.backupManager
+            .listBackups()
+            .filter(
+              (b) => b.status === "completed" && b.existsOnDisk && b.destination !== "s3_synced",
+            );
+          const results = [];
+          for (const b of args.backupId ? pending.filter((x) => x.id === args.backupId) : pending) {
+            try {
+              const r = await this.backupManager.syncBackupToS3(b.id);
+              results.push({ id: b.id, ok: true, s3Key: r.s3Key });
+            } catch (e) {
+              results.push({ id: b.id, ok: false, error: e.message });
+            }
+          }
+          return formatResponse({
+            ok: results.every((r) => r.ok),
+            synced: results.filter((r) => r.ok).length,
+            failed: results.filter((r) => !r.ok).length,
+            results,
+          });
         }
 
         // ── AI Self-Healing & Catalog ──
         case "diagnose_project_crash": {
-          if (!this.selfHeal)
-            return formatResponse({ error: "Self-healing engine unavailable" }, true);
           const p = this.db.prepare("SELECT * FROM projects WHERE name=?").get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
-          const diag = await this.selfHeal.diagnoseContainerCrash(p.name);
+          const diag = await this.diagnoseProject(p.name);
           return formatResponse(diag);
         }
 
@@ -1359,7 +1406,21 @@ export class MCPServer {
         case "create_mailbox": {
           if (!this.emailManager)
             return formatResponse({ error: "Email manager not initialized" }, true);
+          const domainName = String(args.email || "")
+            .split("@")[1]
+            ?.toLowerCase();
+          const domain = args.domainId
+            ? this.emailManager.getDomain(args.domainId)
+            : this.emailManager.listDomains().find((d) => d.domain === domainName);
+          if (!domain)
+            return formatResponse(
+              {
+                error: `No email domain registered for '${domainName || args.email}'. Use add_email_domain first.`,
+              },
+              true,
+            );
           const box = await this.emailManager.createMailbox({
+            domain_id: domain.id,
             email: args.email,
             name: args.name,
             password: args.password,
@@ -1377,10 +1438,22 @@ export class MCPServer {
         case "create_mail_alias": {
           if (!this.emailManager)
             return formatResponse({ error: "Email manager not initialized" }, true);
+          const aliasDomain = String(args.aliasAddress || "")
+            .split("@")[1]
+            ?.toLowerCase();
+          const dom = args.domainId
+            ? this.emailManager.getDomain(args.domainId)
+            : this.emailManager.listDomains().find((d) => d.domain === aliasDomain);
+          if (!dom)
+            return formatResponse(
+              { error: `No email domain registered for '${aliasDomain}'.` },
+              true,
+            );
           const alias = await this.emailManager.createAlias({
-            alias_address: args.aliasAddress,
-            destination_email: args.destinationEmail,
-            webhook_url: args.webhookUrl,
+            domain_id: dom.id,
+            source_email: args.aliasAddress,
+            destination_type: args.webhookUrl ? "webhook" : "email",
+            destination_target: args.webhookUrl || args.destinationEmail,
           });
           return formatResponse(alias);
         }
@@ -1395,14 +1468,14 @@ export class MCPServer {
 
         case "list_pr_previews": {
           if (!this.webhookManager) return formatResponse([]);
-          const previews = this.webhookManager.listPrPreviews(args.projectName);
+          const previews = this.webhookManager.listPreviews(args.projectName);
           return formatResponse(previews);
         }
 
         case "delete_pr_preview": {
           if (!this.webhookManager)
             return formatResponse({ error: "Webhook manager not initialized" }, true);
-          const res = this.webhookManager.deletePrPreview(args.previewId);
+          const res = this.webhookManager.deletePreview(args.previewId);
           return formatResponse(res);
         }
 

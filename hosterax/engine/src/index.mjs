@@ -6,11 +6,28 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, execFile } from "node:child_process";
 import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
-import { createCatalogApi } from "./catalog-api.mjs";
+import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
+import { initSecrets } from "./secrets.mjs";
+import { ENGINE_VERSION } from "./version.mjs";
+import { createCatalogApi, catalogApps as catalogAppsList } from "./catalog-api.mjs";
+import {
+  generateToken,
+  hashToken,
+  tokenPrefix,
+  bearerFrom,
+  isTrustedLocalRequest,
+  scopesLevel,
+  requiredLevel,
+  assertSafeImageRef,
+  splitArgs,
+  isValidEnvKey,
+  displayArgv,
+  isSafeContainerName,
+} from "./security.mjs";
 import {
   DETECTORS,
   STACK_REGISTRY,
@@ -47,6 +64,10 @@ const WORK = path.join(HOME, "work");
 const LOGDIR = path.join(HOME, "logs");
 const EDGEDIR = path.join(HOME, "edge");
 for (const d of [HOME, WORK, LOGDIR, EDGEDIR]) fs.mkdirSync(d, { recursive: true });
+try {
+  fs.chmodSync(HOME, 0o700); // the database and secret key live here
+} catch {}
+initSecrets(HOME);
 
 const db = new Database(path.join(HOME, "hosterax.db"));
 db.pragma("journal_mode = WAL");
@@ -309,18 +330,37 @@ try {
   ).run();
 } catch {}
 
+// API tokens are stored as SHA-256 digests; the plaintext is only ever shown once at creation.
+for (const [col, type] of [
+  ["prefix", "TEXT"],
+  ["last_used_at", "INTEGER"],
+]) {
+  try {
+    db.exec(`ALTER TABLE tokens ADD COLUMN ${col} ${type}`);
+  } catch {}
+}
+// One-time migration of legacy plaintext tokens (they all start with "hxt_"; digests are 64 hex chars).
+try {
+  const legacy = db
+    .prepare("SELECT token FROM tokens WHERE token LIKE 'hxt\\_%' ESCAPE '\\'")
+    .all();
+  const migrate = db.prepare("UPDATE tokens SET token=?, prefix=? WHERE token=?");
+  for (const row of legacy) migrate.run(hashToken(row.token), tokenPrefix(row.token), row.token);
+  if (legacy.length)
+    console.log(`[security] Migrated ${legacy.length} API token(s) to hashed storage.`);
+} catch (e) {
+  console.warn("[security] token migration failed:", e.message);
+}
+
 // bootstrap token
 const tokenCount = db.prepare("SELECT COUNT(*) c FROM tokens").get().c;
 if (tokenCount === 0) {
-  const t = "hxt_" + crypto.randomBytes(24).toString("hex");
-  db.prepare("INSERT INTO tokens (token, name, created_at, scopes_json) VALUES (?,?,?,?)").run(
-    t,
-    "bootstrap",
-    Date.now(),
-    JSON.stringify(["*"]),
-  );
+  const t = generateToken();
+  db.prepare(
+    "INSERT INTO tokens (token, name, created_at, scopes_json, prefix) VALUES (?,?,?,?,?)",
+  ).run(hashToken(t), "bootstrap", Date.now(), JSON.stringify(["*"]), tokenPrefix(t));
   console.log("\n╭─ HosteraX Engine ─────────────────────────────╮");
-  console.log("│ Bootstrap token (save this):                  │");
+  console.log("│ Bootstrap token (save this — shown only once):│");
   console.log("│ " + t.padEnd(45) + " │");
   console.log("╰───────────────────────────────────────────────╯\n");
 }
@@ -725,7 +765,13 @@ export function allocateProjectPort(projectName, preferredPort = null) {
   }
 }
 
-const tlsManager = new TLSManager(db, EDGEDIR);
+const tlsManager = new TLSManager(db, EDGEDIR, () => [
+  getServerIp(),
+  ...Object.values(os.networkInterfaces())
+    .flat()
+    .filter((i) => i && !i.internal)
+    .map((i) => i.address),
+]);
 const edgeManager = new EdgeManager({ db, edgeDir: EDGEDIR, tlsManager, HOME });
 const backupManager = new BackupManager({ db, HOME });
 const cronManager = new CronManager({ db, backupManager });
@@ -829,7 +875,8 @@ function nextVersion(project) {
 }
 
 function sanitizeImageTag(tag) {
-  return tag.replace(/[^a-zA-Z0-9._/:@-]/g, "");
+  // Image references never start with "-" (would be parsed as a docker flag).
+  return tag.replace(/[^a-zA-Z0-9._/:@-]/g, "").replace(/^-+/, "");
 }
 
 function shellFor(cmd) {
@@ -843,6 +890,32 @@ function runStep(deploymentId, cwd, cmd, env) {
     publish(deploymentId, { ts: Date.now(), stream: "system", text: `$ ${cmd}` });
     const { shell, args } = shellFor(cmd);
     const child = spawn(shell, args, { cwd, env: { ...process.env, ...env } });
+    child.stdout.on("data", (b) =>
+      publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() }),
+    );
+    child.stderr.on("data", (b) =>
+      publish(deploymentId, { ts: Date.now(), stream: "stderr", text: b.toString().trimEnd() }),
+    );
+    child.on("close", (code) => {
+      publish(deploymentId, { ts: Date.now(), stream: "system", text: `exit ${code}` });
+      resolve(code ?? 0);
+    });
+    child.on("error", (e) => {
+      publish(deploymentId, { ts: Date.now(), stream: "stderr", text: String(e) });
+      resolve(1);
+    });
+  });
+}
+
+/** Runs `bin args...` WITHOUT a shell, so no argument can be interpreted as shell syntax. */
+function runStepArgv(deploymentId, cwd, bin, args, env = {}) {
+  return new Promise((resolve) => {
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "system",
+      text: `$ ${displayArgv(bin, args)}`,
+    });
+    const child = spawn(bin, args, { cwd, env: { ...process.env, ...env } });
     child.stdout.on("data", (b) =>
       publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() }),
     );
@@ -1092,12 +1165,13 @@ async function runPreDeployHooks(deploymentId, workdir, env, containerName) {
 
     if (containerName) {
       // Run inside Docker container for correct runtime environment
-      const rc = await runStep(
-        deploymentId,
-        workdir,
-        `docker exec ${containerName} sh -c "${hook.cmd}"`,
-        {},
-      );
+      const rc = await runStepArgv(deploymentId, workdir, "docker", [
+        "exec",
+        containerName,
+        "sh",
+        "-c",
+        hook.cmd,
+      ]);
       if (rc !== 0) {
         publish(deploymentId, {
           ts: Date.now(),
@@ -1434,7 +1508,7 @@ function pickPrimaryHttpPort(exposedPorts) {
 async function startService(deploymentId, project, workdir, cmd, env, target, port) {
   stopProject(project, "superseded by new deploy");
   if (target === "docker" || target === "compose") {
-    const isDaemonUp = selfHeal ? selfHeal.probeDockerDaemon() : true;
+    const isDaemonUp = selfHeal ? await selfHeal.probeDockerDaemon() : true;
     if (!isDaemonUp) {
       publish(deploymentId, {
         ts: Date.now(),
@@ -1519,6 +1593,7 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
         projectName: project,
         publish,
         runStep,
+        runArgv: runStepArgv,
       });
 
       if (!pullRes.ok) {
@@ -1593,10 +1668,16 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       }
 
       publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
-      let bc = await runStep(deploymentId, workdir, `docker build -t ${sanitizeImageTag(tag)} .`, {
-        ...env,
-        DOCKER_BUILDKIT: "1",
-      });
+      let bc = await runStepArgv(
+        deploymentId,
+        workdir,
+        "docker",
+        ["build", "-t", sanitizeImageTag(tag), "."],
+        {
+          ...env,
+          DOCKER_BUILDKIT: "1",
+        },
+      );
 
       // Self-Healing Build Fallback: If original Dockerfile build failed, fallback to zero-config multi-stage build!
       if (bc !== 0 && !isZeroConfigGenerated) {
@@ -1612,10 +1693,16 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
           stream: "system",
           text: `docker build (self-healing retry) → ${tag}`,
         });
-        bc = await runStep(deploymentId, workdir, `docker build -t ${sanitizeImageTag(tag)} .`, {
-          ...env,
-          DOCKER_BUILDKIT: "1",
-        });
+        bc = await runStepArgv(
+          deploymentId,
+          workdir,
+          "docker",
+          ["build", "-t", sanitizeImageTag(tag), "."],
+          {
+            ...env,
+            DOCKER_BUILDKIT: "1",
+          },
+        );
       }
 
       if (bc !== 0) return bc;
@@ -1650,12 +1737,13 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
     } catch {}
 
     // Persistent volume mappings (use reliable Docker Named Volumes for cross-platform stability)
-    let volFlags = "";
+    const volArgs = [];
     if (imageInspect.volumes && imageInspect.volumes.length > 0) {
       for (const v of imageInspect.volumes) {
+        // Volume paths come from (untrusted) image metadata: accept absolute POSIX paths only.
+        if (!/^\/[A-Za-z0-9_./-]*$/.test(v) || v.includes("..")) continue;
         const safeVolKey = v.replace(/[^a-zA-Z0-9_-]/g, "_");
-        const namedVol = `hx_vol_${cleanName}_${safeVolKey}`;
-        volFlags += ` -v ${namedVol}:${v}`;
+        volArgs.push("-v", `hx_vol_${cleanName}_${safeVolKey}:${v}`);
       }
     }
 
@@ -1723,50 +1811,63 @@ pages:
 `;
         fs.writeFileSync(glanceConfigFile, defaultGlanceYaml, "utf8");
       }
-      volFlags += ` -v hx_config_${cleanName}:/app/config`;
+      volArgs.push("-v", `hx_config_${cleanName}:/app/config`);
     }
 
-    const envFlags = Object.entries(dockerEnv)
-      .map(([k, v]) => {
-        const valStr = String(v ?? "");
-        const cleanVal = valStr.replace(/^"(.*)"$/, "$1");
-        return `-e ${k}=${cleanVal}`;
-      })
-      .join(" ");
+    const envArgs = [];
+    for (const [k, v] of Object.entries(dockerEnv)) {
+      if (!isValidEnvKey(k)) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "stderr",
+          text: `[env] Skipping invalid variable name ${JSON.stringify(k)}`,
+        });
+        continue;
+      }
+      const cleanVal = String(v ?? "").replace(/^"(.*)"$/, "$1");
+      envArgs.push("-e", `${k}=${cleanVal}`);
+    }
 
     // Custom startup command overrides for images requiring arguments
-    let extraArgs = "";
+    let extraArgs = [];
     if (cmd && cmd.trim() && !cmd.startsWith("serve-static:")) {
-      extraArgs = " " + cmd.trim();
+      extraArgs = splitArgs(cmd.trim());
     } else if (tag.includes("minio")) {
-      extraArgs = " server /data --console-address :9001";
+      extraArgs = ["server", "/data", "--console-address", ":9001"];
     } else if (tag.includes("airflow")) {
-      extraArgs = " standalone";
+      extraArgs = ["standalone"];
     }
 
-    let portFlag = `-p 0.0.0.0:${hostPort}:${containerInternalPort}`;
+    const portArgs = ["-p", `${BIND_HOST}:${hostPort}:${containerInternalPort}`];
     if (imageInspect.exposedPorts && imageInspect.exposedPorts.length > 1) {
       for (const p of imageInspect.exposedPorts) {
         if (p !== containerInternalPort) {
           const secondaryHostPort = allocateProjectPort(`${project}_p${p}`, p);
-          portFlag += ` -p 127.0.0.1:${secondaryHostPort}:${p}`;
+          portArgs.push("-p", `127.0.0.1:${secondaryHostPort}:${p}`);
         }
       }
     } else if (tag.includes("minio")) {
       const consoleHostPort = allocateProjectPort(`${project}_console`, 9001);
-      portFlag += ` -p 127.0.0.1:${consoleHostPort}:9001`;
+      portArgs.push("-p", `127.0.0.1:${consoleHostPort}:9001`);
     }
 
     // Resource limits (memory and CPU capping)
     const resourceLimits = db
       .prepare("SELECT memory_mb_limit, cpu_limit FROM projects WHERE name=?")
       .get(project);
-    let resFlags = "";
-    if (resourceLimits?.memory_mb_limit && resourceLimits.memory_mb_limit > 0) {
-      resFlags += ` --memory ${resourceLimits.memory_mb_limit}m --memory-swap ${resourceLimits.memory_mb_limit * 2}m`;
+    const resArgs = [];
+    const memLimit = Number(resourceLimits?.memory_mb_limit);
+    const cpuLimit = Number(resourceLimits?.cpu_limit);
+    if (Number.isFinite(memLimit) && memLimit > 0) {
+      resArgs.push(
+        "--memory",
+        `${Math.floor(memLimit)}m`,
+        "--memory-swap",
+        `${Math.floor(memLimit * 2)}m`,
+      );
     }
-    if (resourceLimits?.cpu_limit && resourceLimits.cpu_limit > 0) {
-      resFlags += ` --cpus ${resourceLimits.cpu_limit}`;
+    if (Number.isFinite(cpuLimit) && cpuLimit > 0) {
+      resArgs.push("--cpus", String(cpuLimit));
     }
 
     // Step 1: Launch green container (old container still serves traffic)
@@ -1775,9 +1876,25 @@ pages:
       stream: "system",
       text: `[blue/green] Launching candidate container ${greenName}...`,
     });
-    const runCmd = `docker run -d --init --name ${greenName} --restart unless-stopped --add-host host.docker.internal:host-gateway ${portFlag}${volFlags}${resFlags} ${envFlags} ${sanitizeImageTag(tag)}${extraArgs}`;
-    publish(deploymentId, { ts: Date.now(), stream: "system", text: runCmd });
-    const rc = await runStep(deploymentId, workdir, runCmd, {});
+    const runArgs = [
+      "run",
+      "-d",
+      "--init",
+      "--name",
+      greenName,
+      "--restart",
+      "unless-stopped",
+      "--add-host",
+      "host.docker.internal:host-gateway",
+      ...portArgs,
+      ...volArgs,
+      ...resArgs,
+      ...envArgs,
+      assertSafeImageRef(sanitizeImageTag(tag)),
+      ...extraArgs,
+    ];
+    const runCmd = displayArgv("docker", runArgs); // env values are masked
+    const rc = await runStepArgv(deploymentId, workdir, "docker", runArgs);
     if (rc !== 0) {
       stopContainer(greenName);
       return rc;
@@ -1786,13 +1903,12 @@ pages:
     // Glance config injection (before health check)
     if (glanceConfigFile && fs.existsSync(glanceConfigFile)) {
       try {
-        await runStep(
-          deploymentId,
-          workdir,
-          `docker cp "${glanceConfigFile}" ${greenName}:/app/config/glance.yml`,
-          {},
-        );
-        await runStep(deploymentId, workdir, `docker restart ${greenName}`, {});
+        await runStepArgv(deploymentId, workdir, "docker", [
+          "cp",
+          glanceConfigFile,
+          `${greenName}:/app/config/glance.yml`,
+        ]);
+        await runStepArgv(deploymentId, workdir, "docker", ["restart", greenName]);
       } catch {}
     }
 
@@ -1942,6 +2058,23 @@ function setPhase(id, phase, extra = {}) {
   }
   values.push(id);
   db.prepare(`UPDATE deployments SET ${fields.join(",")} WHERE id=?`).run(...values);
+}
+
+/** Options that make runDeployment replay an earlier deployment (workdir + frozen snapshot). */
+function rollbackOptions(dep, trigger = "rollback") {
+  let snapshot = null;
+  try {
+    snapshot = dep.snapshot_json ? JSON.parse(dep.snapshot_json) : null;
+  } catch {}
+  return {
+    trigger,
+    rollbackFrom: {
+      version: dep.version,
+      workdir: dep.workdir,
+      environment: dep.environment,
+      snapshot,
+    },
+  };
 }
 
 async function runDeployment(project, opts = {}) {
@@ -2365,6 +2498,11 @@ function serveStaticDashboard(res, pathname) {
     return false;
   }
 }
+const PORT = Number(process.env.HOSTERAX_PORT || 7777);
+// Interface that deployed apps publish on. Use 127.0.0.1 to force all traffic through the edge proxy.
+const BIND_HOST = /^[0-9.]+$|^::1?$/.test(process.env.HOSTERAX_BIND_HOST || "")
+  ? process.env.HOSTERAX_BIND_HOST
+  : "0.0.0.0";
 function readBody(req, maxSizeBytes = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let s = "";
@@ -2387,41 +2525,52 @@ function readBody(req, maxSizeBytes = 10 * 1024 * 1024) {
     });
   });
 }
-function authOk(req) {
-  const h = req.headers.authorization || "";
-  const t = h.replace(/^Bearer\s+/i, "");
-  if (!t) {
-    const ip = req.socket?.remoteAddress || "";
-    const isLoopback =
-      ip === "127.0.0.1" ||
-      ip === "::1" ||
-      ip === "::ffff:127.0.0.1" ||
-      ip.includes("127.0.0.1") ||
-      req.headers.host?.startsWith("localhost") ||
-      req.headers.host?.startsWith("127.0.0.1");
-    if (isLoopback) return true;
-    return false;
+const touchToken = (() => {
+  const stmt = db.prepare("UPDATE tokens SET last_used_at=? WHERE token=?");
+  const last = new Map();
+  return (hash) => {
+    const now = Date.now();
+    if (now - (last.get(hash) || 0) < 60_000) return;
+    last.set(hash, now);
+    try {
+      stmt.run(now, hash);
+    } catch {}
+  };
+})();
+
+/** Resolves the caller's scopes: null = unauthenticated, otherwise an array of scopes. */
+function callerScopes(req) {
+  const t = bearerFrom(req);
+  if (t) {
+    const hash = hashToken(t);
+    const row = db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hash);
+    if (!row) return null;
+    touchToken(hash);
+    try {
+      return row.scopes_json ? JSON.parse(row.scopes_json) : ["*"];
+    } catch {
+      return ["*"];
+    }
   }
-  return !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(t);
+  if (isTrustedLocalRequest(req, PORT)) return ["*"];
+  return null;
+}
+
+function authOk(req) {
+  return callerScopes(req) !== null;
 }
 
 function requirePerm(req, perm) {
-  const h = req.headers.authorization || "";
-  const t = h.replace(/^Bearer\s+/i, "");
-  const ip = req.socket?.remoteAddress || "";
-  const isLoopback =
-    ip === "127.0.0.1" ||
-    ip === "::1" ||
-    ip === "::ffff:127.0.0.1" ||
-    ip.includes("127.0.0.1") ||
-    req.headers.host?.startsWith("localhost") ||
-    req.headers.host?.startsWith("127.0.0.1");
-  if (isLoopback) return true;
-  if (!t) return false;
-  const row = db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(t);
-  if (!row) return false;
-  const scopes = JSON.parse(row.scopes_json || "[]");
-  return scopes.includes("*") || scopes.includes(perm);
+  const scopes = callerScopes(req);
+  if (!scopes) return false;
+  if (scopes.includes("*") || scopes.includes(perm)) return true;
+  return scopesLevel(scopes) >= (perm.endsWith(":admin") || perm.startsWith("token:") ? 3 : 2);
+}
+
+/** Maps the caller's token scopes onto an AIOps RBAC role. */
+function aiRoleFor(req) {
+  const level = scopesLevel(callerScopes(req) || []);
+  return level >= 3 ? "admin" : level === 2 ? "operator" : "viewer";
 }
 
 const projectsApi = createProjectsApi({
@@ -2441,7 +2590,351 @@ const projectsApi = createProjectsApi({
   json,
   readBody,
   stopProject,
+  purgeDatabases: async (projectName) => {
+    for (const row of db.prepare("SELECT * FROM managed_dbs WHERE project=?").all(projectName))
+      await removeManagedDatabase(row);
+  },
 });
+
+async function restartService(project) {
+  const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
+  if (!p) return;
+  const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  if (p.target === "docker") {
+    const dep = db
+      .prepare("SELECT * FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
+      .get(project);
+    if (dep) {
+      await startService(
+        dep.id,
+        project,
+        dep.workdir,
+        p.start_cmd,
+        JSON.parse(p.env_json || "{}"),
+        p.target,
+        p.port || 3000,
+      );
+    } else {
+      const hostPort = p.port || 3002;
+      const tag = p.source || `${project}:latest`;
+      spawnSync("docker", ["rm", "-f", `hx_${cleanName}`]);
+      spawnSync("docker", [
+        "run",
+        "-d",
+        "--init",
+        "--name",
+        `hx_${cleanName}`,
+        "--restart",
+        "unless-stopped",
+        "--add-host",
+        "host.docker.internal:host-gateway",
+        "-p",
+        `${BIND_HOST}:${hostPort}:80`,
+        "-e",
+        "HOST=0.0.0.0",
+        "-e",
+        "PORT=80",
+        tag,
+      ]);
+    }
+  } else {
+    const dep = db
+      .prepare("SELECT * FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
+      .get(project);
+    if (dep) {
+      await startService(
+        dep.id,
+        project,
+        dep.workdir,
+        p.start_cmd,
+        JSON.parse(p.env_json || "{}"),
+        p.target,
+        p.port || 3000,
+      );
+    }
+  }
+}
+
+/** Docker container name HosteraX uses for a project (single source of truth). */
+function containerNameFor(project) {
+  return `hx_${String(project)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "_")}`;
+}
+
+/** Reads a deployment log from disk (optionally only the last `lines`). Safe against path traversal. */
+function readDeploymentLog(deploymentId, lines = 0) {
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(deploymentId))) return "";
+  const file = path.join(LOGDIR, deploymentId + ".log");
+  if (!fs.existsSync(file)) return "";
+  const text = fs.readFileSync(file, "utf8");
+  return lines > 0 ? text.split("\n").slice(-lines).join("\n") : text;
+}
+
+function dockerCli(args, timeout = 60000) {
+  return new Promise((resolve) => {
+    execFile(
+      "docker",
+      args,
+      { encoding: "utf8", timeout, maxBuffer: 8 * 1024 * 1024 },
+      (err, stdout, stderr) =>
+        resolve({ ok: !err, stdout: stdout || "", stderr: (stderr || err?.message || "").trim() }),
+    );
+  });
+}
+
+/** Start / stop / restart a project. Status is only updated when the action really succeeded. */
+const lifecycle = {
+  containerName: containerNameFor,
+  readDeploymentLog,
+  /** Last `lines` of the container's stdout/stderr (docker target) or the in-memory runtime buffer. */
+  async runtimeLogs(project, lines = 100) {
+    const n = Math.min(Math.max(Number(lines) || 100, 1), 5000);
+    const r = await dockerCli(["logs", "--tail", String(n), containerNameFor(project)], 15000);
+    if (r.ok) return (r.stdout + (r.stderr ? "\n" + r.stderr : "")).trim();
+    const buf = runtimeLogs.get(project);
+    return Array.isArray(buf)
+      ? buf
+          .slice(-n)
+          .map((l) => l.text ?? String(l))
+          .join("\n")
+      : "";
+  },
+  async _exists(project) {
+    return (await dockerCli(["inspect", "--type", "container", containerNameFor(project)], 8000))
+      .ok;
+  },
+  _setStatus(project, status) {
+    db.prepare("UPDATE projects SET status=?, updated_at=? WHERE name=?").run(
+      status,
+      Date.now(),
+      project,
+    );
+  },
+  async stop(project) {
+    const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
+    if (!p) return { ok: false, error: `Project '${project}' not found` };
+    // Mark first so the self-heal loop does not resurrect the service mid-stop.
+    lifecycle._setStatus(project, "stopped");
+    if (p.target === "docker") {
+      if (await lifecycle._exists(project)) {
+        const r = await dockerCli(["stop", containerNameFor(project)]);
+        if (!r.ok) {
+          lifecycle._setStatus(project, p.status || "running");
+          return { ok: false, error: r.stderr };
+        }
+      }
+    } else {
+      stopProject(project, "manual stop");
+    }
+    return { ok: true, status: "stopped" };
+  },
+  async start(project) {
+    const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
+    if (!p) return { ok: false, error: `Project '${project}' not found` };
+    try {
+      if (p.target === "docker" && (await lifecycle._exists(project))) {
+        const r = await dockerCli(["start", containerNameFor(project)]);
+        if (!r.ok) return { ok: false, error: r.stderr };
+      } else {
+        await restartService(project);
+      }
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+    lifecycle._setStatus(project, "running");
+    return { ok: true, status: "running" };
+  },
+  async restart(project) {
+    const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
+    if (!p) return { ok: false, error: `Project '${project}' not found` };
+    try {
+      if (p.target === "docker" && (await lifecycle._exists(project))) {
+        const r = await dockerCli(["restart", containerNameFor(project)]);
+        if (!r.ok) return { ok: false, error: r.stderr };
+      } else {
+        await restartService(project);
+      }
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+    lifecycle._setStatus(project, "running");
+    return { ok: true, status: "running", restartedAt: Date.now() };
+  },
+};
+
+// ───────────── Managed databases ─────────────
+try {
+  db.exec("ALTER TABLE managed_dbs ADD COLUMN port INTEGER");
+} catch {}
+
+const DB_ENGINES = {
+  postgres: { image: "postgres:16-alpine", port: 5432, dataDir: "/var/lib/postgresql/data" },
+  mysql: { image: "mysql:8", port: 3306, dataDir: "/var/lib/mysql" },
+  mariadb: { image: "mariadb:11", port: 3306, dataDir: "/var/lib/mysql" },
+  mongodb: { image: "mongo:7", port: 27017, dataDir: "/data/db" },
+  redis: { image: "redis:7-alpine", port: 6379, dataDir: "/data" },
+};
+const DB_ENGINE_ALIASES = {
+  postgresql: "postgres",
+  pg: "postgres",
+  mongo: "mongodb",
+  valkey: "redis",
+};
+
+function isPortFree(port) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen(port, "127.0.0.1", () => srv.close(() => resolve(true)));
+  });
+}
+
+async function findFreeDbPort(start) {
+  const taken = new Set(
+    db
+      .prepare("SELECT port FROM managed_dbs WHERE port IS NOT NULL")
+      .all()
+      .map((r) => r.port),
+  );
+  for (let candidate = start; candidate < start + 500; candidate++) {
+    if (!taken.has(candidate) && (await isPortFree(candidate))) return candidate;
+  }
+  throw new Error(`No free port found near ${start}`);
+}
+
+/**
+ * Starts a real database container with working credentials. The port is published on 127.0.0.1 only
+ * (apps reach it through host.docker.internal) and data lives in a named volume.
+ */
+async function provisionDatabase({ project, name, engine, sizeMb = 1024 }) {
+  const eng =
+    DB_ENGINE_ALIASES[String(engine || "").toLowerCase()] || String(engine || "").toLowerCase();
+  const spec = DB_ENGINES[eng];
+  if (!spec)
+    return {
+      ok: false,
+      status: 400,
+      error: `Unsupported engine "${engine}". Use: ${Object.keys(DB_ENGINES).join(", ")}`,
+    };
+  const dbName = String(name || "").toLowerCase();
+  if (!/^[a-z][a-z0-9_]{0,40}$/.test(dbName))
+    return {
+      ok: false,
+      status: 400,
+      error: "name must start with a letter and contain only a-z, 0-9 and _ (max 41 chars)",
+    };
+  if (!db.prepare("SELECT 1 FROM projects WHERE name=?").get(project))
+    return { ok: false, status: 404, error: `Project '${project}' not found` };
+  if (db.prepare("SELECT 1 FROM managed_dbs WHERE name=?").get(dbName))
+    return { ok: false, status: 409, error: `A database named '${dbName}' already exists` };
+  if (!(await selfHeal.probeDockerDaemon()))
+    return {
+      ok: false,
+      status: 503,
+      error: "Docker daemon is offline — cannot start a database container",
+    };
+
+  const id = "mdb_" + crypto.randomBytes(6).toString("hex");
+  const password = crypto.randomBytes(18).toString("hex");
+  const containerName = `hx_db_${dbName}`;
+  const volume = `hx_dbvol_${dbName}`;
+  const hostPort = await findFreeDbPort(spec.port);
+
+  const args = [
+    "run",
+    "-d",
+    "--name",
+    containerName,
+    "--restart",
+    "unless-stopped",
+    "-v",
+    `${volume}:${spec.dataDir}`,
+    "-p",
+    `127.0.0.1:${hostPort}:${spec.port}`,
+  ];
+  let conn;
+  let internal;
+  const user = "hx";
+  if (eng === "postgres") {
+    args.push(
+      "-e",
+      `POSTGRES_USER=${user}`,
+      "-e",
+      `POSTGRES_PASSWORD=${password}`,
+      "-e",
+      `POSTGRES_DB=${dbName}`,
+      spec.image,
+    );
+    conn = `postgresql://${user}:${password}@127.0.0.1:${hostPort}/${dbName}`;
+  } else if (eng === "mysql" || eng === "mariadb") {
+    const pfx = eng === "mysql" ? "MYSQL" : "MARIADB";
+    args.push(
+      "-e",
+      `${pfx}_ROOT_PASSWORD=${password}`,
+      "-e",
+      `${pfx}_USER=${user}`,
+      "-e",
+      `${pfx}_PASSWORD=${password}`,
+      "-e",
+      `${pfx}_DATABASE=${dbName}`,
+      spec.image,
+    );
+    conn = `mysql://${user}:${password}@127.0.0.1:${hostPort}/${dbName}`;
+  } else if (eng === "mongodb") {
+    args.push(
+      "-e",
+      `MONGO_INITDB_ROOT_USERNAME=${user}`,
+      "-e",
+      `MONGO_INITDB_ROOT_PASSWORD=${password}`,
+      spec.image,
+    );
+    conn = `mongodb://${user}:${password}@127.0.0.1:${hostPort}/${dbName}?authSource=admin`;
+  } else {
+    args.push(
+      "-e",
+      `REDIS_PASSWORD=${password}`,
+      spec.image,
+      "redis-server",
+      "--requirepass",
+      password,
+      "--appendonly",
+      "yes",
+    );
+    conn = `redis://:${password}@127.0.0.1:${hostPort}`;
+  }
+  internal = conn.replace("@127.0.0.1:" + hostPort, "@host.docker.internal:" + hostPort);
+
+  const run = await dockerCli(args, 180000);
+  if (!run.ok) {
+    return {
+      ok: false,
+      status: 500,
+      error: `docker run failed: ${run.stderr.split("\n").pop() || run.stderr}`,
+    };
+  }
+  db.prepare(
+    "INSERT INTO managed_dbs (id, project, name, engine, size_mb, status, connection_string, created_at, port) VALUES (?,?,?,?,?,?,?,?,?)",
+  ).run(id, project, dbName, eng, Number(sizeMb) || 1024, "running", conn, Date.now(), hostPort);
+  return {
+    ok: true,
+    id,
+    name: dbName,
+    engine: eng,
+    status: "running",
+    port: hostPort,
+    container: containerName,
+    connection_string: conn,
+    internal_connection_string: internal,
+  };
+}
+
+async function removeManagedDatabase(row) {
+  await dockerCli(["rm", "-f", `hx_db_${row.name}`], 30000);
+  await dockerCli(["volume", "rm", "-f", `hx_dbvol_${row.name}`], 30000);
+  db.prepare("DELETE FROM backups WHERE database_name=?").run(row.name);
+  db.prepare("DELETE FROM managed_dbs WHERE id=?").run(row.id);
+}
 
 const catalogApi = createCatalogApi({ db, HOME, readBody });
 
@@ -2454,73 +2947,11 @@ const selfHeal = new SelfHealEngine({
       .get(project);
     if (dep?.id) publish(dep.id, msg);
   },
-  restartService: async (project) => {
-    const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
-    if (!p) return;
-    const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
-    if (p.target === "docker") {
-      const dep = db
-        .prepare("SELECT * FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
-        .get(project);
-      if (dep) {
-        await startService(
-          dep.id,
-          project,
-          dep.workdir,
-          p.start_cmd,
-          JSON.parse(p.env_json || "{}"),
-          p.target,
-          p.port || 3000,
-        );
-      } else {
-        const hostPort = p.port || 3002;
-        const tag = p.source || `${project}:latest`;
-        spawnSync("docker", ["rm", "-f", `hx_${cleanName}`]);
-        spawnSync("docker", [
-          "run",
-          "-d",
-          "--init",
-          "--name",
-          `hx_${cleanName}`,
-          "--restart",
-          "unless-stopped",
-          "--add-host",
-          "host.docker.internal:host-gateway",
-          "-p",
-          `0.0.0.0:${hostPort}:80`,
-          "-e",
-          "HOST=0.0.0.0",
-          "-e",
-          "PORT=80",
-          tag,
-        ]);
-      }
-    } else {
-      const dep = db
-        .prepare("SELECT * FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
-        .get(project);
-      if (dep) {
-        await startService(
-          dep.id,
-          project,
-          dep.workdir,
-          p.start_cmd,
-          JSON.parse(p.env_json || "{}"),
-          p.target,
-          p.port || 3000,
-        );
-      }
-    }
-  },
+  restartService: (project) => restartService(project),
   rollbackService: async (project, targetDeployId) => {
     const targetDeploy = db.prepare("SELECT * FROM deployments WHERE id=?").get(targetDeployId);
     if (!targetDeploy) return;
-    const snap = targetDeploy.snapshot_json ? JSON.parse(targetDeploy.snapshot_json) : null;
-    await runDeployment(project, {
-      rollbackFrom: { version: targetDeploy.version, workdir: targetDeploy.workdir },
-      snap,
-      trigger: "self-heal-auto-rollback",
-    });
+    await runDeployment(project, rollbackOptions(targetDeploy, "self-heal-auto-rollback"));
   },
   HOME,
 });
@@ -2547,6 +2978,9 @@ const mcpServer = new MCPServer({
   emailManager,
   webhookManager,
   orgManager,
+  lifecycle,
+  provisionDatabase,
+  diagnoseProject: (name) => aiOpsManager.diagnoseProject(name),
 });
 
 const aiOpsManager = new AIOpsManager({
@@ -2566,24 +3000,127 @@ const aiOpsManager = new AIOpsManager({
   emailManager,
   metricsManager,
   dockerApi,
+  lifecycle,
+  provisionDatabase,
+  runDeployment,
 });
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const url = new URL(req.url, "http://x");
   if (url.pathname === "/health" || url.pathname === "/api/health")
-    return json(res, 200, { ok: true, version: "1.1.0" });
+    return json(res, 200, { ok: true, version: ENGINE_VERSION });
   // Rate limit: 120 req/min for auth endpoints, 600/min for others
-  const isAuthEndpoint = url.pathname.startsWith("/api/auth") || url.pathname === "/api/token";
-  if (rateLimit(req, isAuthEndpoint ? 120 : 600)) {
+  const isAuthEndpoint = url.pathname.startsWith("/api/auth");
+  if (rateLimit(req, isAuthEndpoint ? 20 : 600)) {
     return json(res, 429, { error: "too many requests" });
   }
-  if (await catalogApi(req, res, url.pathname)) return;
-  if (url.pathname === "/api/token" && req.method === "GET") {
-    if (!authOk(req)) return json(res, 403, { error: "forbidden" });
-    const bToken = db.prepare("SELECT token FROM tokens LIMIT 1").get();
-    return json(res, 200, { token: bToken?.token || "" });
+  if (url.pathname === "/api/auth/login" && req.method === "POST") {
+    let b = {};
+    try {
+      b = await readBody(req);
+    } catch {}
+    const scopes = b.token
+      ? db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hashToken(b.token))
+      : null;
+    if (scopes) {
+      return json(res, 200, {
+        ok: true,
+        user: { id: "admin-local", email: b.email || "admin@hosterax.local", role: "admin" },
+        token: b.token,
+      });
+    }
+    return json(res, 401, {
+      ok: false,
+      error: "invalid token — sign in with the engine token printed at first start",
+    });
   }
+
+  // Reverse proxy for *.sslip.io, *.nip.io, *.traefik.me, *.ipq.co, *.fdns.uk and *.localhost subdomains
+  const rawHost = (req.headers.host || "").toLowerCase();
+  const hostname = rawHost.split(":")[0];
+  const MAGIC_DNS_SUFFIXES = [".sslip.io", ".nip.io", ".traefik.me", ".ipq.co", ".fdns.uk"];
+  const isMagicDns =
+    MAGIC_DNS_SUFFIXES.some((s) => hostname.includes(s)) ||
+    (hostname.endsWith(".localhost") && hostname !== "localhost");
+  if (
+    isMagicDns &&
+    !url.pathname.startsWith("/api") &&
+    !url.pathname.startsWith("/health") &&
+    !url.pathname.startsWith("/webhooks")
+  ) {
+    const sub = hostname.split(".")[0];
+    const route = db
+      .prepare(
+        "SELECT * FROM routes WHERE LOWER(project)=LOWER(?) OR LOWER(hostname) LIKE LOWER(?)",
+      )
+      .get(sub, `%${sub}%`);
+    const proj = db
+      .prepare("SELECT * FROM projects WHERE LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)")
+      .get(sub, sub);
+    const upstreamPort = route?.upstream_port || proj?.port;
+    if (upstreamPort) {
+      const proxyReq = http.request(
+        {
+          host: "127.0.0.1",
+          port: upstreamPort,
+          path: req.url,
+          method: req.method,
+          headers: { ...req.headers, host: rawHost },
+        },
+        (proxyRes) => {
+          res.writeHead(proxyRes.statusCode, proxyRes.headers);
+          proxyRes.pipe(res);
+        },
+      );
+      proxyReq.on("error", () => {
+        json(res, 502, {
+          error: `Bad Gateway: App '${sub}' (port ${upstreamPort}) is not reachable yet. Please ensure the app is running.`,
+        });
+      });
+      req.pipe(proxyReq);
+      return;
+    }
+  }
+
+  // GitHub webhook — public but HMAC-verified
+  if (url.pathname.startsWith("/webhooks/github/") && req.method === "POST") {
+    const project = url.pathname.split("/").pop();
+    const wh = db.prepare("SELECT * FROM webhooks WHERE project=?").get(project);
+    if (!wh) return json(res, 404, { error: "no webhook configured" });
+    let raw = "";
+    req.on("data", (c) => (raw += c));
+    return req.on("end", async () => {
+      const sig = req.headers["x-hub-signature-256"] || "";
+      const expected = "sha256=" + crypto.createHmac("sha256", wh.secret).update(raw).digest("hex");
+      const a = Buffer.from(sig),
+        b = Buffer.from(expected);
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b))
+        return json(res, 401, { error: "bad signature" });
+      try {
+        const payload = JSON.parse(raw);
+        const branch = (payload.ref || "").replace("refs/heads/", "");
+        if (branch !== wh.branch) return json(res, 200, { skipped: true, branch });
+        const r = await runDeployment(project, { trigger: "git" });
+        return json(res, 200, { deployed: r.id });
+      } catch (e) {
+        return json(res, 500, { error: String(e) });
+      }
+    });
+  }
+
+  if (!authOk(req)) return json(res, 401, { error: "unauthorized" });
+
+  // Enforce token scopes globally: read < deploy < admin.
+  {
+    const scopes = callerScopes(req) || [];
+    if (scopesLevel(scopes) < requiredLevel(req.method, url.pathname)) {
+      return json(res, 403, { error: "forbidden: token scope is too narrow for this endpoint" });
+    }
+  }
+
+  if (await catalogApi(req, res, url.pathname)) return;
+
   if ((url.pathname === "/api/system" || url.pathname === "/api/stats") && req.method === "GET") {
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
@@ -2891,96 +3428,6 @@ const server = http.createServer(async (req, res) => {
       return json(res, 500, { error: err.message });
     }
   }
-  if (url.pathname === "/api/auth/login" && req.method === "POST") {
-    const b = await readBody(req);
-    const bToken = db.prepare("SELECT token FROM tokens LIMIT 1").get()?.token || "";
-    if (
-      b.token &&
-      (b.token === bToken || db.prepare("SELECT 1 FROM tokens WHERE token=?").get(b.token))
-    ) {
-      return json(res, 200, {
-        ok: true,
-        user: { id: "admin-local", email: b.email || "admin@hosterax.local", role: "admin" },
-        token: b.token,
-      });
-    }
-    return json(res, 401, { ok: false, error: "invalid token" });
-  }
-
-  // Reverse proxy for *.sslip.io, *.nip.io, *.traefik.me, *.ipq.co, *.fdns.uk and *.localhost subdomains
-  const rawHost = (req.headers.host || "").toLowerCase();
-  const hostname = rawHost.split(":")[0];
-  const MAGIC_DNS_SUFFIXES = [".sslip.io", ".nip.io", ".traefik.me", ".ipq.co", ".fdns.uk"];
-  const isMagicDns =
-    MAGIC_DNS_SUFFIXES.some((s) => hostname.includes(s)) ||
-    (hostname.endsWith(".localhost") && hostname !== "localhost");
-  if (
-    isMagicDns &&
-    !url.pathname.startsWith("/api") &&
-    !url.pathname.startsWith("/health") &&
-    !url.pathname.startsWith("/webhooks")
-  ) {
-    const sub = hostname.split(".")[0];
-    const route = db
-      .prepare(
-        "SELECT * FROM routes WHERE LOWER(project)=LOWER(?) OR LOWER(hostname) LIKE LOWER(?)",
-      )
-      .get(sub, `%${sub}%`);
-    const proj = db
-      .prepare("SELECT * FROM projects WHERE LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)")
-      .get(sub, sub);
-    const upstreamPort = route?.upstream_port || proj?.port;
-    if (upstreamPort) {
-      const proxyReq = http.request(
-        {
-          host: "127.0.0.1",
-          port: upstreamPort,
-          path: req.url,
-          method: req.method,
-          headers: { ...req.headers, host: rawHost },
-        },
-        (proxyRes) => {
-          res.writeHead(proxyRes.statusCode, proxyRes.headers);
-          proxyRes.pipe(res);
-        },
-      );
-      proxyReq.on("error", () => {
-        json(res, 502, {
-          error: `Bad Gateway: App '${sub}' (port ${upstreamPort}) is not reachable yet. Please ensure the app is running.`,
-        });
-      });
-      req.pipe(proxyReq);
-      return;
-    }
-  }
-
-  // GitHub webhook — public but HMAC-verified
-  if (url.pathname.startsWith("/webhooks/github/") && req.method === "POST") {
-    const project = url.pathname.split("/").pop();
-    const wh = db.prepare("SELECT * FROM webhooks WHERE project=?").get(project);
-    if (!wh) return json(res, 404, { error: "no webhook configured" });
-    let raw = "";
-    req.on("data", (c) => (raw += c));
-    return req.on("end", async () => {
-      const sig = req.headers["x-hub-signature-256"] || "";
-      const expected = "sha256=" + crypto.createHmac("sha256", wh.secret).update(raw).digest("hex");
-      const a = Buffer.from(sig),
-        b = Buffer.from(expected);
-      if (a.length !== b.length || !crypto.timingSafeEqual(a, b))
-        return json(res, 401, { error: "bad signature" });
-      try {
-        const payload = JSON.parse(raw);
-        const branch = (payload.ref || "").replace("refs/heads/", "");
-        if (branch !== wh.branch) return json(res, 200, { skipped: true, branch });
-        const r = await runDeployment(project, { trigger: "git" });
-        return json(res, 200, { deployed: r.id });
-      } catch (e) {
-        return json(res, 500, { error: String(e) });
-      }
-    });
-  }
-
-  if (!authOk(req)) return json(res, 401, { error: "unauthorized" });
 
   try {
     let m;
@@ -3005,6 +3452,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/self-heal/prune" && req.method === "POST") {
       selfHeal.runAutoPrune();
       return json(res, 200, { ok: true, message: "AutoPrune triggered" });
+    }
+    if (
+      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/(start|stop|restart)$/)) &&
+      req.method === "POST"
+    ) {
+      const r = await lifecycle[m[2]](decodeURIComponent(m[1]));
+      return json(res, r.ok ? 200 : r.error?.includes("not found") ? 404 : 500, r);
     }
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/heal$/)) && req.method === "POST") {
       const p = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
@@ -3210,34 +3664,27 @@ const server = http.createServer(async (req, res) => {
       const r = await runDeployment(m[1], { trigger: b.trigger });
       return json(res, 200, r);
     }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/env$/)) && req.method === "GET") {
-      const p = db.prepare("SELECT env_json FROM projects WHERE name=?").get(m[1]);
-      if (!p) return json(res, 404, { error: "project not found" });
-      return json(res, 200, JSON.parse(p.env_json || "{}"));
-    }
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/env$/)) && req.method === "POST") {
+      // Legacy shape: { env: {...} } replaces everything, { key, value } upserts one variable.
       const b = await readBody(req);
-      const p = db.prepare("SELECT env_json FROM projects WHERE name=?").get(m[1]);
-      if (!p) return json(res, 404, { error: "project not found" });
-      let current = JSON.parse(p.env_json || "{}");
-      if (b.env && typeof b.env === "object") {
-        current = b.env;
-      } else if (b.key) {
-        current[b.key] = b.value ?? "";
+      if (!db.prepare("SELECT 1 FROM projects WHERE name=?").get(m[1]))
+        return json(res, 404, { error: "project not found" });
+      try {
+        if (b.env && typeof b.env === "object") projectsApi.putEnv(m[1], b.env, { replace: true });
+        else if (b.key) projectsApi.putEnv(m[1], { [b.key]: b.value ?? "" });
+      } catch (e) {
+        return json(res, 400, { error: e.message });
       }
-      db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(JSON.stringify(current), m[1]);
-      return json(res, 200, { ok: true, env: current });
+      return json(res, 200, { ok: true, env: projectsApi.readEnv(m[1]) });
     }
     if (
       (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/env\/([^/]+)$/)) &&
       req.method === "DELETE"
     ) {
-      const p = db.prepare("SELECT env_json FROM projects WHERE name=?").get(m[1]);
-      if (!p) return json(res, 404, { error: "project not found" });
-      const current = JSON.parse(p.env_json || "{}");
-      delete current[m[2]];
-      db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(JSON.stringify(current), m[1]);
-      return json(res, 200, { ok: true, env: current });
+      if (!db.prepare("SELECT 1 FROM projects WHERE name=?").get(m[1]))
+        return json(res, 404, { error: "project not found" });
+      projectsApi.removeEnv(m[1], decodeURIComponent(m[2]));
+      return json(res, 200, { ok: true, env: projectsApi.readEnv(m[1]) });
     }
     if (
       (m = url.pathname.match(/^\/api\/deployments\/([^/]+)\/rollback$/)) &&
@@ -3245,15 +3692,11 @@ const server = http.createServer(async (req, res) => {
     ) {
       const d = db.prepare("SELECT * FROM deployments WHERE id=?").get(m[1]);
       if (!d) return json(res, 404, { error: "not found" });
-      const r = await runDeployment(d.project, {
-        trigger: "rollback",
-        rollbackFrom: { version: d.version, workdir: d.workdir },
-      });
+      const r = await runDeployment(d.project, rollbackOptions(d));
       return json(res, 200, r);
     }
     if ((m = url.pathname.match(/^\/api\/deployments\/([^/]+)\/logs$/)) && req.method === "GET") {
-      const p = path.join(LOGDIR, m[1] + ".log");
-      const text = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : "";
+      const text = readDeploymentLog(m[1]);
       res.writeHead(200, { "content-type": "text/plain", "access-control-allow-origin": "*" });
       return res.end(text);
     }
@@ -3440,7 +3883,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/edge/settings" && req.method === "POST") {
       const b = await readBody(req);
-      const updated = edgeManager.updateSettings(b);
+      let updated;
+      try {
+        updated = edgeManager.updateSettings(b);
+      } catch (e) {
+        return json(res, 400, { error: e.message });
+      }
       await edgeManager.syncRoutes().catch(() => {});
       return json(res, 200, { ok: true, settings: updated });
     }
@@ -3613,14 +4061,16 @@ const server = http.createServer(async (req, res) => {
     // ────────── Model Context Protocol (MCP) for AI Agents ──────────
     if ((url.pathname === "/api/mcp" || url.pathname === "/mcp") && req.method === "POST") {
       const b = await readBody(req);
-      const rpcRes = await mcpServer.handleJsonRpc(b);
+      const rpcRes = await mcpServer.handleJsonRpc(b, {
+        level: scopesLevel(callerScopes(req) || []),
+      });
       return json(res, 200, rpcRes);
     }
     if ((url.pathname === "/api/mcp" || url.pathname === "/mcp") && req.method === "GET") {
       return json(res, 200, {
         mcp: "2024-11-05",
         server: "HosteraX Autonomous Engine",
-        version: "1.1.0",
+        version: ENGINE_VERSION,
         endpoint: "/api/mcp",
         transport: "JSON-RPC 2.0 (HTTP POST)",
         capabilities: { tools: true, resources: true, prompts: true },
@@ -4076,20 +4526,16 @@ const server = http.createServer(async (req, res) => {
       const proj = db.prepare("SELECT * FROM projects WHERE name=? OR id=?").get(m[1], m[1]);
       if (!proj) return json(res, 404, { error: "Project not found" });
 
-      const targetDep = db.prepare("SELECT * FROM deployments WHERE id=?").get(m[2]);
+      const targetDep = db
+        .prepare("SELECT * FROM deployments WHERE id=? AND project=?")
+        .get(m[2], proj.name);
       if (!targetDep) return json(res, 404, { error: "Target deployment revision not found" });
 
-      const depId = "dep_rb_" + crypto.randomBytes(6).toString("hex");
-      const now = Date.now();
-      db.prepare(
-        `INSERT INTO deployments (id, project, version, phase, trigger, started_at, finished_at, exit_code, workdir)
-         VALUES (?, ?, ?, 'success', 'rollback', ?, ?, 0, ?)`,
-      ).run(depId, proj.name, `v${now}`, now, now, targetDep.workdir || "");
-
+      const r = await runDeployment(proj.name, rollbackOptions(targetDep));
       return json(res, 200, {
         ok: true,
-        message: `Successfully rolled back ${proj.name} to revision ${targetDep.id}`,
-        deployment_id: depId,
+        message: `Rolling ${proj.name} back to revision ${targetDep.version} (${targetDep.id})`,
+        deployment_id: r.id,
       });
     }
 
@@ -4106,14 +4552,22 @@ const server = http.createServer(async (req, res) => {
       if (!b.hostname) return json(res, 400, { error: "hostname required" });
       const proj = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
       if (!proj) return json(res, 404, { error: "project not found" });
+      let hostname;
+      try {
+        hostname = normalizeDomain(b.hostname);
+        assertDomainAvailable(db, hostname, m[1]);
+      } catch (e) {
+        return json(res, e.status || 400, { error: e.message });
+      }
       const id = "dom_" + crypto.randomBytes(6).toString("hex");
       const challenge = "hosterax-verify-" + crypto.randomBytes(12).toString("hex");
       db.prepare(
         `INSERT INTO domains (id, project, hostname, verified, is_primary, ssl_status, ssl_expires_at, challenge_token, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?)`,
-      ).run(id, m[1], b.hostname, 0, 0, "none", null, challenge, Date.now());
+         VALUES (?,?,?,?,?,?,?,?,?)
+         ON CONFLICT(hostname) DO NOTHING`,
+      ).run(id, m[1], hostname, 0, 0, "none", null, challenge, Date.now());
       await edgeManager.syncRoutes().catch(() => {});
-      return json(res, 200, { id, hostname: b.hostname, challenge_token: challenge });
+      return json(res, 200, { id, hostname, challenge_token: challenge });
     }
     if (url.pathname === "/api/domains" && req.method === "GET") {
       return json(res, 200, db.prepare("SELECT * FROM domains ORDER BY created_at DESC").all());
@@ -4188,107 +4642,21 @@ const server = http.createServer(async (req, res) => {
     ) {
       const b = await readBody(req);
       if (!b.name || !b.engine) return json(res, 400, { error: "name and engine required" });
-      const proj = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
-      if (!proj) return json(res, 404, { error: "project not found" });
-      const id = "mdb_" + crypto.randomBytes(6).toString("hex");
-      const cleanName = b.name.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-
-      const port =
-        b.engine === "postgres"
-          ? 5432
-          : b.engine === "mysql"
-            ? 3306
-            : b.engine === "mongodb"
-              ? 27017
-              : 6379;
-      const dbPassword = crypto.randomBytes(12).toString("hex");
-      const containerName = `hx_db_${cleanName}`;
-
-      // Spawn real Docker container if Docker is available
-      try {
-        if (b.engine === "postgres") {
-          spawnSync("docker", [
-            "run",
-            "-d",
-            "--name",
-            containerName,
-            "-e",
-            `POSTGRES_PASSWORD=${dbPassword}`,
-            "-e",
-            `POSTGRES_DB=${cleanName}`,
-            "-p",
-            `${port}:${port}`,
-            "postgres:16-alpine",
-          ]);
-        } else if (b.engine === "mysql") {
-          spawnSync("docker", [
-            "run",
-            "-d",
-            "--name",
-            containerName,
-            "-e",
-            `MYSQL_ROOT_PASSWORD=${dbPassword}`,
-            "-e",
-            `MYSQL_DATABASE=${cleanName}`,
-            "-p",
-            `${port}:${port}`,
-            "mysql:8",
-          ]);
-        } else if (b.engine === "redis") {
-          spawnSync("docker", [
-            "run",
-            "-d",
-            "--name",
-            containerName,
-            "-p",
-            `${port}:${port}`,
-            "redis:7-alpine",
-          ]);
-        } else if (b.engine === "mongodb") {
-          spawnSync("docker", [
-            "run",
-            "-d",
-            "--name",
-            containerName,
-            "-p",
-            `${port}:${port}`,
-            "mongo:7",
-          ]);
-        }
-      } catch {}
-
-      const conn = `${b.engine}://hx:${dbPassword}@127.0.0.1:${port}/${cleanName}`;
-      db.prepare("INSERT INTO managed_dbs VALUES (?,?,?,?,?,?,?,?)").run(
-        id,
-        m[1],
-        cleanName,
-        b.engine,
-        b.size_mb || 1024,
-        "running",
-        conn,
-        Date.now(),
-      );
-
-      return json(res, 200, {
-        id,
-        name: cleanName,
+      const r = await provisionDatabase({
+        project: m[1],
+        name: b.name,
         engine: b.engine,
-        connection_string: conn,
-        status: "running",
+        sizeMb: b.size_mb,
       });
+      return json(res, r.ok ? 200 : r.status || 500, r);
     }
     if (url.pathname === "/api/databases" && req.method === "GET") {
       return json(res, 200, db.prepare("SELECT * FROM managed_dbs ORDER BY created_at DESC").all());
     }
     if ((m = url.pathname.match(/^\/api\/databases\/([^/]+)$/)) && req.method === "DELETE") {
-      const mdb = db.prepare("SELECT name FROM managed_dbs WHERE id=?").get(m[1]);
-      if (mdb) {
-        try {
-          spawnSync("docker", ["rm", "-f", `hx_db_${mdb.name}`]);
-        } catch {}
-        db.prepare("DELETE FROM backups WHERE database_name=?").run(mdb.name);
-      }
-      db.prepare("DELETE FROM managed_dbs WHERE id=?").run(m[1]);
+      const mdb = db.prepare("SELECT * FROM managed_dbs WHERE id=?").get(m[1]);
+      if (!mdb) return json(res, 404, { error: "database not found" });
+      await removeManagedDatabase(mdb);
       return json(res, 200, { ok: true });
     }
 
@@ -4310,21 +4678,57 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ────────── tokens ──────────
-    if (url.pathname === "/api/tokens" && req.method === "GET")
-      return json(res, 200, db.prepare("SELECT token, name, created_at FROM tokens").all());
+    if (url.pathname === "/api/tokens" && req.method === "GET") {
+      const rows = db
+        .prepare("SELECT token, name, created_at, scopes_json, prefix, last_used_at FROM tokens")
+        .all();
+      return json(
+        res,
+        200,
+        rows.map((r) => ({
+          id: r.token,
+          name: r.name,
+          prefix: r.prefix || "",
+          created_at: r.created_at,
+          last_used_at: r.last_used_at || null,
+          scopes: (() => {
+            try {
+              return JSON.parse(r.scopes_json || '["*"]');
+            } catch {
+              return ["*"];
+            }
+          })(),
+        })),
+      );
+    }
     if (url.pathname === "/api/tokens" && req.method === "POST") {
       const b = await readBody(req);
-      const t = "hxt_" + crypto.randomBytes(24).toString("hex");
-      db.prepare("INSERT INTO tokens (token, name, created_at, scopes_json) VALUES (?,?,?,?)").run(
-        t,
-        b.name || "token",
+      const allowed = new Set(["*", "read", "deploy", "admin"]);
+      const requested =
+        Array.isArray(b.scopes) && b.scopes.length
+          ? b.scopes.filter((x) => allowed.has(x))
+          : ["read"];
+      if (!requested.length)
+        return json(res, 400, { error: "scopes must be read, deploy or admin" });
+      // A caller can never mint a token more powerful than itself.
+      if (scopesLevel(requested) > scopesLevel(callerScopes(req) || []))
+        return json(res, 403, { error: "cannot grant scopes above your own" });
+      const t = generateToken();
+      db.prepare(
+        "INSERT INTO tokens (token, name, created_at, scopes_json, prefix) VALUES (?,?,?,?,?)",
+      ).run(
+        hashToken(t),
+        String(b.name || "token").slice(0, 80),
         Date.now(),
-        JSON.stringify(Array.isArray(b.scopes) && b.scopes.length ? b.scopes : ["*"]),
+        JSON.stringify(requested),
+        tokenPrefix(t),
       );
-      return json(res, 200, { token: t });
+      return json(res, 200, { token: t, scopes: requested });
     }
     if ((m = url.pathname.match(/^\/api\/tokens\/([^/]+)$/)) && req.method === "DELETE") {
-      if (!requirePerm(req, "token:delete")) return json(res, 403, { error: "forbidden" });
+      const remaining = db.prepare("SELECT COUNT(*) c FROM tokens WHERE token<>?").get(m[1]).c;
+      if (remaining === 0)
+        return json(res, 409, { error: "cannot revoke the last token — create another first" });
       db.prepare("DELETE FROM tokens WHERE token=?").run(m[1]);
       return json(res, 200, { ok: true });
     }
@@ -4381,22 +4785,30 @@ const server = http.createServer(async (req, res) => {
         Date.now(),
       );
       // spawn docker run detached; if docker missing, mark failed
-      const cname = `hx_app_${b.slug.replace(/[^a-z0-9]/g, "_")}_${id.slice(-6)}`;
-      const safeImage = sanitizeImageTag(b.image);
-      const portFlag = port ? `-p ${port}:${port}` : "";
-      const cmd = `docker run -d --name ${cname} ${portFlag} ${safeImage}`;
-      const child = spawn(
-        process.platform === "win32" ? "cmd.exe" : "sh",
-        process.platform === "win32" ? ["/c", cmd] : ["-c", cmd],
-      );
-      let out = "";
-      child.stdout?.on("data", (d) => (out += d.toString()));
-      child.stderr?.on("data", (d) => (out += d.toString()));
+      const cname = `hx_app_${String(b.slug)
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "_")}_${id.slice(-6)}`;
+      let safeImage;
+      try {
+        safeImage = assertSafeImageRef(b.image);
+      } catch (e) {
+        db.prepare("UPDATE installed_apps SET status='failed' WHERE id=?").run(id);
+        return json(res, 400, { error: e.message });
+      }
+      const portNum = Number(port);
+      const runArgs = ["run", "-d", "--name", cname];
+      if (Number.isInteger(portNum) && portNum > 0 && portNum < 65536)
+        runArgs.push("-p", `${BIND_HOST}:${portNum}:${portNum}`);
+      runArgs.push(safeImage);
+      const child = spawn("docker", runArgs);
+      child.stdout?.on("data", () => {});
+      child.stderr?.on("data", () => {});
       child.on("close", (code) => {
         const status = code === 0 ? "running" : "failed";
+        // Store the (stable) container name, never raw docker output.
         db.prepare("UPDATE installed_apps SET status=?, container_id=? WHERE id=?").run(
           status,
-          out.trim().slice(0, 64),
+          code === 0 ? cname : null,
           id,
         );
       });
@@ -4409,13 +4821,10 @@ const server = http.createServer(async (req, res) => {
       const app = db.prepare("SELECT * FROM installed_apps WHERE id=?").get(m[1]);
       if (app?.container_id) {
         try {
-          const c = spawn(
-            process.platform === "win32" ? "cmd.exe" : "sh",
-            process.platform === "win32"
-              ? ["/c", `docker rm -f ${app.container_id}`]
-              : ["-c", `docker rm -f ${app.container_id}`],
-          );
-          c.on("error", () => {});
+          if (isSafeContainerName(app.container_id)) {
+            const c = spawn("docker", ["rm", "-f", app.container_id]);
+            c.on("error", () => {});
+          }
         } catch {}
       }
       db.prepare("DELETE FROM installed_apps WHERE id=?").run(m[1]);
@@ -4492,8 +4901,9 @@ const server = http.createServer(async (req, res) => {
     // ────────── AIOps Conversational Platform Control & Diagnostics ──────────
     if (url.pathname === "/api/ai/chat" && req.method === "POST") {
       const b = await readBody(req);
-      const userRole = b.userRole || "admin";
-      const userEmail = b.userEmail || "admin@hosterax.local";
+      // The role comes from the caller's token — never from the request body.
+      const userRole = aiRoleFor(req);
+      const userEmail = String(b.userEmail || "admin@hosterax.local").slice(0, 120);
       const r = await aiOpsManager.handleChatTurn({
         prompt: b.prompt,
         conversationHistory: b.conversationHistory || [],
@@ -4512,7 +4922,7 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === "/api/ai/execute-fix" && req.method === "POST") {
       const b = await readBody(req);
-      const userRole = b.userRole || "admin";
+      const userRole = aiRoleFor(req);
       if (!aiOpsManager.checkPermission(userRole, "write")) {
         return json(res, 403, {
           success: false,
@@ -4549,14 +4959,12 @@ wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://x");
   const id = url.searchParams.get("deployment");
   const token = url.searchParams.get("token");
-  if (!id) return ws.close();
-  // Auth check: require valid token or loopback
-  const t = token || "";
-  const isValidToken = !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(t);
-  const ip = req.socket?.remoteAddress || "";
-  const isLoopback =
-    ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1" || ip.includes("127.0.0.1");
-  if (!isValidToken && !isLoopback) return ws.close();
+  if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return ws.close();
+  // Auth check: require a valid token or a genuinely local, same-origin client
+  const isValidToken = !!db
+    .prepare("SELECT 1 FROM tokens WHERE token=?")
+    .get(hashToken(token || ""));
+  if (!isValidToken && !isTrustedLocalRequest(req, PORT)) return ws.close();
   if (!subscribers.has(id)) subscribers.set(id, new Set());
   subscribers.get(id).add(ws);
   // replay
@@ -4571,7 +4979,6 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => subscribers.get(id)?.delete(ws));
 });
 
-const PORT = Number(process.env.HOSTERAX_PORT || 7777);
 server.listen(PORT, () => {
   console.log(`HosteraX engine listening on http://localhost:${PORT}`);
   selfHeal.start();
@@ -4591,7 +4998,7 @@ function handleGracefulShutdown(signal) {
   console.log(`\n[hosterax-engine] Received ${signal}. Starting graceful shutdown...`);
   try {
     selfHeal?.stop?.();
-    scaleToZero?.stop?.();
+    scaleToZeroManager?.stop?.();
     server.close(() => {
       console.log("[hosterax-engine] HTTP server closed.");
       try {

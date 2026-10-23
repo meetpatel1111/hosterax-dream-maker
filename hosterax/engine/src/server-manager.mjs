@@ -362,13 +362,15 @@ export class ServerManager {
    */
   getBootstrapScript(serverId) {
     const srv = this.getServer(serverId);
-    const token =
-      this.db.prepare("SELECT token FROM tokens LIMIT 1").get()?.token || "hosterax_node_token";
+    // The name ends up inside a bash script that an operator will run as root: keep it to a safe charset.
+    const nodeName = String(srv?.name || "Remote Compute Node")
+      .replace(/[^A-Za-z0-9 _.#:-]/g, "")
+      .slice(0, 80);
 
     return `#!/usr/bin/env bash
 # HosteraX Autonomous Node Provisioner
 set -e
-echo "==> [HosteraX] Provisioning node: ${srv?.name || "Remote Compute Node"}..."
+echo "==> [HosteraX] Provisioning node: ${nodeName}..."
 
 if ! command -v docker &> /dev/null; then
     echo "==> [HosteraX] Installing Docker Engine & Compose Plugin..."

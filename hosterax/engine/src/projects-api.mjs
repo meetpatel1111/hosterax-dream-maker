@@ -1,5 +1,7 @@
 // HosteraX — Projects API Subsystem
 // Mounted under /api by index.mjs. Every route is permission-tagged.
+import { bearerFrom, hashToken, isTrustedLocalRequest, isValidEnvKey } from "./security.mjs";
+import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -185,6 +187,7 @@ export function createProjectsApi(ctx) {
     json,
     readBody,
     stopProject,
+    purgeDatabases,
   } = ctx;
   const UPLOADS = path.join(HOME, "uploads");
   fs.mkdirSync(UPLOADS, { recursive: true });
@@ -219,20 +222,11 @@ export function createProjectsApi(ctx) {
   }
 
   function tokenScopes(req) {
-    const t = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-    const row = db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(t);
-    if (!row) {
-      const ip = req.socket?.remoteAddress || "";
-      const isLoopback =
-        ip === "127.0.0.1" ||
-        ip === "::1" ||
-        ip === "::ffff:127.0.0.1" ||
-        ip.includes("127.0.0.1") ||
-        req.headers.host?.startsWith("localhost") ||
-        req.headers.host?.startsWith("127.0.0.1");
-      if (isLoopback) return ["*"];
-      return [];
-    }
+    const t = bearerFrom(req);
+    const row = t
+      ? db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hashToken(t))
+      : null;
+    if (!row) return !t && isTrustedLocalRequest(req) ? ["*"] : [];
     try {
       return row.scopes_json ? JSON.parse(row.scopes_json) : ["*"];
     } catch {
@@ -588,6 +582,8 @@ export function createProjectsApi(ctx) {
         `UPDATE projects SET ${entries.map(([c]) => `${c}=?`).join(", ")} WHERE name=?`,
       ).run(...entries.map(([, v]) => v), name);
     }
+    // Keep the source-of-truth table in step with the env supplied on create/update.
+    if (b.env && typeof b.env === "object") putEnv(name, b.env, { replace: true });
     return db.prepare("SELECT * FROM projects WHERE name=?").get(name);
   }
 
@@ -598,6 +594,67 @@ export function createProjectsApi(ctx) {
     const obj = {};
     for (const r of rows) obj[r.key] = r.value;
     db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(JSON.stringify(obj), name);
+  }
+
+  /**
+   * Single write path for environment variables used by REST, MCP and the AI copilot.
+   * `project_env` is the source of truth; `projects.env_json` is the derived cache used at deploy time.
+   */
+  function putEnv(
+    name,
+    pairs,
+    { environment = "production", replace = false, secret = false } = {},
+  ) {
+    if (!ENVS.includes(environment)) throw new Error("environment invalid");
+    const entries = Object.entries(pairs || {});
+    for (const [k] of entries) {
+      if (!isValidEnvKey(k))
+        throw new Error(`invalid environment variable name: ${JSON.stringify(k)}`);
+    }
+    const now = Date.now();
+    db.transaction(() => {
+      if (replace) {
+        db.prepare("DELETE FROM project_env WHERE project=? AND environment=?").run(
+          name,
+          environment,
+        );
+      }
+      for (const [k, v] of entries) {
+        db.prepare(
+          `INSERT INTO project_env (id, project, environment, key, value, is_secret, updated_at) VALUES (?,?,?,?,?,?,?)
+           ON CONFLICT(project, environment, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        ).run(
+          "pev_" + crypto.randomBytes(6).toString("hex"),
+          name,
+          environment,
+          k,
+          String(v ?? ""),
+          secret ? 1 : 0,
+          now,
+        );
+      }
+    })();
+    syncEnvJson(name);
+  }
+
+  function removeEnv(name, key, environment = "production") {
+    db.prepare("DELETE FROM project_env WHERE project=? AND environment=? AND key=?").run(
+      name,
+      environment,
+      key,
+    );
+    syncEnvJson(name);
+  }
+
+  function readEnv(name, environment = "production") {
+    return Object.fromEntries(
+      db
+        .prepare(
+          "SELECT key, value FROM project_env WHERE project=? AND environment=? ORDER BY key",
+        )
+        .all(name, environment)
+        .map((r) => [r.key, r.value]),
+    );
   }
 
   function scanDir(dir) {
@@ -623,8 +680,8 @@ export function createProjectsApi(ctx) {
           ? "docker"
           : "app",
       services: compose?.services ?? [],
-      hasBuild: !!hit?.build,
-      hasServer: !!hit?.start,
+      hasBuild: !!det.build,
+      hasServer: !!det.start,
     };
   }
 
@@ -633,6 +690,112 @@ export function createProjectsApi(ctx) {
       ...s,
       env: Object.fromEntries(Object.entries(s.env || {}).map(([k]) => [k, MASK])),
     }));
+  }
+
+  /** Archives (default) or permanently purges a project, its containers, disk and database records. */
+  async function removeProject(idOrName, isPermanent = false) {
+    const proj = db
+      .prepare(
+        "SELECT * FROM projects WHERE id=? OR name=? OR slug=? OR LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)",
+      )
+      .get(idOrName, idOrName, idOrName, idOrName, idOrName);
+    const targetName = proj?.name || idOrName;
+    const targetSlug = proj?.slug || idOrName;
+    const targetId = proj?.id || idOrName;
+    const cleanName = targetName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+
+    stopProject?.(targetName, isPermanent ? "project purged" : "project archived");
+    try {
+      const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
+      child.on("error", () => {});
+    } catch {}
+
+    // Clean up cloned project working directories on disk (always frees 100% disk space)
+    try {
+      const workRoot = path.join(HOME, "work");
+      if (fs.existsSync(workRoot)) {
+        const entries = fs.readdirSync(workRoot);
+        for (const entry of entries) {
+          const eLow = entry.toLowerCase();
+          if (
+            eLow === targetName.toLowerCase() ||
+            eLow === targetSlug.toLowerCase() ||
+            eLow === idOrName.toLowerCase()
+          ) {
+            const targetDir = path.join(workRoot, entry);
+            try {
+              fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 5 });
+            } catch (err) {
+              console.warn(
+                `[project-delete] Could not delete directory ${targetDir}:`,
+                err.message,
+              );
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[project-delete] Error cleaning work directory:`, e.message);
+    }
+
+    if (isPermanent) {
+      // database containers/volumes would otherwise be orphaned with their data
+      try {
+        await purgeDatabases?.(targetName);
+      } catch (e) {
+        console.warn("[project-delete] database cleanup failed:", e.message);
+      }
+      for (const t of [
+        "projects",
+        "deployments",
+        "domains",
+        "managed_dbs",
+        "services",
+        "project_env",
+        "project_environments",
+        "route_rules",
+        "webhooks",
+        "self_heal_events",
+      ]) {
+        try {
+          if (t === "projects") {
+            db.prepare(
+              "DELETE FROM projects WHERE name=? OR slug=? OR id=? OR LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)",
+            ).run(targetName, targetSlug, targetId, targetName, targetSlug);
+          } else if (t === "project_env" || t === "project_environments") {
+            // these tables key on the project NAME (secrets live here — they must really be erased)
+            db.prepare(`DELETE FROM ${t} WHERE project=? OR LOWER(project)=LOWER(?)`).run(
+              targetName,
+              targetName,
+            );
+          } else {
+            db.prepare(`DELETE FROM ${t} WHERE project=? OR LOWER(project)=LOWER(?)`).run(
+              targetName,
+              targetName,
+            );
+          }
+        } catch {}
+      }
+      try {
+        db.prepare("DELETE FROM routes WHERE project=? OR LOWER(project)=LOWER(?)").run(
+          targetName,
+          targetName,
+        );
+      } catch {}
+      return { ok: true, deleted: targetName, permanent: true };
+    } else {
+      // Soft delete (Archive): free all disk space and containers, but preserve DB records, envs & history for 1-click restore
+      db.prepare(
+        "UPDATE projects SET status='archived', deleted_at=?, enabled=0 WHERE name=? OR slug=? OR id=? OR LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)",
+      ).run(Date.now(), targetName, targetSlug, targetId, targetName, targetSlug);
+      try {
+        db.prepare("DELETE FROM routes WHERE project=? OR LOWER(project)=LOWER(?)").run(
+          targetName,
+          targetName,
+        );
+      } catch {}
+      return { ok: true, archived: targetName, permanent: false };
+    }
   }
 
   async function handle(req, res, url) {
@@ -870,106 +1033,17 @@ export function createProjectsApi(ctx) {
       if ((m = M(/^\/api\/projects\/([^/]+)$/))) {
         const idOrName = decodeURIComponent(m[1]);
         if (req.method === "DELETE") {
-          requirePerm(req, "project:write");
-          const proj = db
-            .prepare(
-              "SELECT * FROM projects WHERE id=? OR name=? OR slug=? OR LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)",
-            )
-            .get(idOrName, idOrName, idOrName, idOrName, idOrName);
-          const targetName = proj?.name || idOrName;
-          const targetSlug = proj?.slug || idOrName;
-          const targetId = proj?.id || idOrName;
-          const cleanName = targetName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-
+          // archiving is a write; permanently purging data is an admin action
+          requirePerm(
+            req,
+            url.searchParams.get("permanent") === "true" || url.searchParams.get("purge") === "true"
+              ? "project:admin"
+              : "project:write",
+          );
           const isPermanent =
             url.searchParams.get("permanent") === "true" ||
             url.searchParams.get("purge") === "true";
-
-          stopProject?.(targetName, isPermanent ? "project purged" : "project archived");
-          try {
-            const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
-            child.on("error", () => {});
-          } catch {}
-
-          // Clean up cloned project working directories on disk (always frees 100% disk space)
-          try {
-            const workRoot = path.join(HOME, "work");
-            if (fs.existsSync(workRoot)) {
-              const entries = fs.readdirSync(workRoot);
-              for (const entry of entries) {
-                const eLow = entry.toLowerCase();
-                if (
-                  eLow === targetName.toLowerCase() ||
-                  eLow === targetSlug.toLowerCase() ||
-                  eLow === idOrName.toLowerCase()
-                ) {
-                  const targetDir = path.join(workRoot, entry);
-                  try {
-                    fs.rmSync(targetDir, { recursive: true, force: true, maxRetries: 5 });
-                  } catch (err) {
-                    console.warn(
-                      `[project-delete] Could not delete directory ${targetDir}:`,
-                      err.message,
-                    );
-                  }
-                }
-              }
-            }
-          } catch (e) {
-            console.warn(`[project-delete] Error cleaning work directory:`, e.message);
-          }
-
-          if (isPermanent) {
-            for (const t of [
-              "projects",
-              "deployments",
-              "domains",
-              "managed_dbs",
-              "services",
-              "project_env",
-              "project_environments",
-              "route_rules",
-              "webhooks",
-              "self_heal_events",
-            ]) {
-              try {
-                if (t === "projects") {
-                  db.prepare(
-                    "DELETE FROM projects WHERE name=? OR slug=? OR id=? OR LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)",
-                  ).run(targetName, targetSlug, targetId, targetName, targetSlug);
-                } else if (t === "project_env" || t === "project_environments") {
-                  db.prepare(`DELETE FROM ${t} WHERE project_id=? OR project_id=?`).run(
-                    targetId,
-                    targetName,
-                  );
-                } else {
-                  db.prepare(`DELETE FROM ${t} WHERE project=? OR LOWER(project)=LOWER(?)`).run(
-                    targetName,
-                    targetName,
-                  );
-                }
-              } catch {}
-            }
-            try {
-              db.prepare("DELETE FROM routes WHERE project=? OR LOWER(project)=LOWER(?)").run(
-                targetName,
-                targetName,
-              );
-            } catch {}
-            return (json(res, 200, { ok: true, deleted: targetName, permanent: true }), true);
-          } else {
-            // Soft delete (Archive): free all disk space and containers, but preserve DB records, envs & history for 1-click restore
-            db.prepare(
-              "UPDATE projects SET status='archived', deleted_at=?, enabled=0 WHERE name=? OR slug=? OR id=? OR LOWER(name)=LOWER(?) OR LOWER(slug)=LOWER(?)",
-            ).run(Date.now(), targetName, targetSlug, targetId, targetName, targetSlug);
-            try {
-              db.prepare("DELETE FROM routes WHERE project=? OR LOWER(project)=LOWER(?)").run(
-                targetName,
-                targetName,
-              );
-            } catch {}
-            return (json(res, 200, { ok: true, archived: targetName, permanent: false }), true);
-          }
+          return (json(res, 200, await removeProject(idOrName, isPermanent)), true);
         }
 
         const proj = resolve(idOrName);
@@ -1428,6 +1502,15 @@ export function createProjectsApi(ctx) {
         requirePerm(req, "project:write");
         const b = await readBody(req);
         if (!b.domain) bad("domain is required", "domain");
+        let domain;
+        try {
+          domain = normalizeDomain(b.domain);
+          assertDomainAvailable(db, domain, proj.name);
+          if (b.includeWww && !domain.startsWith("www."))
+            assertDomainAvailable(db, "www." + domain, proj.name);
+        } catch (e) {
+          bad(e.message, "domain");
+        }
         const add = (host, primary) =>
           db
             .prepare(
@@ -1443,9 +1526,9 @@ export function createProjectsApi(ctx) {
               Date.now(),
             );
         db.prepare("UPDATE domains SET is_primary=0 WHERE project=?").run(proj.name);
-        add(b.domain, true);
-        if (b.includeWww && !b.domain.startsWith("www.")) add("www." + b.domain, false);
-        applyRoute(proj.name, proj.port ?? null, b.domain, null);
+        add(domain, true);
+        if (b.includeWww && !domain.startsWith("www.")) add("www." + domain, false);
+        applyRoute(proj.name, proj.port ?? null, domain, null);
         return (
           json(res, 200, {
             ok: true,
@@ -1710,5 +1793,5 @@ export function createProjectsApi(ctx) {
     }
   }
 
-  return { handle, scanDir, shape };
+  return { handle, scanDir, shape, putEnv, removeEnv, readEnv, applyBody, removeProject };
 }

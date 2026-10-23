@@ -136,7 +136,8 @@ export class DockerApiClient {
   }
 
   /**
-   * Automatically resolves container name or ID flexibly (e.g. stirling-pdf -> hx_stirling_pdf)
+   * Resolves a container name or ID (e.g. stirling-pdf -> hx_stirling_pdf).
+   * Only exact name matches are accepted — a substring match could hit an unrelated container.
    */
   async resolveContainerId(nameOrId) {
     if (!nameOrId) return nameOrId;
@@ -175,8 +176,7 @@ export class DockerApiClient {
           return (
             stripped === clean ||
             stripped === `hx_${clean}` ||
-            stripped === `hx_${clean.replace(/[^a-z0-9_]/g, "_")}` ||
-            stripped.includes(clean)
+            stripped === `hx_${clean.replace(/[^a-z0-9_]/g, "_")}`
           );
         });
       });

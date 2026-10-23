@@ -52,21 +52,20 @@ async function api(method, path, body) {
   try {
     data = JSON.parse(text);
   } catch {}
-  if (!r.ok && r.status === 403 && !bearer) {
-    const t = await api("GET", "/api/token");
-    if (t.token) bearer = t.token;
-    return api(method, path, body);
-  }
   if (!r.ok) throw new Error(`${method} ${path} -> ${r.status}: ${text}`);
   return data;
 }
 
+let bootstrapToken = "";
 before(async () => {
-  child.stdout.on("data", () => {});
+  child.stdout.on("data", (d) => {
+    const m = /hxt_[0-9a-f]{48}/.exec(String(d));
+    if (m && !bootstrapToken) bootstrapToken = m[0];
+  });
   child.stderr.on("data", (d) => process.stderr.write(d));
   await waitForHealth();
-  const t = await api("GET", "/api/token");
-  if (t?.token) bearer = t.token;
+  for (let i = 0; i < 40 && !bootstrapToken; i++) await new Promise((r) => setTimeout(r, 50));
+  bearer = bootstrapToken;
 });
 
 after(async () => {
@@ -85,9 +84,61 @@ test("health endpoint", async () => {
   assert.equal(typeof h.version, "string");
 });
 
-test("token bootstrap", async () => {
-  const t = await api("GET", "/api/token");
-  assert.equal(typeof t.token, "string");
+test("token bootstrap prints a token once and never serves it back", async () => {
+  assert.match(bootstrapToken, /^hxt_[0-9a-f]{48}$/);
+  const r = await fetch(`${baseUrl}/api/token`);
+  assert.equal(r.status, 404);
+  const tokens = await api("GET", "/api/tokens");
+  assert.ok(tokens.length >= 1);
+  for (const t of tokens) {
+    assert.ok(!JSON.stringify(t).includes(bootstrapToken), "plaintext token must not be listed");
+    assert.match(t.id, /^[0-9a-f]{64}$/);
+  }
+});
+
+test("requests from a foreign origin or via a proxy do not get implicit local trust", async () => {
+  const noAuth = { "content-type": "application/json" };
+  const foreign = await fetch(`${baseUrl}/api/projects`, {
+    headers: { ...noAuth, origin: "http://evil.example" },
+  });
+  assert.equal(foreign.status, 401);
+  const proxied = await fetch(`${baseUrl}/api/projects`, {
+    headers: { ...noAuth, "x-forwarded-for": "203.0.113.9" },
+  });
+  assert.equal(proxied.status, 401);
+  const withToken = await fetch(`${baseUrl}/api/projects`, {
+    headers: { ...noAuth, origin: "http://evil.example", authorization: `Bearer ${bearer}` },
+  });
+  assert.equal(withToken.status, 200);
+});
+
+test("read-scoped tokens cannot mutate or mint tokens", async () => {
+  const created = await api("POST", "/api/tokens", { name: "ro-test", scopes: ["read"] });
+  assert.match(created.token, /^hxt_/);
+  const ro = (path, init = {}) =>
+    fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${created.token}`,
+        origin: "http://x.test",
+      },
+    });
+  assert.equal((await ro("/api/projects")).status, 200);
+  assert.equal(
+    (
+      await ro("/api/projects", {
+        method: "POST",
+        body: JSON.stringify({ name: "nope", source: "x" }),
+      })
+    ).status,
+    403,
+  );
+  assert.equal((await ro("/api/tokens")).status, 403);
+  await api(
+    "DELETE",
+    `/api/tokens/${(await api("GET", "/api/tokens")).find((t) => t.name === "ro-test").id}`,
+  );
 });
 
 test("projects CRUD", async () => {
@@ -118,43 +169,78 @@ test("catalog endpoints serve from bundled JSON", async () => {
   assert.ok(search.apps.length >= 1);
 });
 
-test("database provisioning + backup lifecycle", async () => {
+test("database provisioning is real: it needs Docker and never fakes success", async () => {
   const proj = `smoke-db-${Date.now()}`;
   await api("POST", "/api/projects", { name: proj });
-  const db = await api("POST", `/api/projects/${proj}/databases`, {
-    name: "testdb",
-    engine: "postgres",
+  const status = await api("GET", "/api/self-heal/status");
+  const attempt = await fetch(`${baseUrl}/api/projects/${proj}/databases`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ name: "testdb", engine: "postgres" }),
   });
-  assert.ok(db.id.startsWith("mdb_"));
-
-  const bkp = await api("POST", `/api/databases/${db.id}/backup`);
-  assert.ok(bkp.id.startsWith("bkp_"));
-  assert.match(bkp.sha256, /^(sha256:)?[0-9a-f]{64}$/);
-
-  const list = await api("GET", "/api/backups");
-  const row = list.find((b) => b.id === bkp.id);
-  assert.ok(row);
-
-  const deadline = Date.now() + 5000;
-  let status = row.status;
-  while (status !== "completed" && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 250));
-    const cur = await api("GET", "/api/backups");
-    status = cur.find((b) => b.id === bkp.id)?.status;
+  const body = await attempt.json();
+  if (!status.daemonHealthy) {
+    // Without a Docker daemon the API must say so instead of recording a phantom "running" database.
+    assert.equal(attempt.status, 503);
+    assert.match(body.error, /docker/i);
+    const dbs = await api("GET", `/api/projects/${proj}/databases`);
+    assert.equal(dbs.length, 0);
+  } else {
+    assert.equal(attempt.status, 200);
+    assert.ok(body.id.startsWith("mdb_"));
+    assert.match(body.connection_string, /^postgresql:\/\/hx:/);
+    await api("DELETE", `/api/databases/${body.id}`);
   }
-  assert.equal(status, "completed");
+  // Input validation is independent of Docker.
+  const bad = await fetch(`${baseUrl}/api/projects/${proj}/databases`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ name: "x; rm -rf /", engine: "postgres" }),
+  });
+  assert.equal(bad.status, 400);
   await api("DELETE", `/api/projects/${proj}`);
+});
+
+test("a backup that cannot be taken is reported as failed, never as completed", async () => {
+  const res = await fetch(`${baseUrl}/api/backups/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({
+      databaseName: "ghost_db",
+      dbType: "postgres",
+      containerName: "hx_does_not_exist",
+    }),
+  });
+  assert.equal(res.status, 500);
+  const list = await api("GET", "/api/backups?database=ghost_db");
+  assert.ok(list.length >= 1);
+  assert.ok(
+    list.every((b) => b.status === "failed"),
+    "failed dump must be recorded as failed",
+  );
+  assert.ok(list.every((b) => b.error_message));
+  for (const b of list) await api("DELETE", `/api/backups/${b.id}`);
+  // hostile container names are rejected before reaching docker
+  const hostile = await fetch(`${baseUrl}/api/backups/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ databaseName: "x", dbType: "postgres", containerName: "--privileged" }),
+  });
+  assert.equal(hostile.status, 500);
 });
 
 test("tokens create + list + revoke", async () => {
   const created = await api("POST", "/api/tokens", { name: "smoke-token" });
   assert.match(created.token, /^hxt_/);
   const list = await api("GET", "/api/tokens");
-  assert.ok(list.some((t) => t.token === created.token));
-  const del = await api("DELETE", `/api/tokens/${created.token}`);
+  const entry = list.find((t) => t.name === "smoke-token");
+  assert.ok(entry, "created token is listed by name");
+  assert.equal(entry.prefix, created.token.slice(0, 8));
+  assert.ok(!("token" in entry), "list never exposes token material");
+  const del = await api("DELETE", `/api/tokens/${entry.id}`);
   assert.deepEqual(del, { ok: true });
   const list2 = await api("GET", "/api/tokens");
-  assert.ok(!list2.some((t) => t.token === created.token));
+  assert.ok(!list2.some((t) => t.id === entry.id));
 });
 
 test("system stats", async () => {
@@ -366,9 +452,8 @@ test("multi-node server management CRUD and connection test", async () => {
   assert.ok(created.id.startsWith("srv_"));
   assert.equal(created.name, "Production VPS Node #1");
 
-  const tok = await api("GET", "/api/token");
   const bootstrap = await fetch(`${baseUrl}/api/servers/${created.id}/bootstrap`, {
-    headers: { authorization: `Bearer ${tok.token}` },
+    headers: { authorization: `Bearer ${bearer}` },
   }).then((r) => r.text());
   assert.ok(bootstrap.includes("HosteraX Autonomous Node Provisioner"));
 
@@ -572,10 +657,17 @@ test("ai container crash diagnostics and 1-click rollback endpoint", async () =>
   const dep = await api("POST", `/api/projects/${proj}/deploy`, { branch: "main" });
   assert.ok(dep.id);
 
-  // Rollback
+  // Rollback really starts a new deployment that replays the chosen revision
   const rb = await api("POST", `/api/projects/${proj}/rollback/${dep.id}`);
   assert.equal(rb.ok, true);
-  assert.ok(rb.deployment_id.startsWith("dep_rb_"));
+  assert.ok(rb.deployment_id.startsWith("d_"));
+  assert.notEqual(rb.deployment_id, dep.id);
+  // a revision that belongs to another project can't be used as a rollback target
+  const bad = await fetch(`${baseUrl}/api/projects/${proj}/rollback/d_nonexistent`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  assert.equal(bad.status, 404);
 
   await api("DELETE", `/api/projects/${proj}`);
 });

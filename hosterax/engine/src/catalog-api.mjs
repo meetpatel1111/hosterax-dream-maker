@@ -1,7 +1,24 @@
 // hosterax/engine/src/catalog-api.mjs
 // Dynamic Catalog API for Awesome-Selfhosted, selfh.st, and fail-safe Docker image inspection
 
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { isSafeImageRef } from "./security.mjs";
+
+const execFileAsync = promisify(execFile);
+/** Runs a docker CLI command without a shell and without blocking the event loop. */
+async function dockerCli(args, timeout = 4000) {
+  try {
+    const { stdout } = await execFileAsync("docker", args, {
+      encoding: "utf8",
+      timeout,
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    return { status: 0, stdout };
+  } catch (e) {
+    return { status: e.code ?? 1, stdout: e.stdout || "" };
+  }
+}
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +35,9 @@ try {
 } catch (err) {
   console.warn("Failed to load awesome-selfhosted-db.json:", err);
 }
+
+/** Shared (already-parsed) catalog entries — consumers must not re-parse the JSON file. */
+export const catalogApps = catalogData.apps || [];
 
 export function createCatalogApi({ db, HOME, readBody }) {
   return async function handleCatalog(req, res, pathname) {
@@ -1334,20 +1354,17 @@ export function createCatalogApi({ db, HOME, readBody }) {
         .replace(/[^a-z0-9_-]/g, "");
       let imageTag = WELL_KNOWN_MAP[cleanKey] || WELL_KNOWN_MAP[baseKey] || rawImage;
       if (!imageTag.includes(":")) imageTag = `${imageTag}:latest`;
+      if (!isSafeImageRef(imageTag)) {
+        return sendJson(400, { error: "invalid Docker image reference" });
+      }
 
       try {
         // Run docker image inspect locally first
-        let insp = spawnSync("docker", ["image", "inspect", imageTag], {
-          encoding: "utf8",
-          timeout: 4000,
-        });
+        let insp = await dockerCli(["image", "inspect", imageTag]);
 
         // If not found locally, attempt manifest inspection with timeout
         if (insp.status !== 0) {
-          insp = spawnSync("docker", ["manifest", "inspect", imageTag], {
-            encoding: "utf8",
-            timeout: 4000,
-          });
+          insp = await dockerCli(["manifest", "inspect", imageTag]);
         }
 
         let exposedPorts = [];

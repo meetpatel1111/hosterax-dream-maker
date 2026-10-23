@@ -10,6 +10,7 @@
 // installed the moment a domain is added so TLS handshakes succeed while the real
 // certificate is still pending (avoids HTTP-only fallback / CF 525).
 
+import { encryptSecret } from "./secrets.mjs";
 import dns from "node:dns/promises";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -49,7 +50,8 @@ function run(cmd, args, { timeout = 180000 } = {}) {
 }
 
 export class TLSManager {
-  constructor(db, edgeDir) {
+  constructor(db, edgeDir, getServerIps = null) {
+    this.getServerIps = getServerIps;
     this.db = db;
     this.edgeDir = edgeDir;
     this.certsDir = path.join(edgeDir, "certs");
@@ -131,44 +133,41 @@ export class TLSManager {
     let verifyMethod = "none";
     let detectedRecords = [];
 
-    // 1. Check TXT record on _hosterax-challenge.<domain> or <domain>
-    try {
-      const txtRecords = await dns.resolveTxt(challengeHost).catch(async () => {
-        return await dns.resolveTxt(hostname).catch(() => []);
-      });
+    // Ownership is proven by EITHER of:
+    //  (a) a TXT record on _hosterax-challenge.<domain> containing this domain's exact challenge token, or
+    //  (b) the domain's A/AAAA (or CNAME target) resolving to one of THIS server's addresses.
+    // A bare "a record exists" is not proof of anything and is deliberately not accepted.
+    const serverIps = new Set((this.getServerIps?.() || []).filter(Boolean));
 
+    // (a) TXT challenge
+    try {
+      const txtRecords = await dns.resolveTxt(challengeHost).catch(() => []);
       const flattened = txtRecords.map((chunks) => chunks.join(""));
       detectedRecords = flattened;
-
       if (
-        flattened.some((rec) => rec.includes(challengeToken) || rec.includes("hosterax-verify"))
+        challengeToken &&
+        flattened.some((rec) => rec.trim() === challengeToken || rec.includes(challengeToken))
       ) {
         isVerified = true;
         verifyMethod = "dns-txt";
       }
     } catch {}
 
-    // 2. Check CNAME record
-    if (!isVerified) {
+    // (b) address resolution (follows one CNAME hop)
+    if (!isVerified && serverIps.size > 0) {
       try {
+        let targets = [hostname];
         const cnames = await dns.resolveCname(hostname).catch(() => []);
-        if (cnames.length > 0) {
-          isVerified = true;
-          verifyMethod = "dns-cname";
-          detectedRecords = cnames;
+        if (cnames.length > 0) targets = cnames;
+        const addrs = [];
+        for (const t of targets) {
+          addrs.push(...(await dns.resolve4(t).catch(() => [])));
+          addrs.push(...(await dns.resolve6(t).catch(() => [])));
         }
-      } catch {}
-    }
-
-    // 3. Check A / AAAA record resolution
-    if (!isVerified) {
-      try {
-        const aRecords = await dns.resolve4(hostname).catch(() => []);
-        if (aRecords.length > 0) {
-          // If points to local or any reachable IP
+        if (addrs.length > 0) detectedRecords = addrs;
+        if (addrs.some((a) => serverIps.has(a))) {
           isVerified = true;
-          verifyMethod = "dns-a-record";
-          detectedRecords = aRecords;
+          verifyMethod = cnames.length > 0 ? "dns-cname" : "dns-a-record";
         }
       } catch {}
     }
@@ -181,7 +180,7 @@ export class TLSManager {
       records: detectedRecords,
       message: isVerified
         ? `Domain verified via ${verifyMethod}`
-        : `DNS records not found for ${challengeHost}. Please add TXT record: "${challengeToken}"`,
+        : `Could not verify ownership. Either add a TXT record on ${challengeHost} with the value "${challengeToken}"${serverIps.size ? `, or point ${hostname} at this server (${[...serverIps].join(", ")})` : ""}.`,
     };
   }
 
@@ -210,21 +209,6 @@ export class TLSManager {
           : [],
       };
     } catch (e) {
-      if (certPem && certPem.includes("BEGIN CERTIFICATE")) {
-        const now = Date.now();
-        const ninetyDays = now + 90 * 86400000;
-        return {
-          ok: true,
-          subject: "CN=Custom SSL Domain",
-          issuer: "Custom Uploaded Certificate (PEM)",
-          validFrom: now,
-          validTo: ninetyDays,
-          daysRemaining: 90,
-          isExpired: false,
-          fingerprint256: crypto.createHash("sha256").update(certPem).digest("hex").slice(0, 48),
-          subjectAltNames: [],
-        };
-      }
       return { ok: false, error: e.message };
     }
   }
@@ -238,6 +222,15 @@ export class TLSManager {
     const inspect = this.inspectCertificate(certPem);
     if (!inspect.ok) throw new Error(`Invalid certificate PEM: ${inspect.error}`);
 
+    if (inspect.isExpired) throw new Error("Certificate has already expired");
+    try {
+      const x509 = new crypto.X509Certificate(certPem);
+      if (!x509.checkPrivateKey(crypto.createPrivateKey(keyPem)))
+        throw new Error("the private key does not match the certificate");
+    } catch (e) {
+      throw new Error(`Invalid private key: ${e.message}`);
+    }
+
     const dom = this.db.prepare("SELECT * FROM domains WHERE id=?").get(domainId);
     if (!dom) throw new Error("Domain not found");
 
@@ -247,7 +240,7 @@ export class TLSManager {
     const keyFile = path.join(this.certsDir, `${safeName}.key`);
 
     fs.writeFileSync(certFile, certPem.trim() + "\n", "utf8");
-    fs.writeFileSync(keyFile, keyPem.trim() + "\n", "utf8");
+    fs.writeFileSync(keyFile, keyPem.trim() + "\n", { encoding: "utf8", mode: 0o600 });
 
     // Update database
     this.db
@@ -266,7 +259,7 @@ export class TLSManager {
         inspect.validTo,
         inspect.fingerprint256,
         certPem,
-        keyPem,
+        encryptSecret(keyPem), // the edge reads the 0600 key file; the DB copy is encrypted at rest
         domainId,
       );
 

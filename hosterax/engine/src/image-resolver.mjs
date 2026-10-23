@@ -1,23 +1,8 @@
 // hosterax/engine/src/image-resolver.mjs
 // Universal Autonomous Docker Image Resolver & Self-Healing Pull Engine for all 2,502+ apps
 
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// Preloaded Awesome-Selfhosted / selfh.st Catalog
-let catalogApps = [];
-try {
-  const dbPath = path.join(__dirname, "awesome-selfhosted-db.json");
-  if (fs.existsSync(dbPath)) {
-    const raw = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-    catalogApps = raw.apps || [];
-  }
-} catch (err) {
-  console.warn("image-resolver: Failed to load catalog:", err.message);
-}
+import { catalogApps } from "./catalog-api.mjs"; // shared, parsed once
+import { isSafeImageRef } from "./security.mjs";
 
 // Universal Well-Known Image Knowledge Base for top self-hosted applications
 export const UNIVERSAL_IMAGE_MAP = {
@@ -325,8 +310,21 @@ export async function pullWithUniversalHealing({
   projectName,
   publish,
   runStep,
+  runArgv,
 }) {
-  const initialCandidates = generateCandidateImageTags(initialTag, projectName);
+  // Always pull via argv (no shell). Fall back to a quoted shell string only if no argv runner is given.
+  const pull = (ref, extra = []) =>
+    runArgv
+      ? runArgv(deploymentId, workdir, "docker", ["pull", ...extra, ref])
+      : runStep(
+          deploymentId,
+          workdir,
+          `docker pull ${extra.join(" ")} ${ref}`.replace("  ", " "),
+          {},
+        );
+  const initialCandidates = generateCandidateImageTags(initialTag, projectName).filter(
+    isSafeImageRef,
+  );
   const attempted = new Set();
 
   publish(deploymentId, {
@@ -346,7 +344,7 @@ export async function pullWithUniversalHealing({
       text: `[docker] Pulling verified candidate: ${candidate}...`,
     });
 
-    let rc = await runStep(deploymentId, workdir, `docker pull ${candidate}`, {});
+    let rc = await pull(candidate);
     if (rc === 0) {
       publish(deploymentId, {
         ts: Date.now(),
@@ -357,11 +355,21 @@ export async function pullWithUniversalHealing({
     }
   }
 
-  // Phase 2: Live Docker Hub Registry Search Discovery
+  // Phase 2: Live Docker Hub Registry Search Discovery.
+  // Running a *different* publisher's image than the one requested is a supply-chain risk (typosquatting),
+  // so fuzzy discovery is strictly opt-in.
+  if (process.env.HOSTERAX_IMAGE_DISCOVERY !== "1") {
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "stderr",
+      text: `[docker] ERROR: Could not pull "${initialTag || projectName}" or its known aliases. Fuzzy Docker Hub discovery is disabled for safety — set the exact image (e.g. owner/name:tag) or start the engine with HOSTERAX_IMAGE_DISCOVERY=1 to allow it.`,
+    });
+    return { ok: false, error: "Image pull failed; fuzzy discovery disabled" };
+  }
   publish(deploymentId, {
     ts: Date.now(),
     stream: "system",
-    text: `[docker] Direct candidates exhausted. Querying Docker Hub Registry API for "${initialTag || projectName}"...`,
+    text: `[docker] Direct candidates exhausted. Querying Docker Hub Registry API for "${initialTag || projectName}"... (HOSTERAX_IMAGE_DISCOVERY=1: substituting a third-party image — verify it!)`,
   });
 
   const searchTerms = [
@@ -375,7 +383,7 @@ export async function pullWithUniversalHealing({
     if (hubRepos && hubRepos.length > 0) {
       for (const repo of hubRepos) {
         const hubTag = `${repo}:latest`;
-        if (attempted.has(hubTag)) continue;
+        if (!isSafeImageRef(hubTag) || attempted.has(hubTag)) continue;
         attempted.add(hubTag);
 
         publish(deploymentId, {
@@ -384,7 +392,7 @@ export async function pullWithUniversalHealing({
           text: `[docker] Discovered on Docker Hub: ${hubTag}. Attempting pull...`,
         });
 
-        const hubRc = await runStep(deploymentId, workdir, `docker pull ${hubTag}`, {});
+        const hubRc = await pull(hubTag);
         if (hubRc === 0) {
           publish(deploymentId, {
             ts: Date.now(),
@@ -404,12 +412,7 @@ export async function pullWithUniversalHealing({
       stream: "system",
       text: `[docker] Retrying with cross-architecture emulation: --platform linux/amd64 ${candidate}...`,
     });
-    const platRc = await runStep(
-      deploymentId,
-      workdir,
-      `docker pull --platform linux/amd64 ${candidate}`,
-      {},
-    );
+    const platRc = await pull(candidate, ["--platform", "linux/amd64"]);
     if (platRc === 0) {
       publish(deploymentId, {
         ts: Date.now(),
