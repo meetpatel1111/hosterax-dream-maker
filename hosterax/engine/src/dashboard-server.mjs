@@ -35,6 +35,10 @@ const MIME_TYPES = {
 // Paths owned by the engine API; they must never fall through to the dashboard.
 const ENGINE_PREFIXES = ["/api/", "/ws", "/webhooks/", "/health", "/mcp"];
 
+// Tells the dashboard it was served by an engine (see src/lib/engine-url.ts): the engine is then this
+// page's own origin, whatever port it listens on.
+const ENGINE_MARKER = { "server-timing": 'hosterax;desc="served by the engine"' };
+
 const isDir = (p) => {
   try {
     return fs.statSync(p).isDirectory();
@@ -174,6 +178,7 @@ export function createDashboard({ log = () => {} } = {}) {
       "content-type": MIME_TYPES[ext] || "application/octet-stream",
       "content-length": stat.size,
       "cache-control": hashed ? "public, max-age=31536000, immutable" : "no-cache",
+      ...(ext === ".html" ? ENGINE_MARKER : {}),
     });
     if (req.method === "HEAD") return res.end();
     fs.createReadStream(filePath).pipe(res);
@@ -187,7 +192,7 @@ export function createDashboard({ log = () => {} } = {}) {
     const upstream = http.request(
       { host: "127.0.0.1", port, path: req.url, method: req.method, headers },
       (pres) => {
-        res.writeHead(pres.statusCode || 502, pres.headers);
+        res.writeHead(pres.statusCode || 502, { ...pres.headers, ...ENGINE_MARKER });
         pres.pipe(res);
       },
     );

@@ -53,6 +53,11 @@ test("dashboard serves the shell for the root and client-side routes", async () 
     const r = await raw(p);
     assert.equal(r.status, 200, p);
     assert.match(r.body, /<title>shell<\/title>/);
+    assert.match(
+      r.headers["server-timing"],
+      /hosterax/,
+      "the page must say it was served by the engine",
+    );
   }
 });
 

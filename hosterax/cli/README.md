@@ -103,6 +103,10 @@ htx databases                         # List managed database containers
 htx db:create <project> <name> <engine> # Provision postgres, mysql, mongodb, redis
 htx backup:create <databaseId|name>   # Create a checksummed backup
 htx s3:sync                           # Trigger remote AWS S3 / Cloudflare R2 backup sync
+htx backup:schedule <db> --cron "0 2 * * *" --keep 14   # Scheduled backups with retention
+htx backup:schedules                  # Last result and next run of every schedule
+htx backup:verify <backupId>          # Check a backup is intact
+htx backup:drill <backupId>           # Restore it into a scratch container
 
 # App Store
 htx catalog:search <query>            # Search 2,500+ open-source application templates

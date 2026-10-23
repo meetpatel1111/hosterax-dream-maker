@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Scheduled backups:** per-database cron schedules with retention (`keepLast`, `keepDays`), run serially, catch-up after downtime, failure events, and REST/CLI/dashboard management (`/api/backups/schedules`, `htx backup:schedule*`, Backups → Schedules).
+- **Backup verification:** `POST /api/backups/:id/verify` / `htx backup:verify` check the checksum, authenticate encryption, read the archive end to end and look for a complete-dump footer. Every scheduled run is verified by default.
+- **Restore drills:** `POST /api/backups/:id/drill` / `htx backup:drill` restore a backup into an isolated, throwaway container from the source's image and confirm the database answers (Postgres, MySQL/MariaDB, MongoDB, Redis).
+- **Opt-in encrypted backup archives** (AES-256-GCM, streaming, authenticated before any restore); downloads are served decrypted.
+
+### Fixed
+
+- The dashboard assumed the engine was at `http://localhost:7777`, so a dashboard served by an engine on any other port could not find it. The engine now marks the pages it serves (`Server-Timing: hosterax`) and the dashboard uses its own origin.
+- Backups left `in_progress` by a crash are now marked failed on start; a stale unused `backup_schedules` table from an older version is set aside (`backup_schedules_legacy`).
+
 ### 🔒 Security
 
 - **Authentication is no longer implicit.** Only genuine same-machine, same-origin requests skip the token; everything else needs `Authorization: Bearer`. `GET /api/auth/me` tells the dashboard who it is. New `HOSTERAX_REQUIRE_AUTH`, `HOSTERAX_TRUSTED_ORIGINS` and `HOSTERAX_DEV` switches.

@@ -28,9 +28,10 @@ marked **(gap)** are things the product already implies but does not do yet.
    for remote nodes, and a placement choice per project.
 7. **Email that actually receives mail (gap).** Either integrate a proper MTA (Stalwart or Mailu as
    a managed app) or narrow the feature to "DNS records + relay sending" and say so in the UI.
-8. **Backups you can trust.** Scheduled backups with retention rules, encrypted-at-rest archives
-   (age), and a periodic restore drill that proves the latest backup restores into a scratch
-   container, with alerts when it does not.
+8. **Backup notifications and verification depth.** Scheduled backups, retention, archive
+   verification, restore drills and opt-in encrypted archives now exist. Still missing: pushing
+   failures to email/Slack/webhooks, running a restore drill against a real Docker daemon in CI,
+   deeper verification of mongodump archives, per-backup key rotation, and MCP tools for schedules.
 9. **Verified catalog images.** A CI job that pulls every catalog image, records its digest and
    architectures, and flips `imageVerified` (currently 608 of ~2,500). Pin digests, and verify
    signatures with cosign where publishers provide them.

@@ -6,6 +6,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 const PREFIX = "enc:v1:";
 let key = null;
@@ -46,4 +48,109 @@ export function decryptSecret(stored) {
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, raw.subarray(0, 12));
   decipher.setAuthTag(raw.subarray(12, 28));
   return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString("utf8");
+}
+
+// ───────────── Streaming file encryption (backup archives) ─────────────
+//
+// Layout: "HXB1" | 12-byte IV | AES-256-GCM ciphertext | 16-byte auth tag.
+// GCM only authenticates at the very end, so a consumer must call authenticateEncryptedFile() before
+// it trusts any plaintext (the backup restore path does).
+
+const FILE_MAGIC = Buffer.from("HXB1");
+const IV_LEN = 12;
+const TAG_LEN = 16;
+
+export function createEncryptStream() {
+  if (!key) throw new Error("secrets not initialised");
+  const iv = crypto.randomBytes(IV_LEN);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  let started = false;
+  return new Transform({
+    transform(chunk, _enc, cb) {
+      if (!started) {
+        started = true;
+        this.push(Buffer.concat([FILE_MAGIC, iv]));
+      }
+      cb(null, cipher.update(chunk));
+    },
+    flush(cb) {
+      if (!started) this.push(Buffer.concat([FILE_MAGIC, iv]));
+      this.push(cipher.final());
+      this.push(cipher.getAuthTag());
+      cb();
+    },
+  });
+}
+
+export function createDecryptStream() {
+  if (!key) throw new Error("secrets not initialised");
+  let header = Buffer.alloc(0);
+  let tail = Buffer.alloc(0);
+  let decipher = null;
+  return new Transform({
+    transform(chunk, _enc, cb) {
+      try {
+        if (!decipher) {
+          header = Buffer.concat([header, chunk]);
+          if (header.length < FILE_MAGIC.length + IV_LEN) return cb();
+          if (!header.subarray(0, FILE_MAGIC.length).equals(FILE_MAGIC))
+            return cb(new Error("not a HosteraX encrypted archive"));
+          decipher = crypto.createDecipheriv(
+            "aes-256-gcm",
+            key,
+            header.subarray(FILE_MAGIC.length, FILE_MAGIC.length + IV_LEN),
+          );
+          chunk = header.subarray(FILE_MAGIC.length + IV_LEN);
+          header = null;
+        }
+        const data = Buffer.concat([tail, chunk]);
+        if (data.length <= TAG_LEN) {
+          tail = data;
+          return cb();
+        }
+        tail = data.subarray(data.length - TAG_LEN);
+        cb(null, decipher.update(data.subarray(0, data.length - TAG_LEN)));
+      } catch (e) {
+        cb(e);
+      }
+    },
+    flush(cb) {
+      try {
+        if (!decipher || tail.length !== TAG_LEN) throw new Error("encrypted archive is truncated");
+        decipher.setAuthTag(tail);
+        this.push(decipher.final());
+        cb();
+      } catch {
+        cb(
+          new Error(
+            "encrypted archive failed authentication — it was modified, or the encryption key changed",
+          ),
+        );
+      }
+    },
+  });
+}
+
+export function isEncryptedArchive(filePath) {
+  try {
+    const fd = fs.openSync(filePath, "r");
+    try {
+      const head = Buffer.alloc(FILE_MAGIC.length);
+      fs.readSync(fd, head, 0, head.length, 0);
+      return head.equals(FILE_MAGIC);
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** Reads the whole archive through the decryptor; resolves only if the auth tag checks out. */
+export async function authenticateEncryptedFile(filePath) {
+  await pipeline(
+    fs.createReadStream(filePath),
+    createDecryptStream(),
+    new Transform({ transform: (_c, _e, cb) => cb() }),
+  );
 }

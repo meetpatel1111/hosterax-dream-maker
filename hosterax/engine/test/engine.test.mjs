@@ -239,6 +239,59 @@ test("a backup that cannot be taken is reported as failed, never as completed", 
   assert.equal(hostile.status, 500);
 });
 
+test("backup schedules: validation, CRUD, manual run and honest failure", async () => {
+  const bad = await fetch(`${baseUrl}/api/backups/schedules`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({ databaseName: "shop", dbType: "postgres", cron: "every day" }),
+  });
+  assert.equal(bad.status, 400);
+
+  const created = await fetch(`${baseUrl}/api/backups/schedules`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
+    body: JSON.stringify({
+      databaseName: "shop",
+      dbType: "postgres",
+      containerName: "hx_does_not_exist",
+      cron: "0 3 * * *",
+      keepLast: 3,
+      drill: "archive",
+    }),
+  });
+  assert.equal(created.status, 201);
+  const sched = await created.json();
+  assert.match(sched.id, /^bsch_/);
+  assert.ok(sched.nextRunAt > Date.now());
+
+  const list = await api("GET", "/api/backups/schedules");
+  assert.ok(list.some((x) => x.id === sched.id));
+  const patched = await api("PATCH", `/api/backups/schedules/${sched.id}`, { keepLast: 5 });
+  assert.equal(patched.keepLast, 5);
+
+  // A run against a container that does not exist must fail loudly, never record a phantom success.
+  await api("POST", `/api/backups/schedules/${sched.id}/run`);
+  let after;
+  for (let i = 0; i < 60; i++) {
+    after = (await api("GET", "/api/backups/schedules")).find((x) => x.id === sched.id);
+    if (after.lastStatus && after.lastStatus !== "running") break;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  assert.equal(after.lastStatus, "failed");
+  assert.ok(after.lastError);
+  const backups = await api("GET", "/api/backups");
+  assert.ok(backups.every((b) => b.status !== "completed" || b.database_name !== "shop"));
+
+  const verify = await fetch(`${baseUrl}/api/backups/bkp_missing/verify`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  assert.equal(verify.status, 404);
+
+  await api("DELETE", `/api/backups/schedules/${sched.id}`);
+  assert.ok(!(await api("GET", "/api/backups/schedules")).some((x) => x.id === sched.id));
+});
+
 test("tokens create + list + revoke", async () => {
   const created = await api("POST", "/api/tokens", { name: "smoke-token" });
   assert.match(created.token, /^hxt_/);

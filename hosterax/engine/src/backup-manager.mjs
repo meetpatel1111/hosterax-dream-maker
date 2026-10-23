@@ -3,12 +3,49 @@ import path from "node:path";
 import crypto from "node:crypto";
 import os from "node:os";
 import zlib from "node:zlib";
+import { Writable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { spawn, execFile } from "node:child_process";
 import { spawnSync } from "./safe-exec.mjs";
 import { S3StorageClient } from "./s3-storage.mjs";
-import { isSafeContainerName } from "./security.mjs";
-import { encryptSecret, decryptSecret } from "./secrets.mjs";
+import { isSafeContainerName, isValidEnvKey } from "./security.mjs";
+import {
+  encryptSecret,
+  decryptSecret,
+  createEncryptStream,
+  createDecryptStream,
+  authenticateEncryptedFile,
+} from "./secrets.mjs";
+
+const DRILL_SKIP_ENV = new Set(["PATH", "HOME", "HOSTNAME", "TERM"]);
+
+// Commands run inside the scratch container. They use the container's own environment (copied from the
+// source container), never interpolated values.
+const DRILL_SCRIPTS = {
+  postgres: {
+    ready: 'pg_isready -q -h 127.0.0.1 -U "${POSTGRES_USER:-postgres}"',
+    check:
+      'PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U "${POSTGRES_USER:-postgres}" -d postgres -Atc "select count(*) from pg_database where not datistemplate"',
+  },
+  mysql: {
+    ready:
+      'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysqladmin || command -v mariadb-admin)"; [ -n "$B" ] && "$B" ping -h 127.0.0.1 -uroot ${P:+-p"$P"} --silent',
+    check:
+      'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysql || command -v mariadb)"; "$B" -h 127.0.0.1 -uroot ${P:+-p"$P"} -Nse "select count(*) from information_schema.schemata"',
+  },
+  mongo: {
+    ready:
+      'B="$(command -v mongosh || command -v mongo)"; "$B" --quiet --eval "db.adminCommand({ping:1}).ok" | grep -q 1',
+    check:
+      'B="$(command -v mongosh || command -v mongo)"; "$B" --quiet ${MONGO_INITDB_ROOT_USERNAME:+-u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin} --eval "db.adminCommand({listDatabases:1}).ok"',
+  },
+  redis: {
+    ready:
+      'A=""; [ -n "$REDIS_PASSWORD" ] && A="-a $REDIS_PASSWORD --no-auth-warning"; redis-cli $A ping | grep -q PONG',
+    check:
+      'A=""; [ -n "$REDIS_PASSWORD" ] && A="-a $REDIS_PASSWORD --no-auth-warning"; redis-cli $A dbsize',
+  },
+};
 
 export class BackupManager {
   constructor({ db, HOME }) {
@@ -68,9 +105,18 @@ export class BackupManager {
       );
     `);
 
-    try {
-      this.db.exec("ALTER TABLE backups ADD COLUMN container_name TEXT");
-    } catch {}
+    for (const col of [
+      "container_name TEXT",
+      "schedule_id TEXT",
+      "encrypted INTEGER NOT NULL DEFAULT 0",
+      "verified_at INTEGER",
+      "verify_status TEXT",
+      "verify_message TEXT",
+    ]) {
+      try {
+        this.db.exec(`ALTER TABLE backups ADD COLUMN ${col}`);
+      } catch {}
+    }
 
     // Older versions recorded a tiny placeholder text file as a "completed" snapshot whenever the
     // real dump failed. Flag those honestly so nobody trusts them for a restore.
@@ -241,7 +287,14 @@ export class BackupManager {
   /**
    * Create a real database snapshot
    */
-  async createBackup({ databaseName, dbType, projectName, containerName }) {
+  async createBackup({
+    databaseName,
+    dbType,
+    projectName,
+    containerName,
+    encrypt = false,
+    scheduleId = null,
+  }) {
     const bkpId = `bkp_${Date.now().toString(36)}_${crypto.randomBytes(3).toString("hex")}`;
     const targetDb = databaseName || containerName || "database";
     const type = (dbType || "mongodb").toLowerCase();
@@ -258,7 +311,7 @@ export class BackupManager {
           : ["postgres", "postgresql", "mysql", "mariadb"].includes(type)
             ? "sql.gz"
             : "tar.gz";
-    const fileName = `${targetDb}_${Date.now()}.${ext}`;
+    const fileName = `${targetDb}_${Date.now()}.${ext}${encrypt ? ".enc" : ""}`;
     const outPath = path.join(dbSubDir, fileName);
 
     const createdAt = Date.now();
@@ -267,24 +320,35 @@ export class BackupManager {
     this.db
       .prepare(
         `
-      INSERT INTO backups (id, project_name, database_name, db_type, file_path, file_size_bytes, sha256, destination, status, created_at, container_name)
-      VALUES (?, ?, ?, ?, ?, 0, '', 'local', 'in_progress', ?, ?)
+      INSERT INTO backups (id, project_name, database_name, db_type, file_path, file_size_bytes, sha256, destination, status, created_at, container_name, schedule_id, encrypted)
+      VALUES (?, ?, ?, ?, ?, 0, '', 'local', 'in_progress', ?, ?, ?, ?)
     `,
       )
-      .run(bkpId, projectName || targetDb, targetDb, type, outPath, createdAt, cont);
+      .run(
+        bkpId,
+        projectName || targetDb,
+        targetDb,
+        type,
+        outPath,
+        createdAt,
+        cont,
+        scheduleId,
+        encrypt ? 1 : 0,
+      );
 
     try {
+      const opts = { encrypt: Boolean(encrypt) };
       if (type === "mongodb" || type === "mongo") {
-        await this._dumpMongo(cont, outPath);
+        await this._dumpMongo(cont, outPath, opts);
       } else if (type === "postgres" || type === "postgresql") {
-        await this._dumpPostgres(cont, outPath);
+        await this._dumpPostgres(cont, outPath, opts);
       } else if (type === "mysql" || type === "mariadb") {
-        await this._dumpMysql(cont, outPath);
+        await this._dumpMysql(cont, outPath, opts);
       } else if (type === "redis") {
-        await this._dumpRedis(cont, outPath);
+        await this._dumpRedis(cont, outPath, opts);
       } else {
         // Generic volume or directory backup
-        await this._dumpVolume(cont, outPath);
+        await this._dumpVolume(cont, outPath, opts);
       }
 
       // Verify file generated and compute SHA-256 hash
@@ -324,6 +388,7 @@ export class BackupManager {
         id: bkpId,
         database: targetDb,
         type,
+        encrypted: Boolean(encrypt),
         sizeMb: parseFloat((fileStats.size / 1048576).toFixed(2)),
         fileSizeBytes: fileStats.size,
         sha256,
@@ -375,17 +440,9 @@ export class BackupManager {
     const cont = bkp.container_name || targetContainer || bkp.database_name;
     const type = bkp.db_type.toLowerCase();
 
-    if (type === "mongodb" || type === "mongo") {
-      await this._restoreMongo(cont, bkp.file_path);
-    } else if (type === "postgres" || type === "postgresql") {
-      await this._restorePostgres(cont, bkp.file_path);
-    } else if (type === "mysql" || type === "mariadb") {
-      await this._restoreMysql(cont, bkp.file_path);
-    } else if (type === "redis") {
-      await this._restoreRedis(cont, bkp.file_path);
-    } else {
-      await this._restoreVolume(cont, bkp.file_path);
-    }
+    // GCM only proves authenticity at the end of the file, so check it before any byte reaches a database.
+    if (bkp.encrypted) await authenticateEncryptedFile(bkp.file_path);
+    await this._restoreByType(type, cont, bkp.file_path, { decrypt: Boolean(bkp.encrypted) });
 
     return {
       ok: true,
@@ -395,6 +452,24 @@ export class BackupManager {
       restoredAt: new Date().toISOString(),
       message: `Snapshot "${id}" verified (SHA-256: ${currentHash.slice(0, 16)}...) and restored successfully to container "${cont}".`,
     };
+  }
+
+  _restoreByType(type, container, filePath, opts = {}) {
+    if (type === "mongodb" || type === "mongo")
+      return this._restoreMongo(container, filePath, opts);
+    if (type === "postgres" || type === "postgresql")
+      return this._restorePostgres(container, filePath, opts);
+    if (type === "mysql" || type === "mariadb")
+      return this._restoreMysql(container, filePath, opts);
+    if (type === "redis") return this._restoreRedis(container, filePath, opts);
+    return this._restoreVolume(container, filePath, opts);
+  }
+
+  /** A readable stream of the backup as a standard archive (decrypted when it was stored encrypted). */
+  async openBackupStream(bkp) {
+    if (!bkp.encrypted) return fs.createReadStream(bkp.file_path);
+    await authenticateEncryptedFile(bkp.file_path);
+    return fs.createReadStream(bkp.file_path).pipe(createDecryptStream());
   }
 
   /**
@@ -415,6 +490,223 @@ export class BackupManager {
   }
 
   // -------------------------------------------------------------
+  // Verification and restore drills
+  // -------------------------------------------------------------
+
+  /** Streams an archive (decrypting / gunzipping as needed) and keeps its first and last bytes. */
+  async _inspectArchive(bkp) {
+    const type = bkp.db_type.toLowerCase();
+    const gzipped = !(type === "mongodb" || type === "mongo");
+    let head = Buffer.alloc(0);
+    let tail = Buffer.alloc(0);
+    let bytes = 0;
+    const sink = new Writable({
+      write(chunk, _enc, cb) {
+        bytes += chunk.length;
+        if (head.length < 600) head = Buffer.concat([head, chunk]).subarray(0, 600);
+        tail = Buffer.concat([tail, chunk]).subarray(-4096);
+        cb();
+      },
+    });
+    await pipeline(
+      fs.createReadStream(bkp.file_path),
+      ...(bkp.encrypted ? [createDecryptStream()] : []),
+      ...(gzipped ? [zlib.createGunzip()] : []),
+      sink,
+    );
+    return { head, tail, bytes };
+  }
+
+  /**
+   * Proves a backup is intact without touching Docker: the checksum still matches, the encryption
+   * (if any) authenticates, the archive decompresses end to end, and it ends the way a complete dump
+   * of its type does. The result is stored on the backup row.
+   */
+  async verifyBackup(id) {
+    const bkp = this.getBackup(id);
+    if (!bkp) throw new Error(`Backup with ID "${id}" not found.`);
+    const checks = [];
+    let failure = null;
+    try {
+      if (bkp.status !== "completed") throw new Error(`the backup is ${bkp.status}`);
+      if (!fs.existsSync(bkp.file_path)) throw new Error("the archive file is missing from disk");
+      if (fs.statSync(bkp.file_path).size === 0) throw new Error("the archive file is empty");
+      const sha = await this._computeSha256(bkp.file_path);
+      if (bkp.sha256 && sha !== bkp.sha256)
+        throw new Error("the SHA-256 no longer matches — the file changed after it was written");
+      checks.push("checksum matches");
+      if (bkp.encrypted) {
+        await authenticateEncryptedFile(bkp.file_path);
+        checks.push("encryption authenticated");
+      }
+      let inspected;
+      try {
+        inspected = await this._inspectArchive(bkp);
+      } catch (e) {
+        throw new Error(`the archive cannot be read: ${e.message}`);
+      }
+      if (inspected.bytes === 0) throw new Error("the archive contains no data");
+      const type = bkp.db_type.toLowerCase();
+      const tail = inspected.tail.toString("latin1");
+      if (type === "postgres" || type === "postgresql") {
+        if (!/PostgreSQL database (cluster )?dump complete/.test(tail))
+          throw new Error("the dump is incomplete (no completion footer)");
+        checks.push("dump is complete");
+      } else if (type === "mysql" || type === "mariadb") {
+        if (!/-- Dump completed/.test(tail))
+          throw new Error("the dump is incomplete (no completion footer)");
+        checks.push("dump is complete");
+      } else if (type === "redis") {
+        if (!inspected.head.toString("latin1").startsWith("REDIS"))
+          throw new Error("the data is not a Redis RDB snapshot");
+        checks.push("RDB header present");
+      } else if (type === "mongodb" || type === "mongo") {
+        checks.push("archive readable (mongodump archives cannot be inspected further)");
+      } else {
+        if (inspected.head.subarray(257, 262).toString("latin1") !== "ustar")
+          throw new Error("the data is not a tar archive");
+        checks.push("tar header present");
+      }
+      if (type !== "mongodb" && type !== "mongo") checks.push("decompresses cleanly");
+    } catch (e) {
+      failure = e.message;
+    }
+    const ok = !failure;
+    const message = ok
+      ? `Archive verified: ${checks.join(", ")}.`
+      : `Verification failed: ${failure}`;
+    this.db
+      .prepare("UPDATE backups SET verified_at=?, verify_status=?, verify_message=? WHERE id=?")
+      .run(Date.now(), ok ? "verified" : "failed", message, id);
+    return { ok, id, checks, message };
+  }
+
+  _sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * The strongest check there is: restore the backup into a throwaway container started from the same
+   * image as the source, confirm the database answers, and delete the container. The source database is
+   * never touched. Needs a working Docker daemon; volume backups fall back to archive verification.
+   */
+  async restoreDrill(id, { readyTimeoutMs = 120000 } = {}) {
+    const bkp = this.getBackup(id);
+    if (!bkp) throw new Error(`Backup with ID "${id}" not found.`);
+    const type = bkp.db_type.toLowerCase();
+    const kind = type.startsWith("postgres")
+      ? "postgres"
+      : type === "mysql" || type === "mariadb"
+        ? "mysql"
+        : type === "mongodb" || type === "mongo"
+          ? "mongo"
+          : type === "redis"
+            ? "redis"
+            : null;
+    if (!kind) {
+      return {
+        ok: true,
+        skipped: true,
+        id,
+        message:
+          "Restore drills are not available for volume backups; the archive was verified instead.",
+      };
+    }
+    const script = DRILL_SCRIPTS[kind];
+    const started = Date.now();
+    const scratch = `hx_drill_${crypto.randomBytes(5).toString("hex")}`;
+    let failure = null;
+    try {
+      if (bkp.status !== "completed") throw new Error(`the backup is ${bkp.status}`);
+      if (!bkp.container_name) throw new Error("the backup does not record its source container");
+      this._assertContainer(bkp.container_name);
+      if (bkp.encrypted) await authenticateEncryptedFile(bkp.file_path);
+
+      const image = (
+        await this._docker(["inspect", bkp.container_name, "--format", "{{.Config.Image}}"])
+      ).trim();
+      if (!image) throw new Error("could not determine the source container's image");
+      const envList = JSON.parse(
+        (await this._docker(["inspect", bkp.container_name, "--format", "{{json .Config.Env}}"])) ||
+          "[]",
+      );
+      const envArgs = [];
+      for (const kv of envList) {
+        const i = String(kv).indexOf("=");
+        const key = i > 0 ? kv.slice(0, i) : "";
+        if (isValidEnvKey(key) && !DRILL_SKIP_ENV.has(key)) envArgs.push("-e", kv);
+      }
+      await this._docker(
+        [
+          "run",
+          "-d",
+          "--name",
+          scratch,
+          "--label",
+          "hosterax.drill=1",
+          "--network",
+          "none",
+          "--memory",
+          "1g",
+          ...envArgs,
+          image,
+        ],
+        180000,
+      );
+
+      // Official images start a temporary server while initialising and then restart; require the
+      // database to answer twice, a few seconds apart, before restoring into it.
+      const deadline = Date.now() + readyTimeoutMs;
+      let consecutive = 0;
+      while (consecutive < 2) {
+        if (Date.now() > deadline) throw new Error("the scratch database did not become ready");
+        try {
+          await this._docker(["exec", scratch, "sh", "-c", script.ready], 15000);
+          consecutive += 1;
+        } catch {
+          consecutive = 0;
+        }
+        if (consecutive < 2) await this._sleep(3000);
+      }
+
+      await this._restoreByType(type, scratch, bkp.file_path, { decrypt: Boolean(bkp.encrypted) });
+      if (kind === "redis") await this._sleep(1000); // the container restarts to load the RDB
+
+      const answer = (
+        await this._docker(["exec", scratch, "sh", "-c", script.check], 30000)
+      ).trim();
+      if (!/^\d+$/.test(answer))
+        throw new Error(`the restored database gave an unexpected answer: ${answer || "(empty)"}`);
+    } catch (e) {
+      failure = e.message;
+    } finally {
+      await this._docker(["rm", "-f", "-v", scratch]).catch(() => {});
+    }
+    const seconds = Math.max(1, Math.round((Date.now() - started) / 1000));
+    const ok = !failure;
+    const message = ok
+      ? `Restore drill passed: restored into a scratch ${kind} container and it answered (${seconds}s).`
+      : `Restore drill failed: ${failure}`;
+    this.db
+      .prepare("UPDATE backups SET verified_at=?, verify_status=?, verify_message=? WHERE id=?")
+      .run(Date.now(), ok ? "verified" : "failed", message, id);
+    return { ok, id, message, durationSeconds: seconds };
+  }
+
+  /** Removes scratch containers left behind by a drill that was interrupted (e.g. engine restart). */
+  async cleanupDrillContainers() {
+    try {
+      const ids = (await this._docker(["ps", "-aq", "--filter", "label=hosterax.drill=1"], 15000))
+        .split(/\s+/)
+        .filter(Boolean);
+      if (ids.length) await this._docker(["rm", "-f", "-v", ...ids], 60000);
+      return ids.length;
+    } catch {
+      return 0; // Docker unavailable — nothing to clean
+    }
+  }
+
+  // -------------------------------------------------------------
   // Internal helpers — everything runs `docker` WITHOUT a shell and fails loudly.
   // A backup that did not really happen is never recorded as "completed".
   // -------------------------------------------------------------
@@ -425,7 +717,7 @@ export class BackupManager {
   }
 
   /** Streams `docker <args>` stdout into outPath (optionally gzip-compressed). */
-  async _streamToFile(args, outPath, { gzip = false } = {}) {
+  async _streamToFile(args, outPath, { gzip = false, encrypt = false } = {}) {
     const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
     const out = fs.createWriteStream(outPath);
     let stderr = "";
@@ -434,15 +726,16 @@ export class BackupManager {
       if (stderr.length < 4000) stderr += d.toString();
     });
     child.stdout.on("data", (d) => (bytes += d.length));
-    const written = new Promise((resolve, reject) => {
-      out.on("finish", resolve);
-      out.on("error", reject);
-    });
+    const written = pipeline(
+      child.stdout,
+      ...(gzip ? [zlib.createGzip()] : []),
+      ...(encrypt ? [createEncryptStream()] : []),
+      out,
+    );
     const exited = new Promise((resolve, reject) => {
       child.on("error", reject);
       child.on("close", resolve);
     });
-    (gzip ? child.stdout.pipe(zlib.createGzip()) : child.stdout).pipe(out);
     try {
       const [code] = await Promise.all([exited, written]);
       if (code !== 0)
@@ -461,9 +754,10 @@ export class BackupManager {
   }
 
   /** Feeds a (optionally gunzipped) file to `docker <args>` on stdin. */
-  async _streamFromFile(args, filePath, { gunzip = false } = {}) {
+  async _streamFromFile(args, filePath, { gunzip = false, decrypt = false } = {}) {
     const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
     let stderr = "";
+    let inputError = null;
     child.stderr.on("data", (d) => {
       if (stderr.length < 4000) stderr += d.toString();
     });
@@ -473,15 +767,25 @@ export class BackupManager {
       child.on("error", reject);
       child.on("close", resolve);
     });
-    const src = fs.createReadStream(filePath);
-    const input = gunzip ? src.pipe(zlib.createGunzip()) : src;
-    src.on("error", (e) => child.kill() && child.stdin.destroy(e));
-    input.on("error", (e) => {
+    const onInputError = (e) => {
+      inputError = inputError || e;
       stderr += `input error: ${e.message}`;
       child.stdin.end();
-    });
+    };
+    const src = fs.createReadStream(filePath);
+    src.on("error", (e) => child.kill() && child.stdin.destroy(e));
+    let input = src;
+    for (const stage of [
+      ...(decrypt ? [createDecryptStream()] : []),
+      ...(gunzip ? [zlib.createGunzip()] : []),
+    ]) {
+      stage.on("error", onInputError);
+      input = input.pipe(stage);
+    }
+    input.on("error", onInputError);
     input.pipe(child.stdin);
     const code = await exited;
+    if (inputError) throw new Error(`restore input was unreadable: ${inputError.message}`);
     if (code !== 0)
       throw new Error(
         `docker ${args[0]} exited with code ${code}: ${stderr.trim() || "no error output"}`,
@@ -516,14 +820,16 @@ export class BackupManager {
   // Dumps
   // -------------------------------------------------------------
 
-  async _dumpMongo(containerName, outPath) {
+  async _dumpMongo(containerName, outPath, opts = {}) {
     this._assertContainer(containerName);
     const script =
       'exec mongodump --archive --gzip ${MONGO_INITDB_ROOT_USERNAME:+--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin}';
-    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath);
+    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath, {
+      encrypt: opts.encrypt,
+    });
   }
 
-  async _dumpPostgres(containerName, outPath) {
+  async _dumpPostgres(containerName, outPath, opts = {}) {
     this._assertContainer(containerName);
     await this._streamToFile(
       [
@@ -534,26 +840,32 @@ export class BackupManager {
         'exec pg_dumpall -U "${POSTGRES_USER:-postgres}" --clean --if-exists',
       ],
       outPath,
-      { gzip: true },
+      { gzip: true, encrypt: opts.encrypt },
     );
   }
 
-  async _dumpMysql(containerName, outPath) {
+  async _dumpMysql(containerName, outPath, opts = {}) {
     this._assertContainer(containerName);
     const script =
       'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysqldump || command -v mariadb-dump)"; [ -n "$B" ] || { echo "mysqldump not found in container" >&2; exit 127; }; exec "$B" --all-databases --single-transaction -uroot ${P:+-p"$P"}';
-    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath, { gzip: true });
+    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath, {
+      gzip: true,
+      encrypt: opts.encrypt,
+    });
   }
 
-  async _dumpRedis(containerName, outPath) {
+  async _dumpRedis(containerName, outPath, opts = {}) {
     this._assertContainer(containerName);
     const script =
       'A=""; [ -n "$REDIS_PASSWORD" ] && A="-a $REDIS_PASSWORD --no-auth-warning"; [ "$(redis-cli $A SAVE)" = "OK" ] && cat /data/dump.rdb';
-    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath, { gzip: true });
+    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath, {
+      gzip: true,
+      encrypt: opts.encrypt,
+    });
   }
 
   /** Archives every named Docker volume attached to the container into one tar.gz. */
-  async _dumpVolume(containerName, outPath) {
+  async _dumpVolume(containerName, outPath, opts = {}) {
     this._assertContainer(containerName);
     const volumes = await this._volumesOf(containerName);
     if (volumes.length === 0) {
@@ -564,21 +876,23 @@ export class BackupManager {
     const args = ["run", "--rm"];
     for (const v of volumes) args.push("-v", `${v}:/backup/${v}:ro`);
     args.push("alpine:3.20", "tar", "czf", "-", "-C", "/backup", ".");
-    await this._streamToFile(args, outPath);
+    await this._streamToFile(args, outPath, { encrypt: opts.encrypt });
   }
 
   // -------------------------------------------------------------
   // Restores
   // -------------------------------------------------------------
 
-  async _restoreMongo(containerName, filePath) {
+  async _restoreMongo(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
     const script =
       'exec mongorestore --archive --gzip --drop ${MONGO_INITDB_ROOT_USERNAME:+--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin}';
-    await this._streamFromFile(["exec", "-i", containerName, "sh", "-c", script], filePath);
+    await this._streamFromFile(["exec", "-i", containerName, "sh", "-c", script], filePath, {
+      decrypt: opts.decrypt,
+    });
   }
 
-  async _restorePostgres(containerName, filePath) {
+  async _restorePostgres(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
     await this._streamFromFile(
       [
@@ -590,24 +904,30 @@ export class BackupManager {
         'exec psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d postgres',
       ],
       filePath,
-      { gunzip: true },
+      { gunzip: true, decrypt: opts.decrypt },
     );
   }
 
-  async _restoreMysql(containerName, filePath) {
+  async _restoreMysql(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
     const script =
       'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysql || command -v mariadb)"; [ -n "$B" ] || { echo "mysql client not found in container" >&2; exit 127; }; exec "$B" -uroot ${P:+-p"$P"}';
     await this._streamFromFile(["exec", "-i", containerName, "sh", "-c", script], filePath, {
       gunzip: true,
+      decrypt: opts.decrypt,
     });
   }
 
-  async _restoreRedis(containerName, filePath) {
+  async _restoreRedis(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
     const tmp = path.join(os.tmpdir(), `hx-redis-${crypto.randomBytes(6).toString("hex")}.rdb`);
     try {
-      await pipeline(fs.createReadStream(filePath), zlib.createGunzip(), fs.createWriteStream(tmp));
+      await pipeline(
+        fs.createReadStream(filePath),
+        ...(opts.decrypt ? [createDecryptStream()] : []),
+        zlib.createGunzip(),
+        fs.createWriteStream(tmp),
+      );
       // The RDB must be swapped in while Redis is stopped, otherwise it overwrites it on shutdown.
       await this._docker(["stop", containerName], 60000);
       await this._docker(["cp", tmp, `${containerName}:/data/dump.rdb`]);
@@ -617,7 +937,7 @@ export class BackupManager {
     }
   }
 
-  async _restoreVolume(containerName, filePath) {
+  async _restoreVolume(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
     const volumes = await this._volumesOf(containerName);
     if (volumes.length === 0)
@@ -627,7 +947,7 @@ export class BackupManager {
       const args = ["run", "--rm", "-i"];
       for (const v of volumes) args.push("-v", `${v}:/backup/${v}`);
       args.push("alpine:3.20", "tar", "xzf", "-", "-C", "/backup");
-      await this._streamFromFile(args, filePath);
+      await this._streamFromFile(args, filePath, { decrypt: opts.decrypt });
     } finally {
       await this._docker(["start", containerName]).catch(() => {});
     }
