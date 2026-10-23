@@ -115,10 +115,17 @@ const ADMIN_ONLY = [
   /^\/api\/email\/smtp-relays(\/|$)/,
   /^\/api\/backups\/s3-config$/,
   /^\/api\/docker\/system\/prune$/,
+  /^\/api\/projects\/[^/]+\/chaos-test$/,
   /^\/api\/docker\/containers\/[^/]+\/exec$/,
   /^\/api\/ai\/config$/,
 ];
-const SECRET_READS = [/\/env(\/|$)/, /\/download$/, /^\/api\/servers/, /^\/api\/tokens/];
+const SECRET_READS = [
+  /\/env(\/|$)/,
+  /\/download$/,
+  /\/webhook(-config)?$/,
+  /^\/api\/servers/,
+  /^\/api\/tokens/,
+];
 
 /** Minimum scope level (1=read, 2=deploy, 3=admin) a token needs for this request. */
 export function requiredLevel(method, pathname) {

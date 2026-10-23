@@ -487,7 +487,7 @@ export class MCPServer {
       },
       {
         name: "search_catalog",
-        description: "Search the 2,502+ curated open-source self-hosted applications catalog.",
+        description: "Search the 2,500+ curated open-source self-hosted applications catalog.",
         inputSchema: {
           type: "object",
           properties: {

@@ -231,7 +231,12 @@ export class OrgManager {
   }
 
   // ────────── Invitations ──────────
-  createInvite(orgId, { email, role = "member" }) {
+  createInvite(orgId, { email, role = "member" }, baseUrl = "") {
+    if (!["admin", "member", "viewer"].includes(role)) {
+      throw new Error(`Invalid role "${role}". Invites can grant: admin, member, viewer.`);
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim()))
+      throw new Error("A valid invitee email address is required.");
     const id = `inv_${crypto.randomBytes(6).toString("hex")}`;
     const token = crypto.randomBytes(24).toString("hex");
     const now = Date.now();
@@ -253,7 +258,8 @@ export class OrgManager {
       role,
       token,
       expires_at: expiresAt,
-      invite_url: `http://localhost:8080/join?token=${token}`,
+      // Base URL comes from HOSTERAX_PUBLIC_URL or the host the admin is using — never a hardcoded dev URL.
+      invite_url: `${(process.env.HOSTERAX_PUBLIC_URL || baseUrl || "").replace(/\/$/, "")}/join?token=${token}`,
     };
   }
 

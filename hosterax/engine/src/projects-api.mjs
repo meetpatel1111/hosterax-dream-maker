@@ -1004,15 +1004,48 @@ export function createProjectsApi(ctx) {
           bad("no tarball uploaded for this session", "sessionId");
         const src = path.join(sess.dir, "src");
         fs.mkdirSync(src, { recursive: true });
-        const code = await new Promise((resolve) => {
-          const c = spawn("tar", ["-xzf", sess.tarball, "-C", src, "--strip-components", "0"], {
-            shell: process.platform === "win32",
+        // Detect the archive type from its magic bytes (zip = "PK\x03\x04", gzip = 1f 8b).
+        const head = Buffer.alloc(4);
+        const fd = fs.openSync(sess.tarball, "r");
+        fs.readSync(fd, head, 0, 4, 0);
+        fs.closeSync(fd);
+        const isZip = head[0] === 0x50 && head[1] === 0x4b;
+        const runExtract = (cmd, args) =>
+          new Promise((resolve) => {
+            const c = spawn(cmd, args);
+            c.on("close", resolve);
+            c.on("error", () => resolve(127));
           });
-          c.on("close", resolve);
-          c.on("error", () => resolve(1));
-        });
-        if (code !== 0)
-          throw new HttpError(400, "could not extract the tarball (expected application/gzip)");
+        let code;
+        if (isZip) {
+          // `unzip` (Info-ZIP) where available, else bsdtar (macOS / Windows tar read zip files).
+          code = await runExtract("unzip", ["-q", "-o", sess.tarball, "-d", src]);
+          if (code === 127) code = await runExtract("tar", ["-xf", sess.tarball, "-C", src]);
+          if (code === 127 || code !== 0)
+            throw new HttpError(
+              400,
+              "could not extract the .zip — install `unzip` on the engine host or upload a .tar.gz",
+            );
+        } else {
+          code = await runExtract("tar", ["-xzf", sess.tarball, "-C", src]);
+          if (code !== 0)
+            throw new HttpError(400, "could not extract the archive (expected .tar.gz or .zip)");
+        }
+        // Defence in depth: refuse archives that unpacked a symlink pointing outside the sandbox.
+        const escapes = (dir) => {
+          for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+            const full = path.join(dir, e.name);
+            if (e.isSymbolicLink()) {
+              const target = path.resolve(dir, fs.readlinkSync(full));
+              if (!target.startsWith(src + path.sep) && target !== src) return true;
+            } else if (e.isDirectory() && escapes(full)) return true;
+          }
+          return false;
+        };
+        if (escapes(src)) {
+          fs.rmSync(src, { recursive: true, force: true });
+          throw new HttpError(400, "archive contains symlinks that point outside the project");
+        }
         const entries = fs.readdirSync(src);
         const root =
           entries.length === 1 && fs.statSync(path.join(src, entries[0])).isDirectory()

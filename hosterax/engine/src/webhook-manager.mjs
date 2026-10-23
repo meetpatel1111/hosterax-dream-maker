@@ -78,18 +78,24 @@ export class WebhookManager {
     if (!signatureHeader || !secret) return false;
     const hmac = crypto.createHmac("sha256", secret);
     const digest = `sha256=${hmac.update(rawBodyText).digest("hex")}`;
-    try {
-      return crypto.timingSafeEqual(Buffer.from(signatureHeader), Buffer.from(digest));
-    } catch {
-      return false;
-    }
+    const a = Buffer.from(String(signatureHeader));
+    const b = Buffer.from(digest);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   }
 
   /**
    * Handle incoming GitHub Webhook event
    */
-  async handleGitHubWebhook({ event, payload, rawBodyText, signatureHeader, projectName = null }) {
-    if (event === "ping") {
+  async handleGitHubWebhook({
+    event,
+    payload,
+    rawBodyText,
+    signatureHeader,
+    projectName = null,
+    requireSignature = false,
+  }) {
+    // Unauthenticated callers (GitHub itself) must prove authenticity with the HMAC signature.
+    if (event === "ping" && !requireSignature) {
       return { ok: true, message: "Pong! Webhook active.", zen: payload?.zen };
     }
 
@@ -113,13 +119,14 @@ export class WebhookManager {
 
     const whConfig = this.getProjectWebhookConfig(project.name);
 
-    // Optional signature check if signature header provided
-    if (
-      signatureHeader &&
-      !this.verifyGitHubSignature(rawBodyText, signatureHeader, whConfig.secret)
-    ) {
-      throw new Error("Invalid GitHub webhook signature (HMAC-SHA256 mismatch).");
+    if (requireSignature || signatureHeader) {
+      if (!this.verifyGitHubSignature(rawBodyText, signatureHeader, whConfig.secret)) {
+        const err = new Error("Invalid or missing GitHub webhook signature (HMAC-SHA256).");
+        err.status = 401;
+        throw err;
+      }
     }
+    if (event === "ping") return { ok: true, message: "Pong! Webhook active.", zen: payload?.zen };
 
     // ────────── 1. Push Event (Push-to-Deploy) ──────────
     if (event === "push") {

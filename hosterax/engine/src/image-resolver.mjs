@@ -1,5 +1,5 @@
 // hosterax/engine/src/image-resolver.mjs
-// Universal Autonomous Docker Image Resolver & Self-Healing Pull Engine for all 2,502+ apps
+// Universal Autonomous Docker Image Resolver & Self-Healing Pull Engine for all 2,500+ apps
 
 import { catalogApps } from "./catalog-api.mjs"; // shared, parsed once
 import { isSafeImageRef } from "./security.mjs";
@@ -240,7 +240,7 @@ export function generateCandidateImageTags(rawTarget, projectName = "") {
     candidates.add(UNIVERSAL_IMAGE_MAP[projNorm]);
   }
 
-  // 2. Catalog lookup in 2,502 applications
+  // 2. Catalog lookup in 2,500+ applications
   if (catalogApps.length > 0) {
     for (const app of catalogApps) {
       if (

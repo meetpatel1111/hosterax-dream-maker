@@ -43,6 +43,7 @@ import { BackupManager } from "./backup-manager.mjs";
 import { CronManager } from "./cron-manager.mjs";
 import { MCPServer } from "./mcp-server.mjs";
 import { ServerManager } from "./server-manager.mjs";
+import { createDashboard } from "./dashboard-server.mjs";
 import { WebhookManager } from "./webhook-manager.mjs";
 import { OrgManager } from "./org-manager.mjs";
 import { EmailManager } from "./email-manager.mjs";
@@ -933,16 +934,24 @@ function runStepArgv(deploymentId, cwd, bin, args, env = {}) {
   });
 }
 
-function runGitClone(deploymentId, cwd, url, targetDir) {
+// Only network git remotes are cloned. Anything else (local paths, "ext::" transports, strings that
+// start with "-") is never handed to `git`, which would otherwise parse it as an option.
+const GIT_URL_RE = /^(https?:\/\/[^\s]+|ssh:\/\/[^\s]+|git@[A-Za-z0-9._-]+:[^\s]+)$/;
+function isGitSource(source) {
+  return typeof source === "string" && !source.startsWith("-") && GIT_URL_RE.test(source);
+}
+
+function runGitClone(deploymentId, cwd, url, targetDir, branch = "") {
   return new Promise((resolve) => {
-    publish(deploymentId, {
-      ts: Date.now(),
-      stream: "system",
-      text: `$ git clone --depth 1 ${url} ${targetDir}`,
-    });
-    const child = spawn("git", ["clone", "--depth", "1", url, targetDir], {
+    const args = ["clone", "--depth", "1"];
+    if (branch && /^[A-Za-z0-9._\-/]{1,200}$/.test(branch) && !branch.startsWith("-"))
+      args.push("--branch", branch);
+    args.push("--", url, targetDir);
+    publish(deploymentId, { ts: Date.now(), stream: "system", text: `$ git ${args.join(" ")}` });
+    const child = spawn("git", args, {
       cwd,
-      env: { ...process.env },
+      // never block on a credentials prompt; forbid the command-executing "ext" transport
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "http:https:ssh:git" },
     });
     child.stdout.on("data", (b) =>
       publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() }),
@@ -961,14 +970,9 @@ function runGitClone(deploymentId, cwd, url, targetDir) {
   });
 }
 
-async function fetchSource(deploymentId, source, workdir, target) {
+async function fetchSource(deploymentId, source, workdir, target, branch = "") {
   fs.mkdirSync(workdir, { recursive: true });
-  if (
-    target === "docker" &&
-    source &&
-    !fs.existsSync(source) &&
-    !/^https?:|^git@|\.git$/.test(source)
-  ) {
+  if (target === "docker" && source && !fs.existsSync(source) && !isGitSource(source)) {
     // Direct Docker image deployment (One-Click App as project)
     publish(deploymentId, {
       ts: Date.now(),
@@ -977,23 +981,26 @@ async function fetchSource(deploymentId, source, workdir, target) {
     });
     return 0;
   }
-  if (/^https?:|^git@|\.git$/.test(source)) {
-    const safeSource = source.replace(/['";`$()!]/g, "");
-    const targetDir = path.basename(workdir).replace(/['";`$()!]/g, "");
-    return runGitClone(deploymentId, path.dirname(workdir), safeSource, targetDir);
+  if (isGitSource(source)) {
+    return runGitClone(deploymentId, path.dirname(workdir), source, path.basename(workdir), branch);
   }
-  const abs = path.resolve(source);
-  if (!fs.existsSync(abs)) {
-    publish(deploymentId, { ts: Date.now(), stream: "stderr", text: "source not found: " + abs });
+  const abs = path.resolve(String(source || ""));
+  if (!source || !fs.existsSync(abs)) {
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "stderr",
+      text: `source not found: ${source ? abs : "(empty)"} — expected a git URL (https/ssh) or a folder on the engine host`,
+    });
     return 1;
   }
-  const safeAbs = abs.replace(/['";`$()!]/g, "");
-  const safeWorkdir = workdir.replace(/['";`$()!]/g, "");
-  const cmd =
-    process.platform === "win32"
-      ? `xcopy "${safeAbs}" "${safeWorkdir}" /E /I /Y /Q`
-      : `cp -R '${safeAbs}/.' '${safeWorkdir}/'`;
-  return runStep(deploymentId, path.dirname(workdir), cmd, {});
+  publish(deploymentId, { ts: Date.now(), stream: "system", text: `copy ${abs} → ${workdir}` });
+  try {
+    await fs.promises.cp(abs, workdir, { recursive: true, force: true });
+    return 0;
+  } catch (e) {
+    publish(deploymentId, { ts: Date.now(), stream: "stderr", text: String(e) });
+    return 1;
+  }
 }
 
 function generateZeroConfigDockerfile(workdir) {
@@ -1526,9 +1533,7 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
     const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
     const projRow = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
     const isDirectImage =
-      projRow?.source &&
-      !fs.existsSync(projRow.source) &&
-      !/^https?:|^git@|\.git$/.test(projRow.source);
+      projRow?.source && !fs.existsSync(projRow.source) && !isGitSource(projRow.source);
     const WELL_KNOWN_IMAGES = {
       ollama: "ollama/ollama:latest",
       "ollama/ollama": "ollama/ollama:latest",
@@ -2117,7 +2122,7 @@ async function runDeployment(project, opts = {}) {
 
       if (!opts.rollbackFrom) {
         setPhase(id, "fetching");
-        const code = await fetchSource(id, p.source, workdir, p.target);
+        const code = await fetchSource(id, p.source, workdir, p.target, p.git_branch || "");
         if (code !== 0) {
           setPhase(id, "failed", { finished_at: Date.now(), exit_code: code });
           return;
@@ -2440,64 +2445,7 @@ function json(res, code, body) {
   res.end(JSON.stringify(body));
 }
 
-const MIME_TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "application/javascript; charset=utf-8",
-  ".mjs": "application/javascript; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".svg": "image/svg+xml",
-  ".ico": "image/x-icon",
-  ".webp": "image/webp",
-  ".woff": "font/woff",
-  ".woff2": "font/woff2",
-  ".ttf": "font/ttf",
-};
-
-function serveStaticDashboard(res, pathname) {
-  const possibleRoots = [
-    path.resolve(process.cwd(), ".output/public"),
-    path.resolve(process.cwd(), "dist"),
-    path.resolve(__dirname, "../../../.output/public"),
-    path.resolve(__dirname, "../../../dist"),
-  ];
-  let publicDir = possibleRoots.find((d) => fs.existsSync(d) && fs.statSync(d).isDirectory());
-  if (!publicDir) return false;
-
-  const safePath = path.normalize(pathname).replace(/^(\.\.[\/\\])+/, "");
-  let filePath = path.join(publicDir, safePath);
-
-  // If path is a directory, look for index.html
-  if (fs.existsSync(filePath) && fs.statSync(filePath).isDirectory()) {
-    filePath = path.join(filePath, "index.html");
-  }
-
-  // SPA fallback for HTML5 history routing
-  if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
-    const indexPath = path.join(publicDir, "index.html");
-    if (fs.existsSync(indexPath)) filePath = indexPath;
-    else return false;
-  }
-
-  try {
-    const ext = path.extname(filePath).toLowerCase();
-    const contentType = MIME_TYPES[ext] || "application/octet-stream";
-    const stat = fs.statSync(filePath);
-    res.writeHead(200, {
-      "content-type": contentType,
-      "content-length": stat.size,
-      "cache-control": ext === ".html" ? "no-cache" : "public, max-age=31536000, immutable",
-    });
-    fs.createReadStream(filePath).pipe(res);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const dashboard = createDashboard({ log: (m) => console.warn(m) });
 const PORT = Number(process.env.HOSTERAX_PORT || 7777);
 // Interface that deployed apps publish on. Use 127.0.0.1 to force all traffic through the edge proxy.
 const BIND_HOST = /^[0-9.]+$|^::1?$/.test(process.env.HOSTERAX_BIND_HOST || "")
@@ -2525,6 +2473,25 @@ function readBody(req, maxSizeBytes = 10 * 1024 * 1024) {
     });
   });
 }
+/** Reads the raw request body (needed for HMAC verification) with a hard size cap. */
+function readRawBody(req, maxBytes = 5 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let total = 0;
+    req.on("data", (c) => {
+      total += c.length;
+      if (total > maxBytes) {
+        req.destroy();
+        reject(new Error("request body too large"));
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
 const touchToken = (() => {
   const stmt = db.prepare("UPDATE tokens SET last_used_at=? WHERE token=?");
   const last = new Map();
@@ -3083,30 +3050,54 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
-  // GitHub webhook — public but HMAC-verified
-  if (url.pathname.startsWith("/webhooks/github/") && req.method === "POST") {
-    const project = url.pathname.split("/").pop();
-    const wh = db.prepare("SELECT * FROM webhooks WHERE project=?").get(project);
-    if (!wh) return json(res, 404, { error: "no webhook configured" });
-    let raw = "";
-    req.on("data", (c) => (raw += c));
-    return req.on("end", async () => {
-      const sig = req.headers["x-hub-signature-256"] || "";
-      const expected = "sha256=" + crypto.createHmac("sha256", wh.secret).update(raw).digest("hex");
-      const a = Buffer.from(sig),
-        b = Buffer.from(expected);
-      if (a.length !== b.length || !crypto.timingSafeEqual(a, b))
-        return json(res, 401, { error: "bad signature" });
-      try {
-        const payload = JSON.parse(raw);
-        const branch = (payload.ref || "").replace("refs/heads/", "");
-        if (branch !== wh.branch) return json(res, 200, { skipped: true, branch });
+  // Git provider webhooks — public, but every request must carry a valid HMAC signature.
+  if (
+    (url.pathname === "/webhooks/github" || url.pathname.startsWith("/webhooks/github/")) &&
+    req.method === "POST"
+  ) {
+    const project = decodeURIComponent(url.pathname.split("/")[3] || "") || null;
+    let raw;
+    try {
+      raw = await readRawBody(req, 5 * 1024 * 1024);
+    } catch {
+      return json(res, 413, { error: "payload too large" });
+    }
+    const event = String(req.headers["x-github-event"] || "push");
+    const signatureHeader = String(req.headers["x-hub-signature-256"] || "");
+    let payload = {};
+    try {
+      payload = JSON.parse(raw);
+    } catch {}
+    try {
+      // Webhooks configured through POST /api/projects/:n/webhook (explicit secret + branch)
+      const legacy = project
+        ? db.prepare("SELECT * FROM webhooks WHERE project=?").get(project)
+        : null;
+      if (legacy) {
+        const expected =
+          "sha256=" + crypto.createHmac("sha256", legacy.secret).update(raw).digest("hex");
+        const a = Buffer.from(signatureHeader);
+        const b = Buffer.from(expected);
+        if (a.length !== b.length || !crypto.timingSafeEqual(a, b))
+          return json(res, 401, { error: "bad signature" });
+        if (event === "ping") return json(res, 200, { ok: true, message: "Pong! Webhook active." });
+        const branch = String(payload.ref || "").replace("refs/heads/", "");
+        if (branch !== legacy.branch) return json(res, 200, { skipped: true, branch });
         const r = await runDeployment(project, { trigger: "git" });
         return json(res, 200, { deployed: r.id });
-      } catch (e) {
-        return json(res, 500, { error: String(e) });
       }
-    });
+      const result = await webhookManager.handleGitHubWebhook({
+        event,
+        payload,
+        rawBodyText: raw,
+        signatureHeader,
+        projectName: project,
+        requireSignature: true,
+      });
+      return json(res, 200, result);
+    } catch (e) {
+      return json(res, e.status || 500, { error: e.message });
+    }
   }
 
   if (!authOk(req)) return json(res, 401, { error: "unauthorized" });
@@ -3695,6 +3686,12 @@ const server = http.createServer(async (req, res) => {
       const r = await runDeployment(d.project, rollbackOptions(d));
       return json(res, 200, r);
     }
+    if ((m = url.pathname.match(/^\/api\/deployments\/([^/]+)$/)) && req.method === "GET") {
+      const d = db.prepare("SELECT * FROM deployments WHERE id=?").get(m[1]);
+      if (!d) return json(res, 404, { error: "deployment not found" });
+      const { snapshot_json, ...safe } = d;
+      return json(res, 200, safe);
+    }
     if ((m = url.pathname.match(/^\/api\/deployments\/([^/]+)\/logs$/)) && req.method === "GET") {
       const text = readDeploymentLog(m[1]);
       res.writeHead(200, { "content-type": "text/plain", "access-control-allow-origin": "*" });
@@ -4136,11 +4133,7 @@ const server = http.createServer(async (req, res) => {
       const projectName = m ? m[1] : null;
       const event = req.headers["x-github-event"] || "push";
       const sig = req.headers["x-hub-signature-256"] || "";
-      const rawText = await new Promise((resolve) => {
-        let s = "";
-        req.on("data", (c) => (s += c));
-        req.on("end", () => resolve(s));
-      });
+      const rawText = await readRawBody(req);
 
       let payload = {};
       try {
@@ -4237,7 +4230,8 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/orgs\/([^/]+)\/invites$/)) && req.method === "POST") {
       const b = await readBody(req);
       try {
-        const invite = orgManager.createInvite(m[1], b);
+        const proto = req.headers["x-forwarded-proto"] || "http";
+        const invite = orgManager.createInvite(m[1], b, `${proto}://${req.headers.host}`);
         return json(res, 201, invite);
       } catch (err) {
         return json(res, 400, { error: err.message });
@@ -4662,7 +4656,7 @@ const server = http.createServer(async (req, res) => {
 
     // ────────── backups ──────────
     if ((m = url.pathname.match(/^\/api\/databases\/([^/]+)\/backup$/)) && req.method === "POST") {
-      const mdb = db.prepare("SELECT * FROM managed_dbs WHERE id=?").get(m[1]);
+      const mdb = db.prepare("SELECT * FROM managed_dbs WHERE id=? OR name=?").get(m[1], m[1]);
       if (!mdb) return json(res, 404, { error: "database not found" });
       try {
         const backupResult = await backupManager.createBackup({
@@ -4675,6 +4669,20 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         return json(res, 500, { error: err.message });
       }
+    }
+
+    // ────────── who am I ──────────
+    if (url.pathname === "/api/auth/me" && req.method === "GET") {
+      const scopes = callerScopes(req) || [];
+      const t = bearerFrom(req);
+      const row = t ? db.prepare("SELECT name FROM tokens WHERE token=?").get(hashToken(t)) : null;
+      return json(res, 200, {
+        ok: true,
+        role: aiRoleFor(req),
+        scopes,
+        local: !t && isTrustedLocalRequest(req, PORT),
+        tokenName: row?.name || null,
+      });
     }
 
     // ────────── tokens ──────────
@@ -4945,9 +4953,7 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
-    if (req.method === "GET" && serveStaticDashboard(res, url.pathname)) {
-      return;
-    }
+    if (await dashboard.handle(req, res, url.pathname)) return;
     return json(res, 404, { error: "not found" });
   } catch (e) {
     return json(res, 500, { error: String(e) });
@@ -4999,6 +5005,7 @@ function handleGracefulShutdown(signal) {
   try {
     selfHeal?.stop?.();
     scaleToZeroManager?.stop?.();
+    dashboard.close();
     server.close(() => {
       console.log("[hosterax-engine] HTTP server closed.");
       try {

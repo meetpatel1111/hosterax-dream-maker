@@ -1708,7 +1708,7 @@ export class AIOpsManager {
       return actionMatch[1];
     }
 
-    // Check 2,502+ app catalog map
+    // Check 2,500+ app catalog map
     if (this.catalogMap) {
       for (const word of text.split(/\s+/)) {
         const clean = word.toLowerCase().replace(/[^a-z0-9_-]/g, "");

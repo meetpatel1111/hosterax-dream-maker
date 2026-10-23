@@ -1063,16 +1063,19 @@ export class SelfHealEngine {
       this.logEvent(
         projectName,
         "chaos_injected",
-        "Chaos Drill: Injecting simulated 92% memory saturation event...",
+        "Chaos Drill [SIMULATED]: no real memory pressure is applied — this only exercises the alert path.",
         "warning",
       );
       this.logEvent(
         projectName,
         "memory_warning_near_oom",
-        "Memory utilization reached 92.4%. Predictive OOM Sentinel active.",
+        "[SIMULATED] Memory utilization 92% (drill event, not a measurement).",
         "warning",
       );
-      return { ok: true, message: "Memory spike alert simulated." };
+      return {
+        ok: true,
+        message: "Simulated memory alert recorded (no real memory pressure was applied).",
+      };
     }
 
     if (chaosType === "flapping") {

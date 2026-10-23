@@ -192,7 +192,12 @@ export class CronManager {
           ? JSON.stringify(data.http_headers)
           : data.http_headers_json || "{}",
       target_container:
-        data.target_container || (data.project_name ? `hx_${data.project_name}` : null),
+        data.target_container ||
+        (data.project_name
+          ? `hx_${String(data.project_name)
+              .toLowerCase()
+              .replace(/[^a-z0-9]/g, "_")}`
+          : null),
       timeout_seconds: data.timeout_seconds ? Number(data.timeout_seconds) : 300,
       max_retries: data.max_retries ? Number(data.max_retries) : 0,
       enabled: data.enabled !== undefined ? (data.enabled ? 1 : 0) : 1,
@@ -318,15 +323,50 @@ export class CronManager {
 
     try {
       if (job.job_type === "backup" && this.backupManager) {
-        // Execute automated database backup
-        const target = job.project_name || "all";
-        stdout = `[backup-job] Initiating scheduled database snapshot for "${target}"...\n`;
-        const res = await this.backupManager.createBackup({
-          databaseName: job.project_name || "default",
-          dbType: "volume",
-          projectName: job.project_name || null,
-        });
-        stdout += `[backup-job] Successfully created snapshot: ${res.id} (${res.sizeMb} MB, SHA-256: ${res.sha256})\n`;
+        // Snapshot every managed database of the project (or all), plus the project's own volumes.
+        const project = job.project_name || null;
+        stdout = `[backup-job] Initiating scheduled snapshot for "${project || "all databases"}"...\n`;
+        const dbs = project
+          ? this.db.prepare("SELECT * FROM managed_dbs WHERE project=?").all(project)
+          : this.db.prepare("SELECT * FROM managed_dbs").all();
+        const targets = dbs.map((m) => ({
+          databaseName: m.name,
+          dbType: m.engine,
+          projectName: m.project,
+          containerName: `hx_db_${m.name}`,
+          optional: false,
+        }));
+        if (project) {
+          targets.push({
+            databaseName: project,
+            dbType: "volume",
+            projectName: project,
+            containerName: job.target_container,
+            optional: true, // stateless projects have nothing to snapshot
+          });
+        }
+        if (targets.length === 0) {
+          throw new Error("Nothing to back up: no managed databases found.");
+        }
+        let failures = 0;
+        for (const t of targets) {
+          try {
+            const res = await this.backupManager.createBackup(t);
+            stdout += `[backup-job] OK ${t.databaseName}: ${res.id} (${res.sizeMb} MB, ${res.sha256})\n`;
+          } catch (e) {
+            if (t.optional && /no named volumes/i.test(e.message)) {
+              stdout += `[backup-job] skip ${t.databaseName}: no persistent volumes\n`;
+              continue;
+            }
+            failures++;
+            stderr += `[backup-job] FAILED ${t.databaseName}: ${e.message}\n`;
+          }
+        }
+        if (failures > 0) {
+          status = "failed";
+          exitCode = 1;
+          errorMessage = `${failures} of ${targets.length} backup(s) failed`;
+        }
       } else if (job.job_type === "http") {
         // Execute HTTP request
         const res = await this._runHttpJob(job);
