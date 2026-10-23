@@ -189,11 +189,17 @@ test("database provisioning is real: it needs Docker and never fakes success", a
     assert.match(body.error, /docker/i);
     const dbs = await api("GET", `/api/projects/${proj}/databases`);
     assert.equal(dbs.length, 0);
-  } else {
-    assert.equal(attempt.status, 200);
+  } else if (attempt.status === 200) {
     assert.ok(body.id.startsWith("mdb_"));
     assert.match(body.connection_string, /^postgresql:\/\/hx:/);
     await api("DELETE", `/api/databases/${body.id}`);
+  } else {
+    // The daemon answered but could not run the image (e.g. a Windows-containers daemon, or no
+    // network to pull it). The failure must be reported, and no phantom database recorded.
+    assert.ok(attempt.status >= 400, `unexpected status ${attempt.status}`);
+    assert.ok(body.error, "a failed provision must carry an error message");
+    const dbs = await api("GET", `/api/projects/${proj}/databases`);
+    assert.equal(dbs.length, 0);
   }
   // Input validation is independent of Docker.
   const bad = await fetch(`${baseUrl}/api/projects/${proj}/databases`, {
