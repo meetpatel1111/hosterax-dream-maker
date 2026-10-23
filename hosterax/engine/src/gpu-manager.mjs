@@ -27,7 +27,7 @@ export class GpuManager {
       // 1. Try querying nvidia-smi with CSV output format
       const { stdout } = await execAsync(
         "nvidia-smi --query-gpu=name,driver_version,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu,power.draw --format=csv,noheader,nounits",
-        { timeout: 2500 }
+        { timeout: 2500 },
       );
 
       const lines = stdout.trim().split("\n").filter(Boolean);
@@ -43,9 +43,8 @@ export class GpuManager {
           const utilizationGpuPercent = Number.parseFloat(parts[6]) || 0;
           const powerDrawWatts = Number.parseFloat(parts[7]) || 0;
 
-          const memoryUsagePercent = memoryTotalMb > 0
-            ? Math.round((memoryUsedMb / memoryTotalMb) * 100)
-            : 0;
+          const memoryUsagePercent =
+            memoryTotalMb > 0 ? Math.round((memoryUsedMb / memoryTotalMb) * 100) : 0;
 
           return {
             index: idx,
@@ -124,7 +123,7 @@ export class GpuManager {
       "gemma2:9b": 6400,
       "whisper:large-v3": 3800,
       "sdxl:turbo": 6800,
-      "comfyui": 7200,
+      comfyui: 7200,
     };
 
     const cleanModel = modelName.toLowerCase().trim();
@@ -163,8 +162,8 @@ export class GpuManager {
       gpuName: gpuMetrics.primary.name,
       mode: canFitGpu ? "gpu_accelerated" : "cpu_hybrid",
       recommendation: canFitGpu
-        ? `Fully fits into ${gpuMetrics.primary.name} (${Math.round(requiredMb / 1024 * 10) / 10} GB VRAM required, ${Math.round(freeVram / 1024 * 10) / 10} GB free).`
-        : `Requires ~${Math.round(requiredMb / 1024 * 10) / 10} GB VRAM, but only ${Math.round(freeVram / 1024 * 10) / 10} GB is free. Will offload overflow to system RAM.`,
+        ? `Fully fits into ${gpuMetrics.primary.name} (${Math.round((requiredMb / 1024) * 10) / 10} GB VRAM required, ${Math.round((freeVram / 1024) * 10) / 10} GB free).`
+        : `Requires ~${Math.round((requiredMb / 1024) * 10) / 10} GB VRAM, but only ${Math.round((freeVram / 1024) * 10) / 10} GB is free. Will offload overflow to system RAM.`,
     };
   }
 }

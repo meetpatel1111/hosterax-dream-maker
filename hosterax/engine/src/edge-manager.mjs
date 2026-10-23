@@ -258,10 +258,7 @@ export class EdgeManager {
       const primary = projDomains.find((d) => d.is_primary);
       const cleanName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "-");
 
-      const hostnames = new Set([
-        `${p.name}.localhost`,
-        `${p.name}.traefik.me`,
-      ]);
+      const hostnames = new Set([`${p.name}.localhost`, `${p.name}.traefik.me`]);
 
       if (cleanName !== p.name) {
         hostnames.add(`${cleanName}.localhost`);

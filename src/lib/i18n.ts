@@ -54,11 +54,13 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     // App Store & Catalog
     softwareDirectory: "Software Directory & Templates",
     appStoreCatalog: "App Store & Catalog",
-    appStoreDesc: "Discover, install, and run 2,550+ self-hosted software packages and starter templates with zero-config.",
+    appStoreDesc:
+      "Discover, install, and run 2,550+ self-hosted software packages and starter templates with zero-config.",
     oneClickApps: "One-Click Apps",
     starterTemplates: "Starter Templates",
     oneClickCatalogTitle: "One-Click Self-Hosted Software Catalog",
-    oneClickCatalogDesc: "Browse 112+ tags and categories from awesome-selfhosted.net, sysadmin.awesome-selfhosted.net, and selfh.st/apps. Launch any application instantly with smart zero-config port discovery, persistent volumes, and custom domains.",
+    oneClickCatalogDesc:
+      "Browse 112+ tags and categories from awesome-selfhosted.net, sysadmin.awesome-selfhosted.net, and selfh.st/apps. Launch any application instantly with smart zero-config port discovery, persistent volumes, and custom domains.",
     deployAnyDockerImage: "Deploy Any Docker Image (Docker Hub / GHCR / Self-Hosted)",
     sourceFilter: "Source:",
     allApps: "All",
@@ -107,11 +109,13 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     // App Store & Catalog
     softwareDirectory: "Directorio de Software y Plantillas",
     appStoreCatalog: "Tienda de Apps y Catálogo",
-    appStoreDesc: "Descubre, instala y ejecuta más de 2,550 paquetes de software auto-hospedados y plantillas sin configuración.",
+    appStoreDesc:
+      "Descubre, instala y ejecuta más de 2,550 paquetes de software auto-hospedados y plantillas sin configuración.",
     oneClickApps: "Apps en 1-Clic",
     starterTemplates: "Plantillas Iniciales",
     oneClickCatalogTitle: "Catálogo de Software Auto-Hospedado en 1-Clic",
-    oneClickCatalogDesc: "Explora más de 112 categorías y etiquetas de awesome-selfhosted.net y selfh.st. Despliega cualquier aplicación al instante con descubrimiento automático de puertos, volúmenes persistentes y dominios.",
+    oneClickCatalogDesc:
+      "Explora más de 112 categorías y etiquetas de awesome-selfhosted.net y selfh.st. Despliega cualquier aplicación al instante con descubrimiento automático de puertos, volúmenes persistentes y dominios.",
     deployAnyDockerImage: "Desplegar Cualquier Imagen Docker (Docker Hub / GHCR / Auto-Hospedado)",
     sourceFilter: "Origen:",
     allApps: "Todas",
@@ -160,11 +164,13 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     // App Store & Catalog
     softwareDirectory: "دليل البرمجيات والقوالب",
     appStoreCatalog: "متجر التطبيقات والدليل الشامل",
-    appStoreDesc: "اكتشف وثبت وشغل أكثر من 2,550 تطبيقاً برمجياً مفتوح المصدر وقوالب سريعة بدون أي إعدادات مسبقة.",
+    appStoreDesc:
+      "اكتشف وثبت وشغل أكثر من 2,550 تطبيقاً برمجياً مفتوح المصدر وقوالب سريعة بدون أي إعدادات مسبقة.",
     oneClickApps: "تطبيقات بنقرة واحدة",
     starterTemplates: "قوالب سريعة",
     oneClickCatalogTitle: "دليل التطبيقات ذاتية الاستضافة بنقرة واحدة",
-    oneClickCatalogDesc: "تصفح أكثر من 112 تصنيفاً من مصادر البرمجيات ذاتية الاستضافة الموثوقة. أطلق أي تطبيق فورياً مع إدارة تلقائية للمنافذ والأقراص والنطاقات.",
+    oneClickCatalogDesc:
+      "تصفح أكثر من 112 تصنيفاً من مصادر البرمجيات ذاتية الاستضافة الموثوقة. أطلق أي تطبيق فورياً مع إدارة تلقائية للمنافذ والأقراص والنطاقات.",
     deployAnyDockerImage: "نشر أي حاوية دكر (Docker Hub / GHCR / استضافة ذاتية)",
     sourceFilter: "المصدر:",
     allApps: "الكل",
@@ -211,11 +217,13 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
 
     softwareDirectory: "Software-Verzeichnis & Vorlagen",
     appStoreCatalog: "App Store & Katalog",
-    appStoreDesc: "Entdecken, installieren und betreiben Sie über 2.550 selbst gehostete Softwarepakete und Vorlagen ohne Konfiguration.",
+    appStoreDesc:
+      "Entdecken, installieren und betreiben Sie über 2.550 selbst gehostete Softwarepakete und Vorlagen ohne Konfiguration.",
     oneClickApps: "1-Klick-Apps",
     starterTemplates: "Starter-Vorlagen",
     oneClickCatalogTitle: "1-Klick Self-Hosted Software-Katalog",
-    oneClickCatalogDesc: "Durchsuchen Sie über 112 Kategorien. Starten Sie jede Anwendung sofort mit intelligenter Port-Erkennung und persistentem Speicher.",
+    oneClickCatalogDesc:
+      "Durchsuchen Sie über 112 Kategorien. Starten Sie jede Anwendung sofort mit intelligenter Port-Erkennung und persistentem Speicher.",
     deployAnyDockerImage: "Beliebiges Docker-Image bereitstellen (Docker Hub / GHCR)",
     sourceFilter: "Quelle:",
     allApps: "Alle",
@@ -262,11 +270,13 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
 
     softwareDirectory: "Répertoire de Logiciels et Modèles",
     appStoreCatalog: "Boutique d'Apps et Catalogue",
-    appStoreDesc: "Découvrez, installez et exécutez plus de 2 550 packages de logiciels auto-hébergés sans configuration.",
+    appStoreDesc:
+      "Découvrez, installez et exécutez plus de 2 550 packages de logiciels auto-hébergés sans configuration.",
     oneClickApps: "Apps en 1-Clic",
     starterTemplates: "Modèles de Démarrage",
     oneClickCatalogTitle: "Catalogue de Logiciels Auto-Hébergés en 1-Clic",
-    oneClickCatalogDesc: "Parcourez plus de 112 catégories. Lancez n'importe quelle application instantanément avec détection de port et volumes persistants.",
+    oneClickCatalogDesc:
+      "Parcourez plus de 112 catégories. Lancez n'importe quelle application instantanément avec détection de port et volumes persistants.",
     deployAnyDockerImage: "Déployer une Image Docker (Docker Hub / GHCR)",
     sourceFilter: "Source:",
     allApps: "Toutes",
@@ -313,11 +323,13 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
 
     softwareDirectory: "ソフトウェアディレクトリ＆テンプレート",
     appStoreCatalog: "アプリストア＆カタログ",
-    appStoreDesc: "2,550以上のセルフホスト対応オープンソースソフトウェアをゼロ構成で即座に導入できます。",
+    appStoreDesc:
+      "2,550以上のセルフホスト対応オープンソースソフトウェアをゼロ構成で即座に導入できます。",
     oneClickApps: "ワンクリックアプリ",
     starterTemplates: "スターターテンプレート",
     oneClickCatalogTitle: "ワンクリック・セルフホストカタログ",
-    oneClickCatalogDesc: "112以上のカテゴリから選択可能。スマートなポート自動検知とボリューム永続化で即時起動します。",
+    oneClickCatalogDesc:
+      "112以上のカテゴリから選択可能。スマートなポート自動検知とボリューム永続化で即時起動します。",
     deployAnyDockerImage: "Dockerイメージのデプロイ (Docker Hub / GHCR)",
     sourceFilter: "ソース:",
     allApps: "すべて",
@@ -364,11 +376,13 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
 
     softwareDirectory: "Diretório de Software e Modelos",
     appStoreCatalog: "Loja de Aplicativos e Catálogo",
-    appStoreDesc: "Descubra, instale e execute mais de 2.550 pacotes de software auto-hospedados sem configuração.",
+    appStoreDesc:
+      "Descubra, instale e execute mais de 2.550 pacotes de software auto-hospedados sem configuração.",
     oneClickApps: "Apps em 1-Clique",
     starterTemplates: "Modelos Iniciais",
     oneClickCatalogTitle: "Catálogo de Software Auto-Hospedado em 1-Clique",
-    oneClickCatalogDesc: "Navegue por mais de 112 categorias. Inicie qualquer aplicativo instantaneamente com portas inteligentes e armazenamento persistente.",
+    oneClickCatalogDesc:
+      "Navegue por mais de 112 categorias. Inicie qualquer aplicativo instantaneamente com portas inteligentes e armazenamento persistente.",
     deployAnyDockerImage: "Implantar Qualquer Imagem Docker (Docker Hub / GHCR)",
     sourceFilter: "Origem:",
     allApps: "Todas",
@@ -419,7 +433,8 @@ export const TRANSLATIONS: Record<LanguageCode, Record<string, string>> = {
     oneClickApps: "一键应用商店",
     starterTemplates: "项目起步模板",
     oneClickCatalogTitle: "2,550+ 开源自托管软件目录",
-    oneClickCatalogDesc: "涵盖 112+ 标签与分类。支持智能端口探测、持久化卷映射以及自动 HTTPS 域名解析。",
+    oneClickCatalogDesc:
+      "涵盖 112+ 标签与分类。支持智能端口探测、持久化卷映射以及自动 HTTPS 域名解析。",
     deployAnyDockerImage: "部署任意 Docker 镜像 (Docker Hub / GHCR / 私有仓库)",
     sourceFilter: "应用来源:",
     allApps: "全部应用",

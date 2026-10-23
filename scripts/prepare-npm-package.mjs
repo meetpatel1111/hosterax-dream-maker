@@ -50,7 +50,9 @@ if (fs.existsSync(outputPublic)) {
   copyDirRecursive(distDir, CLI_DIST_DIR);
   console.log(`[HosteraX Package] Bundled web control plane from ${distDir}`);
 } else {
-  console.warn(`[HosteraX Package Warning] Built web assets (.output/public or dist) not found. Run 'npm run build' first.`);
+  console.warn(
+    `[HosteraX Package Warning] Built web assets (.output/public or dist) not found. Run 'npm run build' first.`,
+  );
 }
 
 console.log("[HosteraX Package] ✅ All-in-one package bundle prepared successfully!");

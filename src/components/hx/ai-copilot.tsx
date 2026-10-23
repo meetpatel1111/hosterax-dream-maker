@@ -23,12 +23,7 @@ import {
   Trash2,
   HelpCircle,
 } from "lucide-react";
-import {
-  useAiChat,
-  useAiConfig,
-  type AiConfirmationRequired,
-  type AiToolCall,
-} from "@/lib/engine";
+import { useAiChat, useAiConfig, type AiConfirmationRequired, type AiToolCall } from "@/lib/engine";
 import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
@@ -42,7 +37,10 @@ interface ChatMessage {
 }
 
 const QUICK_PROMPTS = [
-  { label: "🔍 Diagnose Cluster", prompt: "Diagnose cluster health and check for failing containers" },
+  {
+    label: "🔍 Diagnose Cluster",
+    prompt: "Diagnose cluster health and check for failing containers",
+  },
   { label: "📊 Live Metrics", prompt: "Show system metrics and node telemetry" },
   { label: "⚡ Reclaim RAM", prompt: "Reclaim idle memory across all containers" },
   { label: "📜 Error Logs", prompt: "Search error logs in stirling-pdf" },
@@ -57,8 +55,10 @@ export function AICopilot() {
   const [isExpanded, setIsExpanded] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [pendingConfirmation, setPendingConfirmation] = useState<AiConfirmationRequired | null>(null);
-  
+  const [pendingConfirmation, setPendingConfirmation] = useState<AiConfirmationRequired | null>(
+    null,
+  );
+
   const { user } = useAuth();
   const userRole = (user?.role as string) || "admin";
   const userEmail = (user?.email as string) || "admin@hosterax.local";
@@ -220,7 +220,9 @@ export function AICopilot() {
           <div className="relative flex items-center justify-center">
             <Sparkles className="w-4 h-4 animate-pulse text-background" />
           </div>
-          <span className="text-xs font-mono font-bold tracking-tight text-background">AI Copilot</span>
+          <span className="text-xs font-mono font-bold tracking-tight text-background">
+            AI Copilot
+          </span>
           <span className="hidden sm:inline-block rounded bg-background/20 px-1.5 py-0.5 text-[10px] font-mono text-background">
             ⌘K
           </span>
@@ -241,7 +243,7 @@ export function AICopilot() {
               "pointer-events-auto flex flex-col bg-card/95 backdrop-blur-md border border-border/80 rounded-t-2xl sm:rounded-2xl shadow-2xl transition-all duration-300 overflow-hidden font-sans",
               isExpanded
                 ? "w-full h-full sm:w-[850px] sm:h-[85vh]"
-                : "w-full h-[620px] sm:w-[540px] sm:h-[700px]"
+                : "w-full h-[620px] sm:w-[540px] sm:h-[700px]",
             )}
           >
             {/* Header */}
@@ -252,7 +254,9 @@ export function AICopilot() {
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <h3 className="text-sm font-semibold text-foreground">HosteraX AIOps Copilot</h3>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      HosteraX AIOps Copilot
+                    </h3>
                     {/* RBAC Role Indicator Badge */}
                     <span
                       className={cn(
@@ -260,8 +264,8 @@ export function AICopilot() {
                         userRole === "owner" || userRole === "admin"
                           ? "bg-primary/15 text-primary border border-primary/30"
                           : userRole === "member" || userRole === "operator"
-                          ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
-                          : "bg-muted text-muted-foreground border border-border"
+                            ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                            : "bg-muted text-muted-foreground border border-border",
                       )}
                     >
                       <Shield className="w-2.5 h-2.5" />
@@ -280,7 +284,11 @@ export function AICopilot() {
                   className="hidden sm:inline-flex p-1.5 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
                   title={isExpanded ? "Collapse" : "Expand"}
                 >
-                  {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  {isExpanded ? (
+                    <Minimize2 className="w-4 h-4" />
+                  ) : (
+                    <Maximize2 className="w-4 h-4" />
+                  )}
                 </button>
                 <button
                   onClick={() => setIsOpen(false)}
@@ -312,7 +320,7 @@ export function AICopilot() {
                   key={m.id}
                   className={cn(
                     "flex flex-col gap-1.5 max-w-[92%]",
-                    m.role === "user" ? "ml-auto items-end" : "mr-auto items-start"
+                    m.role === "user" ? "ml-auto items-end" : "mr-auto items-start",
                   )}
                 >
                   <div
@@ -321,8 +329,8 @@ export function AICopilot() {
                       m.role === "user"
                         ? "bg-primary text-primary-foreground font-medium"
                         : m.role === "system"
-                        ? "bg-amber-500/10 border border-amber-500/30 text-amber-300"
-                        : "bg-muted/80 text-foreground border border-border/60"
+                          ? "bg-amber-500/10 border border-amber-500/30 text-amber-300"
+                          : "bg-muted/80 text-foreground border border-border/60",
                     )}
                   >
                     {/* Tool Calls Execution Pill */}
@@ -336,14 +344,18 @@ export function AICopilot() {
                               tc.status === "success"
                                 ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
                                 : tc.status === "denied_rbac"
-                                ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                                : "bg-destructive/10 text-destructive border border-destructive/20"
+                                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                  : "bg-destructive/10 text-destructive border border-destructive/20",
                             )}
                           >
                             <Terminal className="w-3 h-3 shrink-0" />
                             <span className="font-semibold">tool: {tc.toolName}</span>
                             <span className="ml-auto font-mono text-[9px] uppercase">
-                              {tc.status === "success" ? "✓ Executed" : tc.status === "denied_rbac" ? "🛡️ Denied" : "✗ Failed"}
+                              {tc.status === "success"
+                                ? "✓ Executed"
+                                : tc.status === "denied_rbac"
+                                  ? "🛡️ Denied"
+                                  : "✗ Failed"}
                             </span>
                           </div>
                         ))}
@@ -386,7 +398,10 @@ export function AICopilot() {
                   </div>
 
                   <span className="text-[9px] text-muted-foreground px-1 font-mono">
-                    {new Date(m.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                    {new Date(m.timestamp).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
                   </span>
                 </div>
               ))}

@@ -10,7 +10,7 @@ import os from "node:os";
 export class DockerApiClient {
   constructor({ socketPath, host, port } = {}) {
     this.isWindows = os.platform() === "win32";
-    
+
     // Auto-detect default Docker daemon connection
     if (socketPath) {
       this.socketPath = socketPath;
@@ -50,7 +50,9 @@ export class DockerApiClient {
    */
   request(method, endpoint, { body = null, headers = {}, timeout = 15000 } = {}) {
     return new Promise((resolve, reject) => {
-      const pathWithVersion = endpoint.startsWith("/v1.") ? endpoint : `/${this.apiVersion}${endpoint}`;
+      const pathWithVersion = endpoint.startsWith("/v1.")
+        ? endpoint
+        : `/${this.apiVersion}${endpoint}`;
 
       const options = {
         method,
@@ -97,7 +99,9 @@ export class DockerApiClient {
             resolve(parsed);
           } else {
             const errMessage = parsed?.message || parsed || `HTTP ${res.statusCode}`;
-            const err = new Error(`Docker API Error [${res.statusCode} ${method} ${endpoint}]: ${errMessage}`);
+            const err = new Error(
+              `Docker API Error [${res.statusCode} ${method} ${endpoint}]: ${errMessage}`,
+            );
             err.statusCode = res.statusCode;
             err.body = parsed;
             reject(err);
@@ -168,10 +172,12 @@ export class DockerApiClient {
         const names = c.Names || [];
         return names.some((n) => {
           const stripped = n.replace(/^\//, "");
-          return stripped === clean ||
-                 stripped === `hx_${clean}` ||
-                 stripped === `hx_${clean.replace(/[^a-z0-9_]/g, "_")}` ||
-                 stripped.includes(clean);
+          return (
+            stripped === clean ||
+            stripped === `hx_${clean}` ||
+            stripped === `hx_${clean.replace(/[^a-z0-9_]/g, "_")}` ||
+            stripped.includes(clean)
+          );
         });
       });
       if (found) return found.Id;
@@ -233,7 +239,10 @@ export class DockerApiClient {
    */
   async removeContainer(nameOrId, { force = true, removeVolumes = true } = {}) {
     const target = await this.resolveContainerId(nameOrId);
-    return this.request("DELETE", `/containers/${encodeURIComponent(target)}?force=${force ? "1" : "0"}&v=${removeVolumes ? "1" : "0"}`);
+    return this.request(
+      "DELETE",
+      `/containers/${encodeURIComponent(target)}?force=${force ? "1" : "0"}&v=${removeVolumes ? "1" : "0"}`,
+    );
   }
 
   /**
@@ -243,7 +252,9 @@ export class DockerApiClient {
    */
   async updateContainer(nameOrId, resources = {}) {
     const target = await this.resolveContainerId(nameOrId);
-    return this.request("POST", `/containers/${encodeURIComponent(target)}/update`, { body: resources });
+    return this.request("POST", `/containers/${encodeURIComponent(target)}/update`, {
+      body: resources,
+    });
   }
 
   /**
@@ -259,7 +270,10 @@ export class DockerApiClient {
    */
   async getContainerLogs(nameOrId, { tail = 100, timestamps = false } = {}) {
     const target = await this.resolveContainerId(nameOrId);
-    return this.request("GET", `/containers/${encodeURIComponent(target)}/logs?stdout=1&stderr=1&tail=${tail}&timestamps=${timestamps ? "1" : "0"}`);
+    return this.request(
+      "GET",
+      `/containers/${encodeURIComponent(target)}/logs?stdout=1&stderr=1&tail=${tail}&timestamps=${timestamps ? "1" : "0"}`,
+    );
   }
 
   /**
@@ -267,7 +281,10 @@ export class DockerApiClient {
    */
   async getContainerTop(nameOrId, psArgs = "-ef") {
     const target = await this.resolveContainerId(nameOrId);
-    return this.request("GET", `/containers/${encodeURIComponent(target)}/top?ps_args=${encodeURIComponent(psArgs)}`);
+    return this.request(
+      "GET",
+      `/containers/${encodeURIComponent(target)}/top?ps_args=${encodeURIComponent(psArgs)}`,
+    );
   }
 
   /**
@@ -286,18 +303,22 @@ export class DockerApiClient {
   async execCommand(nameOrId, cmd, { workingDir = null, env = [] } = {}) {
     const target = await this.resolveContainerId(nameOrId);
     const cmdArray = Array.isArray(cmd) ? cmd : ["sh", "-c", cmd];
-    
+
     // 1. Create Exec Instance
-    const execInstance = await this.request("POST", `/containers/${encodeURIComponent(target)}/exec`, {
-      body: {
-        AttachStdout: true,
-        AttachStderr: true,
-        Tty: false,
-        Cmd: cmdArray,
-        WorkingDir: workingDir,
-        Env: env,
+    const execInstance = await this.request(
+      "POST",
+      `/containers/${encodeURIComponent(target)}/exec`,
+      {
+        body: {
+          AttachStdout: true,
+          AttachStderr: true,
+          Tty: false,
+          Cmd: cmdArray,
+          WorkingDir: workingDir,
+          Env: env,
+        },
       },
-    });
+    );
 
     const execId = execInstance.Id;
 
@@ -313,7 +334,10 @@ export class DockerApiClient {
       execId,
       exitCode: execDetails.ExitCode,
       running: execDetails.Running,
-      output: typeof output === "string" ? output.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "").trim() : output,
+      output:
+        typeof output === "string"
+          ? output.replace(/[\x00-\x08\x0B-\x1F\x7F]/g, "").trim()
+          : output,
     };
   }
 
@@ -339,14 +363,19 @@ export class DockerApiClient {
    * Pull an image from Docker Hub, GHCR, Quay, or GCR
    */
   async pullImage(imageTag) {
-    return this.request("POST", `/images/create?fromImage=${encodeURIComponent(imageTag)}`, { timeout: 120000 });
+    return this.request("POST", `/images/create?fromImage=${encodeURIComponent(imageTag)}`, {
+      timeout: 120000,
+    });
   }
 
   /**
    * Remove an image
    */
   async removeImage(nameOrId, force = false) {
-    return this.request("DELETE", `/images/${encodeURIComponent(nameOrId)}?force=${force ? "1" : "0"}`);
+    return this.request(
+      "DELETE",
+      `/images/${encodeURIComponent(nameOrId)}?force=${force ? "1" : "0"}`,
+    );
   }
 
   /**
@@ -387,7 +416,10 @@ export class DockerApiClient {
    * Remove a volume
    */
   async removeVolume(name, force = false) {
-    return this.request("DELETE", `/volumes/${encodeURIComponent(name)}?force=${force ? "1" : "0"}`);
+    return this.request(
+      "DELETE",
+      `/volumes/${encodeURIComponent(name)}?force=${force ? "1" : "0"}`,
+    );
   }
 
   /**
@@ -491,11 +523,21 @@ export class DockerApiClient {
    */
   async pruneAll() {
     const results = {};
-    try { results.containers = await this.request("POST", "/containers/prune"); } catch {}
-    try { results.images = await this.request("POST", "/images/prune"); } catch {}
-    try { results.networks = await this.request("POST", "/networks/prune"); } catch {}
-    try { results.volumes = await this.request("POST", "/volumes/prune"); } catch {}
-    try { results.buildCache = await this.request("POST", "/build/prune"); } catch {}
+    try {
+      results.containers = await this.request("POST", "/containers/prune");
+    } catch {}
+    try {
+      results.images = await this.request("POST", "/images/prune");
+    } catch {}
+    try {
+      results.networks = await this.request("POST", "/networks/prune");
+    } catch {}
+    try {
+      results.volumes = await this.request("POST", "/volumes/prune");
+    } catch {}
+    try {
+      results.buildCache = await this.request("POST", "/build/prune");
+    } catch {}
     return results;
   }
 }

@@ -84,7 +84,8 @@ function ProjectPage() {
   const engine = useEngine();
   const { data: magicDns } = useMagicDnsSettings();
   const { data: netInfo } = useNetworkInterfaces();
-  const primaryLanIp = netInfo?.primaryIp && netInfo.primaryIp !== "127.0.0.1" ? netInfo.primaryIp : null;
+  const primaryLanIp =
+    netInfo?.primaryIp && netInfo.primaryIp !== "127.0.0.1" ? netInfo.primaryIp : null;
 
   const { data: project, isLoading } = useQuery({
     queryKey: ["project", slug, engine.url, engine.token],
@@ -276,7 +277,9 @@ function ProjectPage() {
                   className="flex items-center gap-1.5 hover:bg-emerald-950/60 transition-colors text-emerald-400 font-medium font-mono bg-emerald-950/30 border border-emerald-800/40 px-2 py-0.5 rounded text-xs"
                 >
                   <Wifi className="h-3 w-3 text-emerald-400" />
-                  <span>http://{primaryLanIp}:{project.port || 8080}</span>
+                  <span>
+                    http://{primaryLanIp}:{project.port || 8080}
+                  </span>
                   <span className="text-[10px] uppercase font-sans text-emerald-500 font-semibold ml-0.5 px-1 py-0.2 bg-emerald-900/50 rounded">
                     Wi-Fi
                   </span>
@@ -689,7 +692,7 @@ function LiveLogs({ projectName }: { projectName: string }) {
       })
       .catch(() => {});
     return () => abortController.abort();
-  }, [active, engine.url, engine.token, projectName]);
+  }, [active, engine, engine.url, engine.token, projectName]);
 
   return (
     <div className="grid gap-4 md:grid-cols-[220px_1fr]">
@@ -971,7 +974,8 @@ function ProjectDomains({
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Access and test this project on smartphones, tablets, or other computers connected to the same local Wi-Fi.
+              Access and test this project on smartphones, tablets, or other computers connected to
+              the same local Wi-Fi.
             </p>
           </div>
         </div>
@@ -1244,7 +1248,8 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Automatically suspend idle preview/staging containers to reclaim 60–80% server RAM. Wakes in &lt;1.2s on HTTP request.
+              Automatically suspend idle preview/staging containers to reclaim 60–80% server RAM.
+              Wakes in &lt;1.2s on HTTP request.
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer">

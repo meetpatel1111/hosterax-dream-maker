@@ -7,10 +7,7 @@ module.exports = {
     asar: {
       unpack: "{engine/**/*,dist/**/*,node_modules/better-sqlite3/**/*}",
     },
-    extraResource: [
-      "./engine",
-      "./dist",
-    ],
+    extraResource: ["./engine", "./dist"],
   },
   rebuildConfig: {},
   makers: [

@@ -485,7 +485,8 @@ export class MCPServer {
       // ── Email Stack & Mailboxes ──
       {
         name: "list_email_domains",
-        description: "List all configured custom email domains with SPF, DKIM, and DMARC verification statuses.",
+        description:
+          "List all configured custom email domains with SPF, DKIM, and DMARC verification statuses.",
         inputSchema: { type: "object", properties: {} },
       },
       {
@@ -515,7 +516,10 @@ export class MCPServer {
         inputSchema: {
           type: "object",
           properties: {
-            email: { type: "string", description: "Full email address (e.g. 'contact@company.com')" },
+            email: {
+              type: "string",
+              description: "Full email address (e.g. 'contact@company.com')",
+            },
             name: { type: "string", description: "Display name (e.g. 'Contact Desk')" },
             password: { type: "string", description: "Mailbox password" },
             quotaMb: { type: "number", description: "Quota in MB (default: 5120)" },
@@ -534,9 +538,15 @@ export class MCPServer {
         inputSchema: {
           type: "object",
           properties: {
-            aliasAddress: { type: "string", description: "Inbound alias address (e.g. 'sales@company.com')" },
+            aliasAddress: {
+              type: "string",
+              description: "Inbound alias address (e.g. 'sales@company.com')",
+            },
             destinationEmail: { type: "string", description: "Forwarding destination email" },
-            webhookUrl: { type: "string", description: "Optional HTTP webhook endpoint for inbound emails" },
+            webhookUrl: {
+              type: "string",
+              description: "Optional HTTP webhook endpoint for inbound emails",
+            },
           },
           required: ["aliasAddress"],
         },
@@ -597,7 +607,8 @@ export class MCPServer {
       },
       {
         name: "list_org_members",
-        description: "List team members and RBAC roles (Owner, Admin, Member, Viewer) in an organization.",
+        description:
+          "List team members and RBAC roles (Owner, Admin, Member, Viewer) in an organization.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1333,7 +1344,8 @@ export class MCPServer {
         }
 
         case "add_email_domain": {
-          if (!this.emailManager) return formatResponse({ error: "Email manager not initialized" }, true);
+          if (!this.emailManager)
+            return formatResponse({ error: "Email manager not initialized" }, true);
           const domain = await this.emailManager.addDomain(args.domain);
           return formatResponse(domain);
         }
@@ -1345,7 +1357,8 @@ export class MCPServer {
         }
 
         case "create_mailbox": {
-          if (!this.emailManager) return formatResponse({ error: "Email manager not initialized" }, true);
+          if (!this.emailManager)
+            return formatResponse({ error: "Email manager not initialized" }, true);
           const box = await this.emailManager.createMailbox({
             email: args.email,
             name: args.name,
@@ -1362,7 +1375,8 @@ export class MCPServer {
         }
 
         case "create_mail_alias": {
-          if (!this.emailManager) return formatResponse({ error: "Email manager not initialized" }, true);
+          if (!this.emailManager)
+            return formatResponse({ error: "Email manager not initialized" }, true);
           const alias = await this.emailManager.createAlias({
             alias_address: args.aliasAddress,
             destination_email: args.destinationEmail,
@@ -1373,7 +1387,8 @@ export class MCPServer {
 
         // ── Webhooks & PR Previews ──
         case "get_webhook_config": {
-          if (!this.webhookManager) return formatResponse({ error: "Webhook manager not initialized" }, true);
+          if (!this.webhookManager)
+            return formatResponse({ error: "Webhook manager not initialized" }, true);
           const cfg = this.webhookManager.getProjectWebhookConfig(args.projectName);
           return formatResponse(cfg);
         }
@@ -1385,7 +1400,8 @@ export class MCPServer {
         }
 
         case "delete_pr_preview": {
-          if (!this.webhookManager) return formatResponse({ error: "Webhook manager not initialized" }, true);
+          if (!this.webhookManager)
+            return formatResponse({ error: "Webhook manager not initialized" }, true);
           const res = this.webhookManager.deletePrPreview(args.previewId);
           return formatResponse(res);
         }
@@ -1398,7 +1414,8 @@ export class MCPServer {
         }
 
         case "create_organization": {
-          if (!this.orgManager) return formatResponse({ error: "Org manager not initialized" }, true);
+          if (!this.orgManager)
+            return formatResponse({ error: "Org manager not initialized" }, true);
           const org = this.orgManager.createOrganization({
             name: args.name,
             slug: args.slug,

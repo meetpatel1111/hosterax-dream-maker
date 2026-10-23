@@ -47,7 +47,9 @@ export class ScaleToZeroManager {
     try {
       const row = this.db.prepare("SELECT * FROM scale_to_zero_config WHERE project=?").get(clean);
       if (row && row.is_sleeping) {
-        this.db.prepare("UPDATE scale_to_zero_config SET is_sleeping=0, last_woken_at=? WHERE project=?").run(Date.now(), clean);
+        this.db
+          .prepare("UPDATE scale_to_zero_config SET is_sleeping=0, last_woken_at=? WHERE project=?")
+          .run(Date.now(), clean);
       }
     } catch {}
   }
@@ -68,19 +70,21 @@ export class ScaleToZeroManager {
 
   setConfig(projectName, { enabled = false, idleTimeoutMinutes = 15 }) {
     const clean = projectName.toLowerCase();
-    const existing = this.db.prepare("SELECT * FROM scale_to_zero_config WHERE project=?").get(clean);
+    const existing = this.db
+      .prepare("SELECT * FROM scale_to_zero_config WHERE project=?")
+      .get(clean);
     if (existing) {
-      this.db.prepare("UPDATE scale_to_zero_config SET enabled=?, idle_timeout_minutes=? WHERE project=?").run(
-        enabled ? 1 : 0,
-        idleTimeoutMinutes,
-        clean
-      );
+      this.db
+        .prepare(
+          "UPDATE scale_to_zero_config SET enabled=?, idle_timeout_minutes=? WHERE project=?",
+        )
+        .run(enabled ? 1 : 0, idleTimeoutMinutes, clean);
     } else {
-      this.db.prepare("INSERT INTO scale_to_zero_config (project, enabled, idle_timeout_minutes) VALUES (?, ?, ?)").run(
-        clean,
-        enabled ? 1 : 0,
-        idleTimeoutMinutes
-      );
+      this.db
+        .prepare(
+          "INSERT INTO scale_to_zero_config (project, enabled, idle_timeout_minutes) VALUES (?, ?, ?)",
+        )
+        .run(clean, enabled ? 1 : 0, idleTimeoutMinutes);
     }
     return this.getConfig(clean);
   }
@@ -100,11 +104,15 @@ export class ScaleToZeroManager {
       } else {
         await execAsync(`docker stop ${containerName}`, { timeout: 10000 });
       }
-      this.db.prepare(`
+      this.db
+        .prepare(
+          `
         INSERT INTO scale_to_zero_config (project, enabled, is_sleeping, last_slept_at)
         VALUES (?, 1, 1, ?)
         ON CONFLICT(project) DO UPDATE SET is_sleeping=1, last_slept_at=?
-      `).run(clean, Date.now(), Date.now());
+      `,
+        )
+        .run(clean, Date.now(), Date.now());
 
       return { ok: true, isSleeping: true, project: clean };
     } catch (e) {
@@ -150,11 +158,15 @@ export class ScaleToZeroManager {
 
       const durationMs = Date.now() - startTime;
 
-      this.db.prepare(`
+      this.db
+        .prepare(
+          `
         INSERT INTO scale_to_zero_config (project, is_sleeping, last_woken_at)
         VALUES (?, 0, ?)
         ON CONFLICT(project) DO UPDATE SET is_sleeping=0, last_woken_at=?
-      `).run(clean, Date.now(), Date.now());
+      `,
+        )
+        .run(clean, Date.now(), Date.now());
 
       this.activityMap.set(clean, Date.now());
 
@@ -196,7 +208,9 @@ export class ScaleToZeroManager {
    */
   async checkIdleContainers() {
     try {
-      const configs = this.db.prepare("SELECT * FROM scale_to_zero_config WHERE enabled=1 AND is_sleeping=0").all();
+      const configs = this.db
+        .prepare("SELECT * FROM scale_to_zero_config WHERE enabled=1 AND is_sleeping=0")
+        .all();
       const now = Date.now();
 
       for (const cfg of configs) {
@@ -205,7 +219,9 @@ export class ScaleToZeroManager {
         const thresholdMs = (cfg.idle_timeout_minutes || 15) * 60 * 1000;
 
         if (idleMs > thresholdMs) {
-          console.log(`[scale-to-zero] Project ${cfg.project} idle for ${Math.round(idleMs / 60000)}m. Putting container to sleep to reclaim RAM...`);
+          console.log(
+            `[scale-to-zero] Project ${cfg.project} idle for ${Math.round(idleMs / 60000)}m. Putting container to sleep to reclaim RAM...`,
+          );
           await this.sleepProject(cfg.project);
         }
       }

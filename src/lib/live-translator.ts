@@ -15,7 +15,7 @@ const originalAttrMap = new WeakMap<Element, Record<string, string>>();
 
 let currentLanguage: LanguageCode = "en";
 let observer: MutationObserver | null = null;
-let pendingBatch = new Set<Text>();
+const pendingBatch = new Set<Text>();
 let batchTimeout: any = null;
 
 // Technical strings & patterns to NOT translate (code, ports, URLs, versions, emails)
@@ -86,7 +86,7 @@ async function fetchLiveTranslation(text: string, targetLang: LanguageCode): Pro
     const res = await fetch(url);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    
+
     // Result format: [[["Translated Text", "Original Text", ...]]]
     if (Array.isArray(data) && Array.isArray(data[0])) {
       const translated = data[0].map((item: any) => item[0]).join("");

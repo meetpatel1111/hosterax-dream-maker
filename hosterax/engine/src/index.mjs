@@ -272,7 +272,11 @@ const MAGIC_DNS_PROVIDERS = {
 };
 
 function getServerIp() {
-  return process.env.SERVER_IP || process.env.HOSTERAX_PUBLIC_IP || getSetting("server_public_ip", "127.0.0.1");
+  return (
+    process.env.SERVER_IP ||
+    process.env.HOSTERAX_PUBLIC_IP ||
+    getSetting("server_public_ip", "127.0.0.1")
+  );
 }
 
 function getMagicDnsHost(projectName) {
@@ -281,7 +285,8 @@ function getMagicDnsHost(projectName) {
   const dashedIp = ip.replace(/\./g, "-");
 
   if (provider === "nip.io") return `${projectName}.${ip}.nip.io`;
-  if (provider === "traefik.me") return ip === "127.0.0.1" ? `${projectName}.traefik.me` : `${projectName}.${ip}.nip.io`;
+  if (provider === "traefik.me")
+    return ip === "127.0.0.1" ? `${projectName}.traefik.me` : `${projectName}.${ip}.nip.io`;
   if (provider === "ipq.co") return `${projectName}.${ip}.ipq.co`;
   if (provider === "fdns.uk") return `${projectName}.${ip}.fdns.uk`;
   if (provider === "localhost") return `${projectName}.localhost`;
@@ -736,16 +741,19 @@ scaleToZeroManager.start();
 const metricsManager = new MetricsManager({ db, HOME, LOGDIR, dockerApi });
 
 // Periodic Database Maintenance & Memory Trim
-setInterval(() => {
-  try {
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    db.prepare("DELETE FROM alert_history WHERE created_at < ?").run(sevenDaysAgo);
-    db.prepare("DELETE FROM self_heal_events WHERE created_at < ?").run(sevenDaysAgo);
-    db.prepare("DELETE FROM ai_audit_logs WHERE created_at < ?").run(sevenDaysAgo);
-    db.pragma("wal_checkpoint(PASSIVE)");
-    if (global.gc) global.gc();
-  } catch {}
-}, 60 * 60 * 1000);
+setInterval(
+  () => {
+    try {
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      db.prepare("DELETE FROM alert_history WHERE created_at < ?").run(sevenDaysAgo);
+      db.prepare("DELETE FROM self_heal_events WHERE created_at < ?").run(sevenDaysAgo);
+      db.prepare("DELETE FROM ai_audit_logs WHERE created_at < ?").run(sevenDaysAgo);
+      db.pragma("wal_checkpoint(PASSIVE)");
+      if (global.gc) global.gc();
+    } catch {}
+  },
+  60 * 60 * 1000,
+);
 
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
@@ -1750,13 +1758,15 @@ pages:
     }
 
     // Resource limits (memory and CPU capping)
-    const projRow = db.prepare("SELECT memory_mb_limit, cpu_limit FROM projects WHERE name=?").get(project);
+    const resourceLimits = db
+      .prepare("SELECT memory_mb_limit, cpu_limit FROM projects WHERE name=?")
+      .get(project);
     let resFlags = "";
-    if (projRow?.memory_mb_limit && projRow.memory_mb_limit > 0) {
-      resFlags += ` --memory ${projRow.memory_mb_limit}m --memory-swap ${projRow.memory_mb_limit * 2}m`;
+    if (resourceLimits?.memory_mb_limit && resourceLimits.memory_mb_limit > 0) {
+      resFlags += ` --memory ${resourceLimits.memory_mb_limit}m --memory-swap ${resourceLimits.memory_mb_limit * 2}m`;
     }
-    if (projRow?.cpu_limit && projRow.cpu_limit > 0) {
-      resFlags += ` --cpus ${projRow.cpu_limit}`;
+    if (resourceLimits?.cpu_limit && resourceLimits.cpu_limit > 0) {
+      resFlags += ` --cpus ${resourceLimits.cpu_limit}`;
     }
 
     // Step 1: Launch green container (old container still serves traffic)
@@ -2707,7 +2717,11 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/alerts/rule" && req.method === "POST") {
     const b = await readBody(req);
     if (!b.project) return json(res, 400, { error: "project is required" });
-    const rule = metricsManager.setAlertRule(b.project, b.metricType || "memory", b.threshold || 85);
+    const rule = metricsManager.setAlertRule(
+      b.project,
+      b.metricType || "memory",
+      b.threshold || 85,
+    );
     return json(res, 200, { ok: true, rule });
   }
 
@@ -2780,7 +2794,10 @@ const server = http.createServer(async (req, res) => {
       }
       if (subAction === "exec") {
         if (!b.cmd) return json(res, 400, { error: "cmd is required for in-container exec" });
-        const result = await dockerApi.execCommand(nameOrId, b.cmd, { workingDir: b.workingDir, env: b.env });
+        const result = await dockerApi.execCommand(nameOrId, b.cmd, {
+          workingDir: b.workingDir,
+          env: b.env,
+        });
         return json(res, 200, result);
       }
     } catch (err) {
@@ -4436,7 +4453,10 @@ const server = http.createServer(async (req, res) => {
     // POST /api/ai/vram-check - Pre-flight VRAM estimation for AI models
     if (url.pathname === "/api/ai/vram-check" && req.method === "POST") {
       const b = await readBody(req);
-      const data = await gpuManager.checkVramRequirement(b.modelName || "", b.customRequirementMb || null);
+      const data = await gpuManager.checkVramRequirement(
+        b.modelName || "",
+        b.customRequirementMb || null,
+      );
       return json(res, 200, data);
     }
 
@@ -4496,7 +4516,8 @@ const server = http.createServer(async (req, res) => {
       if (!aiOpsManager.checkPermission(userRole, "write")) {
         return json(res, 403, {
           success: false,
-          error: "RBAC Permission Denied: Only operators or admins can execute automated remediations.",
+          error:
+            "RBAC Permission Denied: Only operators or admins can execute automated remediations.",
         });
       }
       const r = await aiOpsManager.executeAutoFix(b.projectName, b.fixType, b.parameters);
@@ -4592,4 +4613,3 @@ function handleGracefulShutdown(signal) {
 
 process.on("SIGINT", () => handleGracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => handleGracefulShutdown("SIGTERM"));
-

@@ -1546,6 +1546,7 @@ export type OneClickAppDef = {
   icon?: string;
   image: string;
   port: number;
+  healthPath?: string;
   tags: string[];
   popular?: boolean;
   source?: "verified" | "awesome_selfhosted" | "awesome_sysadmin" | "selfhst" | string;
@@ -1562,6 +1563,7 @@ export type OneClickAppDef = {
   webpIcon?: string | null;
   logoType?: string;
   env?: Record<string, string>;
+  defaultEnv?: Record<string, string>;
 };
 
 export const ONE_CLICK_APP_CATEGORIES = [

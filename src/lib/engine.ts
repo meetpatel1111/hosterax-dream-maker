@@ -351,7 +351,10 @@ export function useScaleToZero(projectName: string) {
     queryKey: ["scale-to-zero", projectName, eng.url, eng.token],
     queryFn: async () => {
       try {
-        const res = await eng.call<ScaleToZeroConfig>("GET", `/api/projects/${projectName}/scale-to-zero`);
+        const res = await eng.call<ScaleToZeroConfig>(
+          "GET",
+          `/api/projects/${projectName}/scale-to-zero`,
+        );
         if (res) return res;
       } catch {}
       return {
@@ -1118,7 +1121,11 @@ export function useAiExecuteFix() {
       parameters?: Record<string, any>;
       userRole?: string;
     }) => {
-      return await eng.call<{ success: boolean; message: string }>("POST", "/api/ai/execute-fix", payload);
+      return await eng.call<{ success: boolean; message: string }>(
+        "POST",
+        "/api/ai/execute-fix",
+        payload,
+      );
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["projects"] });
@@ -1136,7 +1143,11 @@ export function useAiConfig() {
       try {
         return await eng.call<AiConfig>("GET", "/api/ai/config");
       } catch {
-        return { provider: "heuristic", ollama_url: "http://localhost:11434", ollama_model: "llama3:latest" };
+        return {
+          provider: "heuristic",
+          ollama_url: "http://localhost:11434",
+          ollama_model: "llama3:latest",
+        };
       }
     },
     enabled: !!health.data?.ok,
@@ -1229,11 +1240,19 @@ export function useDockerTop(containerName: string) {
 export function useDockerExec() {
   const eng = useEngine();
   return useMutation({
-    mutationFn: async ({ containerName, cmd, workingDir }: { containerName: string; cmd: string; workingDir?: string }) => {
+    mutationFn: async ({
+      containerName,
+      cmd,
+      workingDir,
+    }: {
+      containerName: string;
+      cmd: string;
+      workingDir?: string;
+    }) => {
       return await eng.call<{ execId: string; exitCode: number; running: boolean; output: string }>(
         "POST",
         `/api/docker/containers/${containerName}/exec`,
-        { cmd, workingDir }
+        { cmd, workingDir },
       );
     },
   });
@@ -1243,12 +1262,22 @@ export function useDockerUpdateResources() {
   const eng = useEngine();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ containerName, memoryMb, cpus }: { containerName: string; memoryMb: number; cpus: number }) => {
+    mutationFn: async ({
+      containerName,
+      memoryMb,
+      cpus,
+    }: {
+      containerName: string;
+      memoryMb: number;
+      cpus: number;
+    }) => {
       const resources = {
         Memory: memoryMb * 1048576,
         NanoCPUs: Math.round(cpus * 1e9),
       };
-      return await eng.call<any>("POST", `/api/docker/containers/${containerName}/update`, { resources });
+      return await eng.call<any>("POST", `/api/docker/containers/${containerName}/update`, {
+        resources,
+      });
     },
     onSuccess: (_, vars) => {
       qc.invalidateQueries({ queryKey: ["docker-inspect", vars.containerName] });
@@ -1302,5 +1331,3 @@ export function useDockerPruneSystem() {
     },
   });
 }
-
-

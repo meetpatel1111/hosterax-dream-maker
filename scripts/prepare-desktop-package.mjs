@@ -41,7 +41,10 @@ if (fs.existsSync(ENGINE_MODULES)) {
   copyDirRecursive(ENGINE_MODULES, path.join(DESKTOP_ENGINE_DIR, "node_modules"));
 }
 if (fs.existsSync(path.join(ENGINE_DIR, "package.json"))) {
-  fs.copyFileSync(path.join(ENGINE_DIR, "package.json"), path.join(DESKTOP_ENGINE_DIR, "package.json"));
+  fs.copyFileSync(
+    path.join(ENGINE_DIR, "package.json"),
+    path.join(DESKTOP_ENGINE_DIR, "package.json"),
+  );
 }
 console.log(`[HosteraX Desktop] Bundled engine into ${DESKTOP_ENGINE_DIR}`);
 

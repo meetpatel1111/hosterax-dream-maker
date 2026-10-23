@@ -53,7 +53,9 @@ async function startEngineAndOpenDashboard(port = 7777, shouldOpen = true) {
   const enginePath = findEngineEntry();
   if (!enginePath) {
     console.error(`[HosteraX Error] Could not locate engine entrypoint.`);
-    console.error(`Make sure HosteraX is installed or pass --url http://host:7777 to connect remotely.`);
+    console.error(
+      `Make sure HosteraX is installed or pass --url http://host:7777 to connect remotely.`,
+    );
     process.exit(1);
   }
 
@@ -1546,7 +1548,13 @@ try {
         console.error("Usage: htx org:member:add <orgId> <email> <name> [role]");
         process.exit(1);
       }
-      console.log(await api("POST", `/api/orgs/${orgId}/members`, { user_email, user_name, role: role || "member" }));
+      console.log(
+        await api("POST", `/api/orgs/${orgId}/members`, {
+          user_email,
+          user_name,
+          role: role || "member",
+        }),
+      );
       break;
     }
 

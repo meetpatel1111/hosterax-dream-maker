@@ -112,7 +112,9 @@ export class AIOpsManager {
     const hasConfig = this.db.prepare("SELECT key FROM ai_ops_config WHERE key='provider'").get();
     if (!hasConfig) {
       const now = Date.now();
-      const insert = this.db.prepare("INSERT INTO ai_ops_config (key, value, updated_at) VALUES (?, ?, ?)");
+      const insert = this.db.prepare(
+        "INSERT INTO ai_ops_config (key, value, updated_at) VALUES (?, ?, ?)",
+      );
       insert.run("provider", "heuristic", now); // 'heuristic', 'ollama', 'openai', 'deepseek', 'anthropic'
       insert.run("ollama_url", "http://localhost:11434", now);
       insert.run("ollama_model", "llama3:latest", now);
@@ -137,7 +139,7 @@ export class AIOpsManager {
   updateConfig(updates) {
     const now = Date.now();
     const upsert = this.db.prepare(
-      "INSERT INTO ai_ops_config (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at"
+      "INSERT INTO ai_ops_config (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
     );
     for (const [k, v] of Object.entries(updates)) {
       if (typeof v === "string") {
@@ -153,25 +155,29 @@ export class AIOpsManager {
       // Observability & System (Read)
       {
         name: "get_cluster_health",
-        description: "Get comprehensive cluster health, active containers, RAM, CPU, and edge proxy status.",
+        description:
+          "Get comprehensive cluster health, active containers, RAM, CPU, and edge proxy status.",
         requiredPermission: "read",
         execute: async () => this.toolGetClusterHealth(),
       },
       {
         name: "get_gpu_telemetry",
-        description: "Get real-time NVIDIA GPU metrics (VRAM allocation, temperature, CUDA status, power).",
+        description:
+          "Get real-time NVIDIA GPU metrics (VRAM allocation, temperature, CUDA status, power).",
         requiredPermission: "read",
         execute: async () => this.toolGetGpuTelemetry(),
       },
       {
         name: "check_vram_sizing",
-        description: "Check if an LLM model (e.g. llama3:8b, mistral:7b) will fit into host GPU VRAM.",
+        description:
+          "Check if an LLM model (e.g. llama3:8b, mistral:7b) will fit into host GPU VRAM.",
         requiredPermission: "read",
         execute: async ({ modelName }) => this.toolCheckVramSizing(modelName),
       },
       {
         name: "list_projects",
-        description: "List all deployed projects, container IDs, ports, domains, and health statuses.",
+        description:
+          "List all deployed projects, container IDs, ports, domains, and health statuses.",
         requiredPermission: "read",
         execute: async () => this.toolListProjects(),
       },
@@ -183,13 +189,15 @@ export class AIOpsManager {
       },
       {
         name: "diagnose_project",
-        description: "Run deep root-cause failure analysis on a container, inspect crash logs, and formulate fixes.",
+        description:
+          "Run deep root-cause failure analysis on a container, inspect crash logs, and formulate fixes.",
         requiredPermission: "read",
         execute: async ({ projectName }) => this.diagnoseProject(projectName),
       },
       {
         name: "diagnose_cluster",
-        description: "Run comprehensive diagnostic failure scan across all containers and services in the cluster.",
+        description:
+          "Run comprehensive diagnostic failure scan across all containers and services in the cluster.",
         requiredPermission: "read",
         execute: async () => this.diagnoseCluster(),
       },
@@ -215,20 +223,24 @@ export class AIOpsManager {
       },
       {
         name: "deploy_project",
-        description: "Trigger a new zero-downtime deployment for a project from source or docker image.",
+        description:
+          "Trigger a new zero-downtime deployment for a project from source or docker image.",
         requiredPermission: "write",
-        execute: async ({ projectName, environment = "production" }) => this.toolDeployProject(projectName, environment),
+        execute: async ({ projectName, environment = "production" }) =>
+          this.toolDeployProject(projectName, environment),
       },
       {
         name: "scale_to_zero",
-        description: "Configure Scale-to-Zero auto-sleep or wake settings to reclaim idle server RAM.",
+        description:
+          "Configure Scale-to-Zero auto-sleep or wake settings to reclaim idle server RAM.",
         requiredPermission: "write",
         execute: async ({ projectName, enabled, idleTimeoutMinutes }) =>
           this.toolScaleToZero(projectName, enabled, idleTimeoutMinutes),
       },
       {
         name: "reclaim_idle_memory",
-        description: "Trigger Scale-to-Zero across all idle apps immediately to free up maximum host RAM.",
+        description:
+          "Trigger Scale-to-Zero across all idle apps immediately to free up maximum host RAM.",
         requiredPermission: "write",
         execute: async () => this.toolReclaimIdleMemory(),
       },
@@ -258,9 +270,11 @@ export class AIOpsManager {
       },
       {
         name: "create_backup",
-        description: "Create an instant point-in-time snapshot of a database or volume and stream to S3.",
+        description:
+          "Create an instant point-in-time snapshot of a database or volume and stream to S3.",
         requiredPermission: "write",
-        execute: async ({ databaseName, dbType = "volume" }) => this.toolCreateBackup(databaseName, dbType),
+        execute: async ({ databaseName, dbType = "volume" }) =>
+          this.toolCreateBackup(databaseName, dbType),
       },
       {
         name: "list_backups",
@@ -276,7 +290,8 @@ export class AIOpsManager {
       },
       {
         name: "provision_database",
-        description: "Provision a new managed PostgreSQL, MySQL, MongoDB, or Redis database container.",
+        description:
+          "Provision a new managed PostgreSQL, MySQL, MongoDB, or Redis database container.",
         requiredPermission: "write",
         execute: async ({ projectName, name, engine, sizeMb }) =>
           this.toolProvisionDatabase(projectName, name, engine, sizeMb),
@@ -309,7 +324,8 @@ export class AIOpsManager {
         name: "create_mailbox",
         description: "Create a new custom domain mailbox account.",
         requiredPermission: "write",
-        execute: async ({ email, password, quotaMb }) => this.toolCreateMailbox(email, password, quotaMb),
+        execute: async ({ email, password, quotaMb }) =>
+          this.toolCreateMailbox(email, password, quotaMb),
       },
       {
         name: "verify_mail_dns",
@@ -349,13 +365,15 @@ export class AIOpsManager {
       },
       {
         name: "list_app_templates",
-        description: "Browse 1-click Docker and Compose app templates (Nextcloud, WordPress, Vaultwarden, etc.).",
+        description:
+          "Browse 1-click Docker and Compose app templates (Nextcloud, WordPress, Vaultwarden, etc.).",
         requiredPermission: "read",
         execute: async ({ query, category }) => this.toolListAppTemplates(query, category),
       },
       {
         name: "execute_auto_fix",
-        description: "Apply an automated diagnostic remediation recipe (restarting, re-binding port, or increasing RAM).",
+        description:
+          "Apply an automated diagnostic remediation recipe (restarting, re-binding port, or increasing RAM).",
         requiredPermission: "write",
         execute: async ({ projectName, fixType, parameters }) =>
           this.executeAutoFix(projectName, fixType, parameters),
@@ -389,9 +407,11 @@ export class AIOpsManager {
       },
       {
         name: "create_pr_preview",
-        description: "Spin up an instant ephemeral PR preview staging environment with automatic Scale-to-Zero.",
+        description:
+          "Spin up an instant ephemeral PR preview staging environment with automatic Scale-to-Zero.",
         requiredPermission: "write",
-        execute: async ({ projectName, prNumber, branch }) => this.toolCreatePrPreview(projectName, prNumber, branch),
+        execute: async ({ projectName, prNumber, branch }) =>
+          this.toolCreatePrPreview(projectName, prNumber, branch),
       },
       {
         name: "delete_pr_preview",
@@ -408,19 +428,23 @@ export class AIOpsManager {
       },
       {
         name: "get_service_metrics",
-        description: "Retrieve real-time CPU %, RAM usage (MB & %), Network I/O, and historical metrics for a service.",
+        description:
+          "Retrieve real-time CPU %, RAM usage (MB & %), Network I/O, and historical metrics for a service.",
         requiredPermission: "read",
         execute: async ({ projectName }) => this.toolGetServiceMetrics(projectName),
       },
       {
         name: "search_service_logs",
-        description: "Search and filter service logs with error/warn level parsing and pattern matching.",
+        description:
+          "Search and filter service logs with error/warn level parsing and pattern matching.",
         requiredPermission: "read",
-        execute: async ({ projectName, query, level, limit }) => this.toolSearchServiceLogs(projectName, query, level, limit),
+        execute: async ({ projectName, query, level, limit }) =>
+          this.toolSearchServiceLogs(projectName, query, level, limit),
       },
       {
         name: "get_system_metrics",
-        description: "Retrieve node-level CPU load, RAM allocation, cores, load averages, and active alert counts.",
+        description:
+          "Retrieve node-level CPU load, RAM allocation, cores, load averages, and active alert counts.",
         requiredPermission: "read",
         execute: async () => this.toolGetSystemMetrics(),
       },
@@ -428,29 +452,35 @@ export class AIOpsManager {
         name: "set_alert_rule",
         description: "Create or update an automated anomaly alert threshold for CPU or Memory.",
         requiredPermission: "admin",
-        execute: async ({ projectName, metricType, threshold }) => this.toolSetAlertRule(projectName, metricType, threshold),
+        execute: async ({ projectName, metricType, threshold }) =>
+          this.toolSetAlertRule(projectName, metricType, threshold),
       },
       {
         name: "list_active_alerts",
-        description: "List currently triggered health, CPU, memory, or crash alerts across all services.",
+        description:
+          "List currently triggered health, CPU, memory, or crash alerts across all services.",
         requiredPermission: "read",
         execute: async () => this.toolListActiveAlerts(),
       },
       {
         name: "docker_exec_command",
-        description: "Execute any command or script inside a running container via the native Docker Exec API.",
+        description:
+          "Execute any command or script inside a running container via the native Docker Exec API.",
         requiredPermission: "write",
         execute: async ({ projectName, cmd }) => this.toolDockerExec(projectName, cmd),
       },
       {
         name: "docker_update_resources",
-        description: "Dynamically update CPU quota, memory limits (MB), and swap ON THE FLY with zero container downtime.",
+        description:
+          "Dynamically update CPU quota, memory limits (MB), and swap ON THE FLY with zero container downtime.",
         requiredPermission: "admin",
-        execute: async ({ projectName, memoryMb, cpus }) => this.toolDockerUpdate(projectName, memoryMb, cpus),
+        execute: async ({ projectName, memoryMb, cpus }) =>
+          this.toolDockerUpdate(projectName, memoryMb, cpus),
       },
       {
         name: "docker_inspect_container",
-        description: "Perform low-level Docker inspection of a container, returning IP, mounts, ports, and restart count.",
+        description:
+          "Perform low-level Docker inspection of a container, returning IP, mounts, ports, and restart count.",
         requiredPermission: "read",
         execute: async ({ projectName }) => this.toolDockerInspect(projectName),
       },
@@ -468,7 +498,8 @@ export class AIOpsManager {
       },
       {
         name: "docker_prune_system",
-        description: "Reclaim gigabytes of server disk by pruning unused containers, dangling images, networks, and build cache.",
+        description:
+          "Reclaim gigabytes of server disk by pruning unused containers, dangling images, networks, and build cache.",
         requiredPermission: "destructive",
         isDestructive: true,
         execute: async () => this.toolDockerPruneSystem(),
@@ -486,11 +517,18 @@ export class AIOpsManager {
   // ── Deep Diagnostic & Auto-Fix Engine ──
   async diagnoseProject(projectName) {
     if (!projectName) {
-      return { status: "error", message: "Project name is required for diagnosis.", issues: [], fixes: [] };
+      return {
+        status: "error",
+        message: "Project name is required for diagnosis.",
+        issues: [],
+        fixes: [],
+      };
     }
 
     const cleanName = projectName.trim().toLowerCase();
-    const project = this.db.prepare("SELECT * FROM projects WHERE name=? OR slug=?").get(cleanName, cleanName);
+    const project = this.db
+      .prepare("SELECT * FROM projects WHERE name=? OR slug=?")
+      .get(cleanName, cleanName);
 
     if (!project) {
       return {
@@ -501,14 +539,19 @@ export class AIOpsManager {
         port: 8080,
         domain: `${cleanName}.127.0.0.1.nip.io`,
         target: "docker",
-        issues: [{
-          type: "PROJECT_NOT_FOUND",
-          title: `Project '${cleanName}' Not Found`,
-          description: `No active project matching '${cleanName}' was found in the database.`,
-        }],
+        issues: [
+          {
+            type: "PROJECT_NOT_FOUND",
+            title: `Project '${cleanName}' Not Found`,
+            description: `No active project matching '${cleanName}' was found in the database.`,
+          },
+        ],
         fixes: [],
         message: `Project "${cleanName}" was not found in the HosteraX database.`,
-        recommendations: ["Check project name spelling", "List active projects with 'list_projects'"],
+        recommendations: [
+          "Check project name spelling",
+          "List active projects with 'list_projects'",
+        ],
       };
     }
 
@@ -520,10 +563,10 @@ export class AIOpsManager {
 
     try {
       const { execSync } = await import("node:child_process");
-      const inspectJson = execSync(
-        `docker inspect hx_${cleanName} --format "{{json .State}}"`,
-        { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }
-      );
+      const inspectJson = execSync(`docker inspect hx_${cleanName} --format "{{json .State}}"`, {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
       containerInfo = JSON.parse(inspectJson.trim());
       isRunning = containerInfo.Running === true;
       exitCode = containerInfo.ExitCode;
@@ -566,13 +609,23 @@ export class AIOpsManager {
     }
 
     // Out of Memory (OOM)
-    if (exitCode === 137 || logs.includes("Killed") || logs.includes("JavaScript heap out of memory") || logs.includes("OutOfMemoryError")) {
+    if (
+      exitCode === 137 ||
+      logs.includes("Killed") ||
+      logs.includes("JavaScript heap out of memory") ||
+      logs.includes("OutOfMemoryError")
+    ) {
       severity = "critical";
       issues.push({
         type: "OOM_CRASH",
         title: "Out Of Memory (OOM / Exit 137)",
-        description: "The container exceeded its allocated RAM threshold and was terminated by the Linux kernel OOM killer.",
-        evidence: logs.split("\n").filter((l) => l.includes("heap out of memory") || l.includes("Killed")).slice(0, 3).join("\n"),
+        description:
+          "The container exceeded its allocated RAM threshold and was terminated by the Linux kernel OOM killer.",
+        evidence: logs
+          .split("\n")
+          .filter((l) => l.includes("heap out of memory") || l.includes("Killed"))
+          .slice(0, 3)
+          .join("\n"),
       });
       fixes.push({
         id: "fix_memory",
@@ -584,13 +637,21 @@ export class AIOpsManager {
     }
 
     // Port Conflict (EADDRINUSE)
-    if (logs.includes("EADDRINUSE") || logs.includes("address already in use") || logs.includes("bind: address already in use")) {
+    if (
+      logs.includes("EADDRINUSE") ||
+      logs.includes("address already in use") ||
+      logs.includes("bind: address already in use")
+    ) {
       severity = "critical";
       issues.push({
         type: "PORT_CONFLICT",
         title: `Port Conflict on Port ${project.port || 8080}`,
         description: `Another process on the host is already bound to port ${project.port || 8080}.`,
-        evidence: logs.split("\n").filter((l) => l.includes("EADDRINUSE") || l.includes("address already in use")).slice(0, 3).join("\n"),
+        evidence: logs
+          .split("\n")
+          .filter((l) => l.includes("EADDRINUSE") || l.includes("address already in use"))
+          .slice(0, 3)
+          .join("\n"),
       });
       const newPort = (project.port || 8080) + 1;
       fixes.push({
@@ -603,31 +664,50 @@ export class AIOpsManager {
     }
 
     // Database Connection Refused
-    if (logs.includes("ECONNREFUSED") || logs.includes("Connection refused") || logs.includes("database system is shutting down")) {
+    if (
+      logs.includes("ECONNREFUSED") ||
+      logs.includes("Connection refused") ||
+      logs.includes("database system is shutting down")
+    ) {
       severity = severity === "critical" ? "critical" : "warning";
       issues.push({
         type: "DB_CONNECTION_REFUSED",
         title: "Database Connection Refused",
-        description: "Application failed to connect to its upstream database (PostgreSQL / MongoDB / Redis).",
-        evidence: logs.split("\n").filter((l) => l.includes("ECONNREFUSED") || l.includes("Connection refused")).slice(0, 3).join("\n"),
+        description:
+          "Application failed to connect to its upstream database (PostgreSQL / MongoDB / Redis).",
+        evidence: logs
+          .split("\n")
+          .filter((l) => l.includes("ECONNREFUSED") || l.includes("Connection refused"))
+          .slice(0, 3)
+          .join("\n"),
       });
       fixes.push({
         id: "fix_db_restart",
         type: "restart",
         title: "Restart Container & Verify Network Bridge",
-        description: "Restart application container after confirming database container is healthy.",
+        description:
+          "Restart application container after confirming database container is healthy.",
         parameters: { projectName: cleanName },
       });
     }
 
     // Missing Environment Variable / Secret
-    if (logs.includes("Missing environment variable") || logs.includes("undefined is not a function") || logs.includes("is not defined")) {
+    if (
+      logs.includes("Missing environment variable") ||
+      logs.includes("undefined is not a function") ||
+      logs.includes("is not defined")
+    ) {
       severity = severity === "critical" ? "critical" : "warning";
       issues.push({
         type: "CONFIG_ERROR",
         title: "Configuration or Missing Environment Variable",
-        description: "Application crashed due to an unhandled reference or missing required environment variable.",
-        evidence: logs.split("\n").filter((l) => l.includes("Missing") || l.includes("is not defined")).slice(0, 3).join("\n"),
+        description:
+          "Application crashed due to an unhandled reference or missing required environment variable.",
+        evidence: logs
+          .split("\n")
+          .filter((l) => l.includes("Missing") || l.includes("is not defined"))
+          .slice(0, 3)
+          .join("\n"),
       });
     }
 
@@ -691,27 +771,43 @@ export class AIOpsManager {
 
     if (fixType === "restart") {
       await this.toolRestartProject(cleanName);
-      return { success: true, message: `Container 'hx_${cleanName}' was restarted successfully and is passing readiness probes.` };
+      return {
+        success: true,
+        message: `Container 'hx_${cleanName}' was restarted successfully and is passing readiness probes.`,
+      };
     }
 
     if (fixType === "rebind_port") {
       const port = parameters.port || 8082;
-      this.db.prepare("UPDATE projects SET port=? WHERE name=? OR slug=?").run(port, cleanName, cleanName);
+      this.db
+        .prepare("UPDATE projects SET port=? WHERE name=? OR slug=?")
+        .run(port, cleanName, cleanName);
       await this.toolRestartProject(cleanName);
-      return { success: true, message: `Project '${cleanName}' port re-bound to ${port}. Edge proxy updated.` };
+      return {
+        success: true,
+        message: `Project '${cleanName}' port re-bound to ${port}. Edge proxy updated.`,
+      };
     }
 
     if (fixType === "increase_memory") {
       const memoryMb = parameters.memoryMb || 1024;
-      this.db.prepare("UPDATE projects SET memory_mb=? WHERE name=? OR slug=?").run(memoryMb, cleanName, cleanName);
+      this.db
+        .prepare("UPDATE projects SET memory_mb=? WHERE name=? OR slug=?")
+        .run(memoryMb, cleanName, cleanName);
       await this.toolRestartProject(cleanName);
-      return { success: true, message: `Memory quota for '${cleanName}' boosted to ${memoryMb}MB.` };
+      return {
+        success: true,
+        message: `Memory quota for '${cleanName}' boosted to ${memoryMb}MB.`,
+      };
     }
 
     if (fixType === "scale_to_zero") {
       const minutes = parameters.idleTimeoutMinutes || 15;
       await this.toolScaleToZero(cleanName, true, minutes);
-      return { success: true, message: `Scale-to-Zero enabled for '${cleanName}' with ${minutes}m timeout.` };
+      return {
+        success: true,
+        message: `Scale-to-Zero enabled for '${cleanName}' with ${minutes}m timeout.`,
+      };
     }
 
     return { success: false, message: `Unknown fix type: ${fixType}` };
@@ -792,16 +888,30 @@ export class AIOpsManager {
   }
 
   // ── Natural Language Conversational Turn ──
-  async handleChatTurn({ prompt, conversationHistory = [], userRole = "admin", userEmail = "admin@hosterax.local", confirmedAction = null }) {
+  async handleChatTurn({
+    prompt,
+    conversationHistory = [],
+    userRole = "admin",
+    userEmail = "admin@hosterax.local",
+    confirmedAction = null,
+  }) {
     if (!prompt && !confirmedAction) {
-      return { reply: "Please enter a message or command.", toolCalls: [], confirmationRequired: null };
+      return {
+        reply: "Please enter a message or command.",
+        toolCalls: [],
+        confirmationRequired: null,
+      };
     }
 
     // 1. Handle Confirmed Destructive Action
     if (confirmedAction) {
       const tool = this.tools.find((t) => t.name === confirmedAction.toolName);
       if (!tool) {
-        return { reply: `Unknown action: ${confirmedAction.toolName}`, toolCalls: [], confirmationRequired: null };
+        return {
+          reply: `Unknown action: ${confirmedAction.toolName}`,
+          toolCalls: [],
+          confirmationRequired: null,
+        };
       }
 
       if (!this.checkPermission(userRole, tool.requiredPermission)) {
@@ -889,7 +999,8 @@ export class AIOpsManager {
               toolName: tool.name,
               parameters: intent.parameters,
               title: `Delete Project '${intent.parameters.projectName}'`,
-              warning: "This action cannot be undone. All containers and edge routes will be removed.",
+              warning:
+                "This action cannot be undone. All containers and edge routes will be removed.",
             },
           };
         }
@@ -935,8 +1046,25 @@ export class AIOpsManager {
     const text = prompt.toLowerCase().trim();
 
     // 1. Troubleshoot / Diagnose
-    if (text.includes("diagnos") || text.includes("troubleshoot") || text.includes("why did") || text.includes("failing") || text.includes("fix ") || text.includes("what broke") || text.includes("check error") || text.includes("cluster health") || text.includes("unhealthy")) {
-      if (text.includes("cluster") || text.includes("all") || text.includes("containers") || text.includes("services") || text.includes("failing") || text.includes("system")) {
+    if (
+      text.includes("diagnos") ||
+      text.includes("troubleshoot") ||
+      text.includes("why did") ||
+      text.includes("failing") ||
+      text.includes("fix ") ||
+      text.includes("what broke") ||
+      text.includes("check error") ||
+      text.includes("cluster health") ||
+      text.includes("unhealthy")
+    ) {
+      if (
+        text.includes("cluster") ||
+        text.includes("all") ||
+        text.includes("containers") ||
+        text.includes("services") ||
+        text.includes("failing") ||
+        text.includes("system")
+      ) {
         return { toolName: "diagnose_cluster", parameters: {} };
       }
       const proj = this.extractProjectName(text);
@@ -947,9 +1075,23 @@ export class AIOpsManager {
     }
 
     // 2. GPU & VRAM
-    if (text.includes("gpu") || text.includes("vram") || text.includes("cuda") || text.includes("nvidia") || text.includes("graphic")) {
-      if (text.includes("fit") || text.includes("model") || text.includes("llama") || text.includes("deepseek") || text.includes("mistral")) {
-        const modelMatch = text.match(/(llama[0-9:a-z.-]+|deepseek[0-9:a-z.-]+|mistral[0-9:a-z.-]+|phi[0-9:a-z.-]+|[a-z0-9]+:[0-9]+b)/i);
+    if (
+      text.includes("gpu") ||
+      text.includes("vram") ||
+      text.includes("cuda") ||
+      text.includes("nvidia") ||
+      text.includes("graphic")
+    ) {
+      if (
+        text.includes("fit") ||
+        text.includes("model") ||
+        text.includes("llama") ||
+        text.includes("deepseek") ||
+        text.includes("mistral")
+      ) {
+        const modelMatch = text.match(
+          /(llama[0-9:a-z.-]+|deepseek[0-9:a-z.-]+|mistral[0-9:a-z.-]+|phi[0-9:a-z.-]+|[a-z0-9]+:[0-9]+b)/i,
+        );
         const modelName = modelMatch ? modelMatch[0] : "llama3:8b";
         return { toolName: "check_vram_sizing", parameters: { modelName } };
       }
@@ -981,12 +1123,22 @@ export class AIOpsManager {
     }
 
     // 6. Scale to Zero
-    if ((text.includes("scale") && text.includes("zero")) || text.includes("to zero") || text.includes("scale-to-zero") || text.includes("auto sleep") || text.includes("sleep mode") || text.includes("reclaim ram")) {
+    if (
+      (text.includes("scale") && text.includes("zero")) ||
+      text.includes("to zero") ||
+      text.includes("scale-to-zero") ||
+      text.includes("auto sleep") ||
+      text.includes("sleep mode") ||
+      text.includes("reclaim ram")
+    ) {
       const proj = this.extractProjectName(text) || "stirling-pdf";
       const minutesMatch = text.match(/([0-9]+)\s*(?:min|m|minute)/);
       const minutes = minutesMatch ? parseInt(minutesMatch[1], 10) : 15;
       const enabled = !text.includes("disable") && !text.includes("turn off");
-      return { toolName: "scale_to_zero", parameters: { projectName: proj, enabled, idleTimeoutMinutes: minutes } };
+      return {
+        toolName: "scale_to_zero",
+        parameters: { projectName: proj, enabled, idleTimeoutMinutes: minutes },
+      };
     }
 
     // 7. Deploy Project / Launch App from Catalog or Registries
@@ -1009,7 +1161,13 @@ export class AIOpsManager {
     }
 
     // 8. Real-Time Metrics & Resource Monitoring
-    if (text.includes("metric") || text.includes("cpu usage") || text.includes("ram usage") || text.includes("resource usage") || text.includes("stats for")) {
+    if (
+      text.includes("metric") ||
+      text.includes("cpu usage") ||
+      text.includes("ram usage") ||
+      text.includes("resource usage") ||
+      text.includes("stats for")
+    ) {
       const proj = this.extractProjectName(text);
       if (proj && proj !== "system") {
         return { toolName: "get_service_metrics", parameters: { projectName: proj } };
@@ -1018,16 +1176,30 @@ export class AIOpsManager {
     }
 
     // 8.1 Advanced Log Search & Filtering
-    if (text.includes("search log") || text.includes("filter log") || text.includes("error log") || text.includes("warning log") || text.includes("errors in")) {
+    if (
+      text.includes("search log") ||
+      text.includes("filter log") ||
+      text.includes("error log") ||
+      text.includes("warning log") ||
+      text.includes("errors in")
+    ) {
       const proj = this.extractProjectName(text) || "stirling-pdf";
       let level = "all";
       if (text.includes("error")) level = "error";
       else if (text.includes("warn")) level = "warn";
-      return { toolName: "search_service_logs", parameters: { projectName: proj, level, limit: 50 } };
+      return {
+        toolName: "search_service_logs",
+        parameters: { projectName: proj, level, limit: 50 },
+      };
     }
 
     // 8.2 Logs & Output
-    if (text.includes("log") || text.includes("stdout") || text.includes("stderr") || text.includes("output of")) {
+    if (
+      text.includes("log") ||
+      text.includes("stdout") ||
+      text.includes("stderr") ||
+      text.includes("output of")
+    ) {
       const proj = this.extractProjectName(text);
       if (proj) {
         const linesMatch = text.match(/([0-9]+)\s*lines/);
@@ -1043,28 +1215,50 @@ export class AIOpsManager {
         const threshMatch = text.match(/([0-9]+)\s*%/);
         const threshold = threshMatch ? parseFloat(threshMatch[1]) : 85;
         const metricType = text.includes("cpu") ? "cpu" : "memory";
-        return { toolName: "set_alert_rule", parameters: { projectName: proj, metricType, threshold } };
+        return {
+          toolName: "set_alert_rule",
+          parameters: { projectName: proj, metricType, threshold },
+        };
       }
       return { toolName: "list_active_alerts", parameters: {} };
     }
 
     // 8.4 Native Docker Exec, Hot Resizing & Volume/Network Management
-    if (text.startsWith("exec ") || text.includes("docker exec") || text.includes("run command in") || text.includes("run inside") || text.includes("command inside")) {
-      const match = text.match(/(?:exec|docker exec|run command in|run inside|command inside)\s+([a-z0-9_-]+)[:\s]+(.*)/i) ||
-                    text.match(/(?:exec|docker exec|run command in|run inside)\s+([a-z0-9_-]+)/i);
-      const proj = match ? match[1] : (this.extractProjectName(text) || "it-tools");
+    if (
+      text.startsWith("exec ") ||
+      text.includes("docker exec") ||
+      text.includes("run command in") ||
+      text.includes("run inside") ||
+      text.includes("command inside")
+    ) {
+      const match =
+        text.match(
+          /(?:exec|docker exec|run command in|run inside|command inside)\s+([a-z0-9_-]+)[:\s]+(.*)/i,
+        ) || text.match(/(?:exec|docker exec|run command in|run inside)\s+([a-z0-9_-]+)/i);
+      const proj = match ? match[1] : this.extractProjectName(text) || "it-tools";
       const cmd = match && match[2] ? match[2].trim() : "uname -a";
       return { toolName: "docker_exec_command", parameters: { projectName: proj, cmd } };
     }
 
-    if (text.includes("resize") || text.includes("update resources") || text.includes("change ram limit") || text.includes("set ram limit") || text.includes("update ram")) {
+    if (
+      text.includes("resize") ||
+      text.includes("update resources") ||
+      text.includes("change ram limit") ||
+      text.includes("set ram limit") ||
+      text.includes("update ram")
+    ) {
       const proj = this.extractProjectName(text) || "stirling-pdf";
       const mbMatch = text.match(/([0-9]+)\s*(?:mb|gb|m|g)/i);
       let memoryMb = 1024;
       if (mbMatch) {
-        memoryMb = text.toLowerCase().includes("gb") ? parseInt(mbMatch[1], 10) * 1024 : parseInt(mbMatch[1], 10);
+        memoryMb = text.toLowerCase().includes("gb")
+          ? parseInt(mbMatch[1], 10) * 1024
+          : parseInt(mbMatch[1], 10);
       }
-      return { toolName: "docker_update_resources", parameters: { projectName: proj, memoryMb, cpus: 2 } };
+      return {
+        toolName: "docker_update_resources",
+        parameters: { projectName: proj, memoryMb, cpus: 2 },
+      };
     }
 
     if (text.includes("inspect container") || text.includes("docker inspect")) {
@@ -1072,25 +1266,45 @@ export class AIOpsManager {
       return { toolName: "docker_inspect_container", parameters: { projectName: proj } };
     }
 
-    if (text.includes("docker volume") || text.includes("list volume") || text.includes("show volume")) {
+    if (
+      text.includes("docker volume") ||
+      text.includes("list volume") ||
+      text.includes("show volume")
+    ) {
       return { toolName: "docker_list_volumes", parameters: {} };
     }
 
-    if (text.includes("docker network") || text.includes("list network") || text.includes("show network")) {
+    if (
+      text.includes("docker network") ||
+      text.includes("list network") ||
+      text.includes("show network")
+    ) {
       return { toolName: "docker_list_networks", parameters: {} };
     }
 
-    if (text.includes("prune docker") || text.includes("prune system") || text.includes("garbage collect") || text.includes("clean disk")) {
+    if (
+      text.includes("prune docker") ||
+      text.includes("prune system") ||
+      text.includes("garbage collect") ||
+      text.includes("clean disk")
+    ) {
       return { toolName: "docker_prune_system", parameters: {} };
     }
 
     // 9. Backups & Snapshots
-    if (text.includes("list backup") || text.includes("show backup") || text.includes("all backup")) {
+    if (
+      text.includes("list backup") ||
+      text.includes("show backup") ||
+      text.includes("all backup")
+    ) {
       return { toolName: "list_backups", parameters: {} };
     }
     if (text.includes("restore backup") || text.includes("restore snapshot")) {
       const idMatch = text.match(/([a-z0-9_-]+)/);
-      return { toolName: "restore_backup", parameters: { backupId: idMatch ? idMatch[1] : "latest" } };
+      return {
+        toolName: "restore_backup",
+        parameters: { backupId: idMatch ? idMatch[1] : "latest" },
+      };
     }
     if (text.includes("backup") || text.includes("snapshot") || text.includes("dump")) {
       const proj = this.extractProjectName(text) || "stirling-pdf";
@@ -1118,75 +1332,154 @@ export class AIOpsManager {
     }
 
     // 11. Mail & DNS
-    if (text.includes("mailbox") || text.includes("mail") || text.includes("email") || text.includes("inbox")) {
+    if (
+      text.includes("mailbox") ||
+      text.includes("mail") ||
+      text.includes("email") ||
+      text.includes("inbox")
+    ) {
       if (text.includes("create") || text.includes("add")) {
         return {
           toolName: "create_mailbox",
           parameters: { email: "contact@hosterax.local", password: "Password123!", quotaMb: 5120 },
         };
       }
-      if (text.includes("dns") || text.includes("mx") || text.includes("spf") || text.includes("dkim")) {
+      if (
+        text.includes("dns") ||
+        text.includes("mx") ||
+        text.includes("spf") ||
+        text.includes("dkim")
+      ) {
         return { toolName: "verify_mail_dns", parameters: { domain: "hosterax.local" } };
       }
       return { toolName: "list_mailboxes", parameters: {} };
     }
 
     // 12. S3 & Object Storage
-    if (text.includes("s3") || text.includes("bucket") || text.includes("storage") || text.includes("minio")) {
+    if (
+      text.includes("s3") ||
+      text.includes("bucket") ||
+      text.includes("storage") ||
+      text.includes("minio")
+    ) {
       return { toolName: "list_s3_buckets", parameters: {} };
     }
 
     // 13. Cluster & Multi-Server
-    if (text.includes("server") || text.includes("nodes") || text.includes("cluster") || text.includes("mesh")) {
+    if (
+      text.includes("server") ||
+      text.includes("nodes") ||
+      text.includes("cluster") ||
+      text.includes("mesh")
+    ) {
       return { toolName: "list_cluster_servers", parameters: {} };
     }
 
     // 14. Team & RBAC
-    if (text.includes("team") || text.includes("member") || text.includes("rbac") || text.includes("user")) {
+    if (
+      text.includes("team") ||
+      text.includes("member") ||
+      text.includes("rbac") ||
+      text.includes("user")
+    ) {
       if (text.includes("invite") || text.includes("add member")) {
-        return { toolName: "invite_team_member", parameters: { email: "dev@company.com", role: "member" } };
+        return {
+          toolName: "invite_team_member",
+          parameters: { email: "dev@company.com", role: "member" },
+        };
       }
       return { toolName: "list_team_members", parameters: {} };
     }
 
     // 15. Templates & App Catalog
-    if (text.includes("template") || text.includes("catalog") || text.includes("app store") || text.includes("wordpress") || text.includes("nextcloud")) {
+    if (
+      text.includes("template") ||
+      text.includes("catalog") ||
+      text.includes("app store") ||
+      text.includes("wordpress") ||
+      text.includes("nextcloud")
+    ) {
       return { toolName: "list_app_templates", parameters: { query: "" } };
     }
 
     // 15.1 Ephemeral PR Previews & Staging
-    if (text.includes("pr preview") || text.includes("ephemeral") || text.includes("preview env") || text.includes("staging env")) {
-      if (text.includes("list") || text.includes("show") || text.includes("get") || text.includes("all")) {
+    if (
+      text.includes("pr preview") ||
+      text.includes("ephemeral") ||
+      text.includes("preview env") ||
+      text.includes("staging env")
+    ) {
+      if (
+        text.includes("list") ||
+        text.includes("show") ||
+        text.includes("get") ||
+        text.includes("all")
+      ) {
         const proj = this.extractProjectName(text);
         return { toolName: "list_pr_previews", parameters: { projectName: proj } };
       }
-      if (text.includes("create") || text.includes("spin up") || text.includes("deploy") || text.includes("start")) {
+      if (
+        text.includes("create") ||
+        text.includes("spin up") ||
+        text.includes("deploy") ||
+        text.includes("start")
+      ) {
         const proj = this.extractProjectName(text) || "stirling-pdf";
         const prMatch = text.match(/pr\s*#?([0-9]+)/i);
         const prNumber = prMatch ? parseInt(prMatch[1], 10) : 1;
-        return { toolName: "create_pr_preview", parameters: { projectName: proj, prNumber, branch: "staging" } };
+        return {
+          toolName: "create_pr_preview",
+          parameters: { projectName: proj, prNumber, branch: "staging" },
+        };
       }
-      if (text.includes("delete") || text.includes("remove") || text.includes("destroy") || text.includes("teardown")) {
+      if (
+        text.includes("delete") ||
+        text.includes("remove") ||
+        text.includes("destroy") ||
+        text.includes("teardown")
+      ) {
         const idMatch = text.match(/(?:preview|pr)\s+([a-z0-9_-]+)/i);
-        return { toolName: "delete_pr_preview", parameters: { previewId: idMatch ? idMatch[1] : "prev_1" } };
+        return {
+          toolName: "delete_pr_preview",
+          parameters: { previewId: idMatch ? idMatch[1] : "prev_1" },
+        };
       }
       return { toolName: "list_pr_previews", parameters: {} };
     }
 
     // 15.2 Webhooks & Push-to-Deploy
-    if (text.includes("webhook") || text.includes("push to deploy") || text.includes("github push")) {
+    if (
+      text.includes("webhook") ||
+      text.includes("push to deploy") ||
+      text.includes("github push")
+    ) {
       const proj = this.extractProjectName(text) || "stirling-pdf";
       return { toolName: "get_webhook_config", parameters: { projectName: proj } };
     }
 
     // 16. DNS Check & SSL
-    if (text.includes("check dns") || text.includes("verify dns") || text.includes("dns propagation")) {
+    if (
+      text.includes("check dns") ||
+      text.includes("verify dns") ||
+      text.includes("dns propagation")
+    ) {
       const domainMatch = text.match(/([a-z0-9.-]+\.[a-z]{2,})/);
-      return { toolName: "check_dns", parameters: { domain: domainMatch ? domainMatch[1] : "stirling-pdf.127.0.0.1.nip.io" } };
+      return {
+        toolName: "check_dns",
+        parameters: { domain: domainMatch ? domainMatch[1] : "stirling-pdf.127.0.0.1.nip.io" },
+      };
     }
-    if (text.includes("ssl") || text.includes("cert") || text.includes("tls") || text.includes("https")) {
+    if (
+      text.includes("ssl") ||
+      text.includes("cert") ||
+      text.includes("tls") ||
+      text.includes("https")
+    ) {
       const domainMatch = text.match(/([a-z0-9.-]+\.[a-z]{2,})/);
-      return { toolName: "provision_ssl", parameters: { domain: domainMatch ? domainMatch[1] : "stirling-pdf.127.0.0.1.nip.io" } };
+      return {
+        toolName: "provision_ssl",
+        parameters: { domain: domainMatch ? domainMatch[1] : "stirling-pdf.127.0.0.1.nip.io" },
+      };
     }
 
     // 17. Add Domain
@@ -1194,12 +1487,20 @@ export class AIOpsManager {
       const domainMatch = text.match(/([a-z0-9.-]+\.[a-z]{2,})/);
       const proj = this.extractProjectName(text) || "stirling-pdf";
       if (domainMatch) {
-        return { toolName: "add_domain", parameters: { projectName: proj, hostname: domainMatch[1] } };
+        return {
+          toolName: "add_domain",
+          parameters: { projectName: proj, hostname: domainMatch[1] },
+        };
       }
     }
 
     // 18. Delete Project (Destructive)
-    if (text.startsWith("delete ") || text.startsWith("remove ") || text.startsWith("destroy ") || text.includes("drop project")) {
+    if (
+      text.startsWith("delete ") ||
+      text.startsWith("remove ") ||
+      text.startsWith("destroy ") ||
+      text.includes("drop project")
+    ) {
       const proj = this.extractProjectName(text);
       if (proj) {
         return { toolName: "delete_project", parameters: { projectName: proj } };
@@ -1207,14 +1508,23 @@ export class AIOpsManager {
     }
 
     // 19. Provision Database
-    if (text.includes("provision") || text.includes("create database") || text.includes("new database") || text.includes("spin up postgres") || text.includes("spin up redis")) {
+    if (
+      text.includes("provision") ||
+      text.includes("create database") ||
+      text.includes("new database") ||
+      text.includes("spin up postgres") ||
+      text.includes("spin up redis")
+    ) {
       let engine = "postgres";
       if (text.includes("mysql")) engine = "mysql";
       if (text.includes("mongo")) engine = "mongodb";
       if (text.includes("redis")) engine = "redis";
       const name = `${engine}-main`;
       const proj = this.extractProjectName(text) || "stirling-pdf";
-      return { toolName: "provision_database", parameters: { projectName: proj, name, engine, sizeMb: 1024 } };
+      return {
+        toolName: "provision_database",
+        parameters: { projectName: proj, name, engine, sizeMb: 1024 },
+      };
     }
 
     // 20. Reclaim Idle RAM
@@ -1223,11 +1533,22 @@ export class AIOpsManager {
     }
 
     // 21. System Health & Projects List
-    if (text.includes("status") || text.includes("health") || text.includes("metrics") || text.includes("system")) {
+    if (
+      text.includes("status") ||
+      text.includes("health") ||
+      text.includes("metrics") ||
+      text.includes("system")
+    ) {
       return { toolName: "get_cluster_health", parameters: {} };
     }
 
-    if (text.includes("list") || text.includes("projects") || text.includes("apps") || text.includes("containers") || text.includes("show all")) {
+    if (
+      text.includes("list") ||
+      text.includes("projects") ||
+      text.includes("apps") ||
+      text.includes("containers") ||
+      text.includes("show all")
+    ) {
       return { toolName: "list_projects", parameters: {} };
     }
 
@@ -1245,20 +1566,55 @@ export class AIOpsManager {
 
     // Stopwords to ignore
     const stopwords = new Set([
-      "the", "all", "my", "this", "our", "cluster", "health", "failing", "containers",
-      "apps", "projects", "services", "system", "nodes", "errors", "issues", "logs",
-      "ram", "cpu", "memory", "vram", "gpu", "dns", "ssl", "mail", "s3", "cron", "check",
-      "catalog", "registry", "registries", "docker", "image", "service", "template"
+      "the",
+      "all",
+      "my",
+      "this",
+      "our",
+      "cluster",
+      "health",
+      "failing",
+      "containers",
+      "apps",
+      "projects",
+      "services",
+      "system",
+      "nodes",
+      "errors",
+      "issues",
+      "logs",
+      "ram",
+      "cpu",
+      "memory",
+      "vram",
+      "gpu",
+      "dns",
+      "ssl",
+      "mail",
+      "s3",
+      "cron",
+      "check",
+      "catalog",
+      "registry",
+      "registries",
+      "docker",
+      "image",
+      "service",
+      "template",
     ]);
 
     // Check full container registry pattern (e.g. ghcr.io/immich-app/immich-server:latest or redis:alpine)
-    const registryMatch = text.match(/(?:(?:[a-z0-9_.-]+\.[a-z]{2,}\/)?(?:[a-z0-9_.-]+\/)?[a-z0-9_.-]+(?::[a-z0-9_.-]+)?)/i);
+    const registryMatch = text.match(
+      /(?:(?:[a-z0-9_.-]+\.[a-z]{2,}\/)?(?:[a-z0-9_.-]+\/)?[a-z0-9_.-]+(?::[a-z0-9_.-]+)?)/i,
+    );
     if (registryMatch && (registryMatch[0].includes("/") || registryMatch[0].includes(":"))) {
       return registryMatch[0];
     }
 
     // Check action commands: "deploy <name>", "spin up <name>", "install <name>", "launch <name>"
-    const actionMatch = text.match(/(?:deploy|spin up|install|launch|run|create|start|stop|restart|logs for|diagnose)\s+([a-z0-9_./:-]+)/i);
+    const actionMatch = text.match(
+      /(?:deploy|spin up|install|launch|run|create|start|stop|restart|logs for|diagnose)\s+([a-z0-9_./:-]+)/i,
+    );
     if (actionMatch && !stopwords.has(actionMatch[1].toLowerCase())) {
       return actionMatch[1];
     }
@@ -1294,13 +1650,13 @@ export class AIOpsManager {
         out += `#### ⚠️ Attention Required on Failing Services:\n`;
         for (const fp of r.failingProjects) {
           out += `\n##### 📦 Project: \`${fp.projectName}\` (${fp.status.toUpperCase()})\n`;
-          for (const iss of (fp.issues || [])) {
+          for (const iss of fp.issues || []) {
             out += `- **${iss.title}**: ${iss.description}\n`;
             if (iss.evidence) {
               out += `  > \`Log Evidence:\` *${iss.evidence.trim()}*\n`;
             }
           }
-          for (const fix of (fp.fixes || [])) {
+          for (const fix of fp.fixes || []) {
             out += `  > ⚡ *Suggested Auto-Fix:* **${fix.title}** (${fix.description})\n`;
           }
         }
@@ -1344,33 +1700,39 @@ export class AIOpsManager {
     if (toolName === "get_gpu_telemetry") {
       const g = result?.primary;
       if (!g) return "❌ No dedicated NVIDIA GPU detected on this host node.";
-      return `### ⚡ NVIDIA GPU Real-Time Telemetry\n\n` +
+      return (
+        `### ⚡ NVIDIA GPU Real-Time Telemetry\n\n` +
         `- **Hardware:** ${g.name} (Driver ${g.driverVersion})\n` +
         `- **Compute Status:** 🟢 CUDA Compute Ready\n` +
         `- **VRAM Allocation:** **${g.memoryUsedMb} MB** / **${g.memoryTotalMb} MB** (${g.memoryUsagePercent}% utilized)\n` +
         `- **Core Temperature:** **${g.temperatureC}°C**\n` +
         `- **Power Draw:** **${g.powerDrawWatts}W**\n` +
-        `- **Free VRAM Headroom:** **${g.memoryFreeMb} MB**`;
+        `- **Free VRAM Headroom:** **${g.memoryFreeMb} MB**`
+      );
     }
 
     if (toolName === "check_vram_sizing") {
       const r = result;
-      return `### 🧠 AI Model VRAM Sizing Analysis: \`${parameters.modelName}\`\n\n` +
+      return (
+        `### 🧠 AI Model VRAM Sizing Analysis: \`${parameters.modelName}\`\n\n` +
         `**Result:** ${r.canFitGpu ? "🟢 Fits into VRAM" : "🔴 Exceeds Dedicated VRAM (CPU Offload Required)"}\n` +
-        `**Required VRAM:** \`${Math.round(r.requiredMb / 1024 * 10) / 10} GB\`\n` +
-        `**Available VRAM:** \`${Math.round(r.availableVramMb / 1024 * 10) / 10} GB\`\n` +
-        `**Recommendation:** ${r.recommendation}`;
+        `**Required VRAM:** \`${Math.round((r.requiredMb / 1024) * 10) / 10} GB\`\n` +
+        `**Available VRAM:** \`${Math.round((r.availableVramMb / 1024) * 10) / 10} GB\`\n` +
+        `**Recommendation:** ${r.recommendation}`
+      );
     }
 
     if (toolName === "get_cluster_health") {
       const r = result;
-      return `### 📊 Cluster Health & Resource Metrics\n\n` +
+      return (
+        `### 📊 Cluster Health & Resource Metrics\n\n` +
         `- **Host System:** ${r.platform} (${r.arch}) · Uptime: ${Math.round(r.uptime / 3600)}h\n` +
         `- **CPU Load:** ${r.cpuLoad}%\n` +
         `- **RAM Usage:** **${r.usedMemoryMb} MB** / **${r.totalMemoryMb} MB** (${r.memoryPercent}%)\n` +
         `- **Active Projects:** **${r.projectCount}** deployed (${r.runningCount} online)\n` +
         `- **Edge Gateway:** Caddy 2 Active (Port 80 & 443)\n` +
-        `- **Storage:** NVMe SSD (${r.diskPercent}% used)`;
+        `- **Storage:** NVMe SSD (${r.diskPercent}% used)`
+      );
     }
 
     if (toolName === "list_projects") {
@@ -1385,13 +1747,15 @@ export class AIOpsManager {
 
     if (toolName === "deploy_project") {
       const r = result;
-      return `### 🚀 Zero-Downtime Deployment Successful: \`${r.projectName}\`\n\n` +
+      return (
+        `### 🚀 Zero-Downtime Deployment Successful: \`${r.projectName}\`\n\n` +
         `- **Status:** 🟢 **Active & Healthy** (Deployment ID: \`${r.deploymentId}\`)\n` +
         `- **Docker Target:** \`${r.image || r.projectName + ":latest"}\`\n` +
         `- **Port Allocation:** \`:${r.port || 8082}\` (Edge Proxy Active)\n` +
         `- **Public Domain:** [${r.domain || r.publicUrl}](http://${r.domain || r.publicUrl})\n` +
         `- **Local & LAN Ingress:** \`${r.lanUrl || "http://172.28.144.1:8082"}\`\n` +
-        `- **Caddy Edge Gateway:** Auto-HTTPS & dynamic reverse proxy routes synced`;
+        `- **Caddy Edge Gateway:** Auto-HTTPS & dynamic reverse proxy routes synced`
+      );
     }
 
     if (toolName === "restart_project") {
@@ -1428,7 +1792,7 @@ export class AIOpsManager {
       let out = `### 💾 Point-in-Time Database Backups (${result.length})\n\n`;
       out += `| Database | Type | Size | Destination | Status |\n|---|---|---|---|---|\n`;
       for (const b of result) {
-        out += `| **${b.database_name}** | \`${b.db_type}\` | ${Math.round((b.file_size_bytes || 1024 * 1024) / 1024 / 1024 * 10) / 10} MB | \`${b.destination}\` | 🟢 ${b.status} |\n`;
+        out += `| **${b.database_name}** | \`${b.db_type}\` | ${Math.round(((b.file_size_bytes || 1024 * 1024) / 1024 / 1024) * 10) / 10} MB | \`${b.destination}\` | 🟢 ${b.status} |\n`;
       }
       return out;
     }
@@ -1453,18 +1817,22 @@ export class AIOpsManager {
 
     if (toolName === "check_dns") {
       const r = result;
-      return `### 🌐 DNS Verification: \`${r.domain}\`\n\n` +
+      return (
+        `### 🌐 DNS Verification: \`${r.domain}\`\n\n` +
         `- **A Record:** \`${r.aRecord}\` (🟢 Resolved)\n` +
         `- **CNAME:** \`${r.cname || "Direct"}\`\n` +
-        `- **Propagation:** **${r.propagation}** across global edge nodes`;
+        `- **Propagation:** **${r.propagation}** across global edge nodes`
+      );
     }
 
     if (toolName === "provision_ssl") {
       const r = result;
-      return `### 🔒 SSL/TLS Provisioned: \`${r.domain}\`\n\n` +
+      return (
+        `### 🔒 SSL/TLS Provisioned: \`${r.domain}\`\n\n` +
         `- **Certificate Authority:** ${r.provider}\n` +
         `- **Validity:** ${r.expiresInDays} Days (🟢 Auto-Renewal Active)\n` +
-        `- **Protocol:** TLS 1.3 / HTTP/3 QUIC enabled`;
+        `- **Protocol:** TLS 1.3 / HTTP/3 QUIC enabled`
+      );
     }
 
     if (toolName === "list_pr_previews") {
@@ -1481,27 +1849,32 @@ export class AIOpsManager {
 
     if (toolName === "create_pr_preview") {
       const r = result;
-      return `### 🚀 Ephemeral PR Preview Ready: \`PR #${r.prNumber}\` (${r.projectName})\n\n` +
+      return (
+        `### 🚀 Ephemeral PR Preview Ready: \`PR #${r.prNumber}\` (${r.projectName})\n\n` +
         `- **Branch:** \`${r.branch}\`\n` +
         `- **Status:** 🟢 **Active & Healthy**\n` +
         `- **Public Domain:** [${r.domain}](${r.publicUrl})\n` +
         `- **LAN Ingress:** \`${r.lanUrl}\`\n` +
-        `- **Resource Policy:** ⚡ **${r.scaleToZero}** (Zero idle RAM overhead)`;
+        `- **Resource Policy:** ⚡ **${r.scaleToZero}** (Zero idle RAM overhead)`
+      );
     }
 
     if (toolName === "get_webhook_config") {
       const r = result;
-      return `### 🔗 Push-to-Deploy Webhook Settings: \`${r.projectName}\`\n\n` +
+      return (
+        `### 🔗 Push-to-Deploy Webhook Settings: \`${r.projectName}\`\n\n` +
         `- **Webhook URL:** \`${r.webhookUrl}\`\n` +
         `- **Secret:** \`${r.secret}\`\n` +
         `- **Auto-Deploy on Push:** ${r.autoDeployPush ? "🟢 Enabled" : "🔴 Disabled"} (Branch: \`${r.trackedBranch}\`)\n` +
-        `- **Ephemeral PR Previews:** ${r.autoDeployPr ? "🟢 Enabled" : "🔴 Disabled"}`;
+        `- **Ephemeral PR Previews:** ${r.autoDeployPr ? "🟢 Enabled" : "🔴 Disabled"}`
+      );
     }
 
     if (toolName === "get_service_metrics") {
       const r = result;
       const c = r.current || {};
-      let out = `### 📊 Real-Time Metrics: \`${r.project}\`\n\n` +
+      let out =
+        `### 📊 Real-Time Metrics: \`${r.project}\`\n\n` +
         `- **CPU Utilization:** **${c.cpuPercent || 0}%**\n` +
         `- **RAM Allocation:** **${c.memoryUsedMb || 0} MB** / ${c.memoryLimitMb || 1024} MB (**${c.memoryPercent || 0}%**)\n` +
         `- **Network I/O:** \`${c.networkIo || "0B / 0B"}\`\n` +
@@ -1516,7 +1889,8 @@ export class AIOpsManager {
 
     if (toolName === "search_service_logs") {
       const r = result;
-      let out = `### 📜 Log Analytics: \`${r.projectName}\`\n\n` +
+      let out =
+        `### 📜 Log Analytics: \`${r.projectName}\`\n\n` +
         `- **Total Scanned:** ${r.totalLines} lines · **Matches:** **${r.matchedLines} lines**\n` +
         `- **Level Breakdown:** 🔴 Errors: **${r.levelsCount?.error || 0}** · 🟡 Warnings: **${r.levelsCount?.warn || 0}** · 🔵 Info: **${r.levelsCount?.info || 0}**\n\n`;
 
@@ -1534,21 +1908,25 @@ export class AIOpsManager {
 
     if (toolName === "get_system_metrics") {
       const r = result;
-      return `### 🖥️ Host & Node Telemetry\n\n` +
+      return (
+        `### 🖥️ Host & Node Telemetry\n\n` +
         `- **CPU Load:** **${r.cpuUsagePercent}%** (${r.cores} Cores · Load Avg: \`${r.loadAverage?.["1m"]}, ${r.loadAverage?.["5m"]}, ${r.loadAverage?.["15m"]}\`)\n` +
         `- **Host Memory:** **${r.memory?.usedMb} MB** / ${r.memory?.totalMb} MB (**${r.memory?.usedPercent}%**)\n` +
         `- **Uptime:** ${Math.floor((r.uptimeSeconds || 0) / 3600)}h ${Math.floor(((r.uptimeSeconds || 0) % 3600) / 60)}m\n` +
         `- **Tracked Workloads:** **${r.activeContainers} Containers**\n` +
-        `- **System Alerts:** ${r.activeAlertsCount > 0 ? `⚠️ **${r.activeAlertsCount} active alerts**` : "🟢 All Systems Nominal"}`;
+        `- **System Alerts:** ${r.activeAlertsCount > 0 ? `⚠️ **${r.activeAlertsCount} active alerts**` : "🟢 All Systems Nominal"}`
+      );
     }
 
     if (toolName === "set_alert_rule") {
       const r = result;
-      return `### 🔔 Alert Watchdog Rule Configured\n\n` +
+      return (
+        `### 🔔 Alert Watchdog Rule Configured\n\n` +
         `- **Target Project:** \`${r.project}\`\n` +
         `- **Metric:** \`${r.metricType.toUpperCase()}\`\n` +
         `- **Threshold:** **${r.threshold}%**\n` +
-        `- **Status:** 🟢 **Active** (Monitored every 10s)`;
+        `- **Status:** 🟢 **Active** (Monitored every 10s)`
+      );
     }
 
     if (toolName === "list_active_alerts") {
@@ -1565,33 +1943,40 @@ export class AIOpsManager {
 
     if (toolName === "docker_exec_command") {
       const r = result;
-      return `### ⚡ Docker Exec Output: \`${r.projectName}\`\n\n` +
+      return (
+        `### ⚡ Docker Exec Output: \`${r.projectName}\`\n\n` +
         `- **Command:** \`${r.cmd}\`\n` +
         `- **Exit Code:** \`${r.exitCode ?? 0}\` ${r.exitCode === 0 ? "🟢 (Success)" : "🔴 (Non-zero exit)"}\n\n` +
-        `\`\`\`text\n${r.output || "(Command executed with no output)"}\n\`\`\``;
+        `\`\`\`text\n${r.output || "(Command executed with no output)"}\n\`\`\``
+      );
     }
 
     if (toolName === "docker_update_resources") {
       const r = result;
-      return `### 🎛️ Container Resources Hot-Updated: \`${r.projectName}\`\n\n` +
+      return (
+        `### 🎛️ Container Resources Hot-Updated: \`${r.projectName}\`\n\n` +
         `- **Memory Limit:** **${r.memoryMb} MB**\n` +
         `- **CPU Allocation:** **${r.cpus || "Auto"} Cores**\n` +
-        `- **Hot-Swap Status:** 🟢 **Applied live without container restart** (Zero Downtime)`;
+        `- **Hot-Swap Status:** 🟢 **Applied live without container restart** (Zero Downtime)`
+      );
     }
 
     if (toolName === "docker_inspect_container") {
       const r = result;
-      return `### 🔍 Docker Container Low-Level State: \`${r.name}\`\n\n` +
+      return (
+        `### 🔍 Docker Container Low-Level State: \`${r.name}\`\n\n` +
         `- **Status:** \`${r.status}\` · **Health:** \`${r.health}\`\n` +
         `- **Container IP:** \`${r.ipAddress || "Host Mesh"}\`\n` +
         `- **Restarts:** \`${r.restartCount}\`\n` +
         `- **Image ID:** \`${r.imageId?.slice(0, 19)}...\`\n` +
-        `- **Created:** \`${r.createdAt}\``;
+        `- **Created:** \`${r.createdAt}\``
+      );
     }
 
     if (toolName === "docker_list_volumes") {
       const list = Array.isArray(result) ? result : [];
-      let out = `### 💾 Docker Persistent Volumes (${list.length})\n\n` +
+      let out =
+        `### 💾 Docker Persistent Volumes (${list.length})\n\n` +
         `| Volume Name | Driver | Scope |\n|---|---|---|\n`;
       for (const v of list.slice(0, 15)) {
         out += `| \`${v.Name}\` | \`${v.Driver}\` | \`${v.Scope}\` |\n`;
@@ -1601,7 +1986,8 @@ export class AIOpsManager {
 
     if (toolName === "docker_list_networks") {
       const list = Array.isArray(result) ? result : [];
-      let out = `### 🌐 Docker Virtual Networks (${list.length})\n\n` +
+      let out =
+        `### 🌐 Docker Virtual Networks (${list.length})\n\n` +
         `| Network Name | Driver | Scope | Internal |\n|---|---|---|---|\n`;
       for (const n of list.slice(0, 15)) {
         out += `| \`${n.Name}\` | \`${n.Driver}\` | \`${n.Scope}\` | ${n.Internal ? "🔒 Yes" : "🌐 Public"} |\n`;
@@ -1610,11 +1996,13 @@ export class AIOpsManager {
     }
 
     if (toolName === "docker_prune_system") {
-      return `### 🧹 Docker System Garbage Collection Complete\n\n` +
+      return (
+        `### 🧹 Docker System Garbage Collection Complete\n\n` +
         `- **Containers Pruned:** 🟢 Cleaned\n` +
         `- **Dangling Images:** 🟢 Reclaimed\n` +
         `- **BuildKit Cache:** 🟢 Pruned\n` +
-        `- **Status:** ⚡ Storage optimized with zero downtime for active services`;
+        `- **Status:** ⚡ Storage optimized with zero downtime for active services`
+      );
     }
 
     return `### ✅ Executed \`${toolName}\`\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``;
@@ -1638,7 +2026,7 @@ export class AIOpsManager {
     this.db
       .prepare(
         `INSERT INTO ai_ops_audit_log (id, user_email, user_role, prompt, tool_name, status, details, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(id, userEmail, userRole, prompt, toolName || null, status, details || null, Date.now());
   }
@@ -1710,7 +2098,9 @@ export class AIOpsManager {
     } catch {
       // fallback
     }
-    this.db.prepare("UPDATE projects SET status='running', updated_at=? WHERE name=? OR slug=?").run(Date.now(), cleanName, cleanName);
+    this.db
+      .prepare("UPDATE projects SET status='running', updated_at=? WHERE name=? OR slug=?")
+      .run(Date.now(), cleanName, cleanName);
     return { projectName: cleanName, status: "running", restartedAt: Date.now() };
   }
 
@@ -1721,7 +2111,9 @@ export class AIOpsManager {
       const { execSync } = await import("node:child_process");
       execSync(`docker stop hx_${containerSlug}`, { stdio: "ignore" });
     } catch {}
-    this.db.prepare("UPDATE projects SET status='stopped', updated_at=? WHERE name=? OR slug=?").run(Date.now(), cleanName, cleanName);
+    this.db
+      .prepare("UPDATE projects SET status='stopped', updated_at=? WHERE name=? OR slug=?")
+      .run(Date.now(), cleanName, cleanName);
     return { projectName: cleanName, status: "stopped" };
   }
 
@@ -1732,7 +2124,9 @@ export class AIOpsManager {
       const { execSync } = await import("node:child_process");
       execSync(`docker start hx_${containerSlug}`, { stdio: "ignore" });
     } catch {}
-    this.db.prepare("UPDATE projects SET status='running', updated_at=? WHERE name=? OR slug=?").run(Date.now(), cleanName, cleanName);
+    this.db
+      .prepare("UPDATE projects SET status='running', updated_at=? WHERE name=? OR slug=?")
+      .run(Date.now(), cleanName, cleanName);
     return { projectName: cleanName, status: "running" };
   }
 
@@ -1745,40 +2139,40 @@ export class AIOpsManager {
     const templateImages = {
       "it-tools": "corentinth/it-tools:latest",
       "stirling-pdf": "frooodle/s-pdf:latest",
-      "vaultwarden": "vaultwarden/server:latest",
+      vaultwarden: "vaultwarden/server:latest",
       "uptime-kuma": "louislam/uptime-kuma:latest",
-      "nextcloud": "nextcloud:latest",
-      "wordpress": "wordpress:latest",
-      "ghost": "ghost:latest",
-      "n8n": "n8nio/n8n:latest",
-      "plausible": "plausible/analytics:latest",
-      "redis": "redis:alpine",
-      "postgres": "postgres:16-alpine",
-      "mysql": "mysql:8.0",
-      "mongo": "mongo:7.0",
-      "mongodb": "mongo:7.0",
-      "ollama": "ollama/ollama:latest",
-      "libretranslate": "libretranslate/libretranslate:latest",
-      "whisper": "onerahmet/openai-whisper-asr-webservice:latest",
-      "qdrant": "qdrant/qdrant:latest",
-      "chromadb": "chromadb/chroma:latest",
-      "minio": "minio/minio:latest",
-      "meilisearch": "getmeili/meilisearch:latest",
-      "grafana": "grafana/grafana:latest",
-      "prometheus": "prom/prometheus:latest",
-      "searxng": "searxng/searxng:latest",
-      "nocodb": "nocodb/nocodb:latest",
-      "pocketbase": "ghcr.io/muchobien/pocketbase:latest",
-      "strapi": "strapi/strapi:latest",
-      "directus": "directus/directus:latest",
-      "affine": "ghcr.io/toeverything/affine:latest",
-      "penpot": "penpotapp/frontend:latest",
-      "rustdesk": "rustdesk/rustdesk-server:latest",
+      nextcloud: "nextcloud:latest",
+      wordpress: "wordpress:latest",
+      ghost: "ghost:latest",
+      n8n: "n8nio/n8n:latest",
+      plausible: "plausible/analytics:latest",
+      redis: "redis:alpine",
+      postgres: "postgres:16-alpine",
+      mysql: "mysql:8.0",
+      mongo: "mongo:7.0",
+      mongodb: "mongo:7.0",
+      ollama: "ollama/ollama:latest",
+      libretranslate: "libretranslate/libretranslate:latest",
+      whisper: "onerahmet/openai-whisper-asr-webservice:latest",
+      qdrant: "qdrant/qdrant:latest",
+      chromadb: "chromadb/chroma:latest",
+      minio: "minio/minio:latest",
+      meilisearch: "getmeili/meilisearch:latest",
+      grafana: "grafana/grafana:latest",
+      prometheus: "prom/prometheus:latest",
+      searxng: "searxng/searxng:latest",
+      nocodb: "nocodb/nocodb:latest",
+      pocketbase: "ghcr.io/muchobien/pocketbase:latest",
+      strapi: "strapi/strapi:latest",
+      directus: "directus/directus:latest",
+      affine: "ghcr.io/toeverything/affine:latest",
+      penpot: "penpotapp/frontend:latest",
+      rustdesk: "rustdesk/rustdesk-server:latest",
       "paperless-ngx": "ghcr.io/paperless-ngx/paperless-ngx:latest",
-      "photoprism": "photoprism/photoprism:latest",
-      "immich": "ghcr.io/immich-app/immich-server:latest",
-      "metabase": "metabase/metabase:latest",
-      "wikijs": "requarks/wiki:latest",
+      photoprism: "photoprism/photoprism:latest",
+      immich: "ghcr.io/immich-app/immich-server:latest",
+      metabase: "metabase/metabase:latest",
+      wikijs: "requarks/wiki:latest",
     };
 
     // If user passed a full Docker Hub / GHCR image or repo, use directly
@@ -1792,7 +2186,10 @@ export class AIOpsManager {
     }
 
     // Dynamic port allocation to guarantee zero collisions
-    const existingPorts = this.db.prepare("SELECT port FROM projects WHERE port IS NOT NULL").all().map((r) => r.port);
+    const existingPorts = this.db
+      .prepare("SELECT port FROM projects WHERE port IS NOT NULL")
+      .all()
+      .map((r) => r.port);
     let port = 8082;
     while (existingPorts.includes(port)) {
       port++;
@@ -1801,12 +2198,14 @@ export class AIOpsManager {
     const domain = `${cleanName.replace(/[^a-z0-9_-]/g, "-")}.127.0.0.1.nip.io`;
 
     // Ensure record exists in database
-    const existing = this.db.prepare("SELECT * FROM projects WHERE name=? OR slug=?").get(cleanName, cleanName);
+    const existing = this.db
+      .prepare("SELECT * FROM projects WHERE name=? OR slug=?")
+      .get(cleanName, cleanName);
     if (!existing) {
       try {
         this.db
           .prepare(
-            "INSERT INTO projects (name, slug, source, target, port, domain, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            "INSERT INTO projects (name, slug, source, target, port, domain, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
           )
           .run(cleanName, cleanName, targetImage, "docker", port, domain, "running", now, now);
       } catch {
@@ -1819,7 +2218,9 @@ export class AIOpsManager {
     } else {
       try {
         this.db
-          .prepare("UPDATE projects SET status='running', port=?, domain=?, updated_at=? WHERE name=? OR slug=?")
+          .prepare(
+            "UPDATE projects SET status='running', port=?, domain=?, updated_at=? WHERE name=? OR slug=?",
+          )
           .run(port, domain, now, cleanName, cleanName);
       } catch {}
     }
@@ -1831,7 +2232,9 @@ export class AIOpsManager {
       try {
         execSync(`docker rm -f hx_${containerSlug}`, { stdio: "ignore" });
       } catch {}
-      execSync(`docker run -d --name hx_${containerSlug} -p ${port}:80 ${targetImage}`, { stdio: "ignore" });
+      execSync(`docker run -d --name hx_${containerSlug} -p ${port}:80 ${targetImage}`, {
+        stdio: "ignore",
+      });
     } catch {}
 
     return {
@@ -1919,7 +2322,11 @@ export class AIOpsManager {
   }
 
   async toolListMailboxes() {
-    return this.db.prepare("SELECT id, email, domain, quota_mb, used_bytes, status, is_active FROM mailboxes ORDER BY created_at DESC").all();
+    return this.db
+      .prepare(
+        "SELECT id, email, domain, quota_mb, used_bytes, status, is_active FROM mailboxes ORDER BY created_at DESC",
+      )
+      .all();
   }
 
   async toolCreateMailbox(email, password, quotaMb = 5120) {
@@ -1927,7 +2334,9 @@ export class AIOpsManager {
     const id = `mb_${crypto.randomBytes(4).toString("hex")}`;
     const now = Date.now();
     this.db
-      .prepare("INSERT INTO mailboxes (id, email, domain, password_hash, quota_mb, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .prepare(
+        "INSERT INTO mailboxes (id, email, domain, password_hash, quota_mb, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      )
       .run(id, email, domain, "hashed_pw", quotaMb, now, now);
     return { id, email, domain, quotaMb, status: "active" };
   }
@@ -1946,7 +2355,9 @@ export class AIOpsManager {
     if (this.s3Storage?.listBuckets) {
       return this.s3Storage.listBuckets();
     }
-    return this.db.prepare("SELECT id, name, provider_type, bucket, region, auto_sync FROM storage_providers").all();
+    return this.db
+      .prepare("SELECT id, name, provider_type, bucket, region, auto_sync FROM storage_providers")
+      .all();
   }
 
   async toolListClusterServers() {
@@ -1960,7 +2371,9 @@ export class AIOpsManager {
     if (this.orgManager?.listMembers) {
       return this.orgManager.listMembers();
     }
-    return this.db.prepare("SELECT id, email, name, role, status, created_at FROM org_members").all();
+    return this.db
+      .prepare("SELECT id, email, name, role, status, created_at FROM org_members")
+      .all();
   }
 
   async toolInviteTeamMember(email, role = "member") {
@@ -1981,12 +2394,42 @@ export class AIOpsManager {
 
   async toolListAppTemplates(query = "", category = "all") {
     return [
-      { id: "nextcloud", name: "Nextcloud Hub", category: "productivity", description: "Self-hosted productivity platform" },
-      { id: "wordpress", name: "WordPress", category: "cms", description: "Web publishing platform" },
-      { id: "vaultwarden", name: "Vaultwarden", category: "security", description: "Lightweight Bitwarden password manager" },
-      { id: "ghost", name: "Ghost CMS", category: "cms", description: "Modern publishing platform" },
-      { id: "n8n", name: "n8n Workflow Automation", category: "developer", description: "Fair-code workflow automation" },
-      { id: "uptime-kuma", name: "Uptime Kuma", category: "monitoring", description: "Self-hosted monitoring tool" },
+      {
+        id: "nextcloud",
+        name: "Nextcloud Hub",
+        category: "productivity",
+        description: "Self-hosted productivity platform",
+      },
+      {
+        id: "wordpress",
+        name: "WordPress",
+        category: "cms",
+        description: "Web publishing platform",
+      },
+      {
+        id: "vaultwarden",
+        name: "Vaultwarden",
+        category: "security",
+        description: "Lightweight Bitwarden password manager",
+      },
+      {
+        id: "ghost",
+        name: "Ghost CMS",
+        category: "cms",
+        description: "Modern publishing platform",
+      },
+      {
+        id: "n8n",
+        name: "n8n Workflow Automation",
+        category: "developer",
+        description: "Fair-code workflow automation",
+      },
+      {
+        id: "uptime-kuma",
+        name: "Uptime Kuma",
+        category: "monitoring",
+        description: "Self-hosted monitoring tool",
+      },
     ];
   }
 
@@ -2021,7 +2464,8 @@ export class AIOpsManager {
     }
     return {
       reclaimedMb: 1420,
-      message: "Scale-to-Zero activated across all projects. Inactive containers put into deep sleep.",
+      message:
+        "Scale-to-Zero activated across all projects. Inactive containers put into deep sleep.",
     };
   }
 
@@ -2046,9 +2490,20 @@ export class AIOpsManager {
         .prepare(
           `INSERT INTO pr_previews (id, project_name, pr_number, pr_title, branch, commit_sha, status, port, domain, created_at, updated_at)
            VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at`
+           ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at`,
         )
-        .run(`prev_${prNumber}_${cleanName}`, cleanName, prNumber, `PR #${prNumber} Preview`, branch, "HEAD", port, previewDomain, now, now);
+        .run(
+          `prev_${prNumber}_${cleanName}`,
+          cleanName,
+          prNumber,
+          `PR #${prNumber} Preview`,
+          branch,
+          "HEAD",
+          port,
+          previewDomain,
+          now,
+          now,
+        );
     } catch {}
 
     return {
@@ -2067,7 +2522,9 @@ export class AIOpsManager {
     if (this.webhookManager?.deletePreview) {
       return this.webhookManager.deletePreview(previewId);
     }
-    this.db.prepare("DELETE FROM pr_previews WHERE id=? OR domain LIKE ?").run(previewId, `%${previewId}%`);
+    this.db
+      .prepare("DELETE FROM pr_previews WHERE id=? OR domain LIKE ?")
+      .run(previewId, `%${previewId}%`);
     return { previewId, deleted: true };
   }
 
@@ -2111,7 +2568,13 @@ export class AIOpsManager {
     if (this.metricsManager?.searchLogs) {
       return this.metricsManager.searchLogs(clean, { query, level, limit });
     }
-    return { projectName: clean, totalLines: 0, matchedLines: 0, levelsCount: { error: 0, warn: 0, info: 0 }, logs: [] };
+    return {
+      projectName: clean,
+      totalLines: 0,
+      matchedLines: 0,
+      levelsCount: { error: 0, warn: 0, info: 0 },
+      logs: [],
+    };
   }
 
   async toolGetSystemMetrics() {
@@ -2184,10 +2647,26 @@ export class AIOpsManager {
           createdAt: raw.Created,
         };
       } catch (e) {
-        return { name: clean, status: "running", health: "healthy", ipAddress: "127.0.0.1", restartCount: 0, imageId: "docker.io/stirling", createdAt: new Date().toISOString() };
+        return {
+          name: clean,
+          status: "running",
+          health: "healthy",
+          ipAddress: "127.0.0.1",
+          restartCount: 0,
+          imageId: "docker.io/stirling",
+          createdAt: new Date().toISOString(),
+        };
       }
     }
-    return { name: clean, status: "running", health: "healthy", ipAddress: "127.0.0.1", restartCount: 0, imageId: "docker.io/stirling", createdAt: new Date().toISOString() };
+    return {
+      name: clean,
+      status: "running",
+      health: "healthy",
+      ipAddress: "127.0.0.1",
+      restartCount: 0,
+      imageId: "docker.io/stirling",
+      createdAt: new Date().toISOString(),
+    };
   }
 
   async toolDockerListVolumes() {
@@ -2225,5 +2704,3 @@ export class AIOpsManager {
     return { ok: true };
   }
 }
-
-

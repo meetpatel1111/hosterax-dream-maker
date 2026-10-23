@@ -32,10 +32,13 @@ interface ContainerTerminalProps {
 }
 
 export function ContainerTerminal({ projectName, containerName }: ContainerTerminalProps) {
-  const actualContainer = containerName || `hx_${projectName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
-  
+  const actualContainer =
+    containerName || `hx_${projectName.toLowerCase().replace(/[^a-z0-9_]/g, "_")}`;
+
   const [cmd, setCmd] = useState("");
-  const [history, setHistory] = useState<Array<{ command: string; output: string; exitCode: number; time: string }>>([
+  const [history, setHistory] = useState<
+    Array<{ command: string; output: string; exitCode: number; time: string }>
+  >([
     {
       command: "uname -a",
       output: "Linux container 6.18.33.2-standard #1 SMP x86_64 Linux",
@@ -43,7 +46,7 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
       time: new Date().toLocaleTimeString(),
     },
   ]);
-  
+
   const [memoryMb, setMemoryMb] = useState(1024);
   const [cpus, setCpus] = useState(2);
 
@@ -87,7 +90,9 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
         memoryMb,
         cpus,
       });
-      toast.success(`⚡ Hot-updated resources for ${projectName} (RAM: ${memoryMb}MB, CPUs: ${cpus}) with ZERO downtime!`);
+      toast.success(
+        `⚡ Hot-updated resources for ${projectName} (RAM: ${memoryMb}MB, CPUs: ${cpus}) with ZERO downtime!`,
+      );
     } catch (e: any) {
       toast.error(e.message || "Failed to update container resources");
     }
@@ -110,9 +115,13 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
           <div className="text-xs font-medium text-muted-foreground mb-1">Docker State</div>
           <div className="flex items-center gap-2 font-mono text-sm">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="font-semibold text-emerald-400 capitalize">{inspect?.State?.Status || "Running"}</span>
+            <span className="font-semibold text-emerald-400 capitalize">
+              {inspect?.State?.Status || "Running"}
+            </span>
           </div>
-          <div className="text-[11px] text-muted-foreground mt-1">Health: {inspect?.State?.Health?.Status || "Healthy"}</div>
+          <div className="text-[11px] text-muted-foreground mt-1">
+            Health: {inspect?.State?.Health?.Status || "Healthy"}
+          </div>
         </div>
 
         <div className="p-4 rounded-xl bg-card border border-border/60">
@@ -128,7 +137,9 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
           <div className="font-mono text-sm font-semibold text-foreground">
             {inspect?.RestartCount ?? 0} Crash Restarts
           </div>
-          <div className="text-[11px] text-muted-foreground mt-1">PID: {inspect?.State?.Pid || 1024}</div>
+          <div className="text-[11px] text-muted-foreground mt-1">
+            PID: {inspect?.State?.Pid || 1024}
+          </div>
         </div>
 
         <div className="p-4 rounded-xl bg-card border border-border/60">
@@ -167,7 +178,8 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
         {/* Terminal Output Stream */}
         <div className="p-4 font-mono text-xs text-zinc-300 min-h-[260px] max-h-[380px] overflow-y-auto space-y-4">
           <div className="text-zinc-500 text-[11px]">
-            # Connected to Docker daemon via Named Pipe / Unix Socket. Commands run in rootless execution sandbox.
+            # Connected to Docker daemon via Named Pipe / Unix Socket. Commands run in rootless
+            execution sandbox.
           </div>
 
           {history.map((h, i) => (
@@ -214,7 +226,9 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
           }}
           className="flex items-center px-4 py-2.5 bg-zinc-950 border-t border-zinc-800"
         >
-          <span className="font-mono text-emerald-400 text-xs mr-2 select-none">root@{projectName}:~#</span>
+          <span className="font-mono text-emerald-400 text-xs mr-2 select-none">
+            root@{projectName}:~#
+          </span>
           <input
             type="text"
             value={cmd}
@@ -228,7 +242,11 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
             disabled={execMutation.isPending || !cmd.trim()}
             className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-xs font-semibold flex items-center gap-1.5 transition ml-2"
           >
-            {execMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+            {execMutation.isPending ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Play className="h-3 w-3" />
+            )}
             Execute
           </button>
         </form>
@@ -242,7 +260,11 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
             <div>
               <h4 className="font-semibold text-sm">Dynamic Container Resource Throttling</h4>
               <p className="text-xs text-muted-foreground">
-                Hot-swap memory limits and CPU quotas live via <code className="text-primary font-mono text-[11px]">POST /containers/:id/update</code> with zero downtime.
+                Hot-swap memory limits and CPU quotas live via{" "}
+                <code className="text-primary font-mono text-[11px]">
+                  POST /containers/:id/update
+                </code>{" "}
+                with zero downtime.
               </p>
             </div>
           </div>
@@ -252,7 +274,11 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
             disabled={updateMutation.isPending}
             className="px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground text-xs font-semibold flex items-center gap-2 shadow transition"
           >
-            {updateMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Zap className="h-3.5 w-3.5" />}
+            {updateMutation.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Zap className="h-3.5 w-3.5" />
+            )}
             Apply Hot Update
           </button>
         </div>

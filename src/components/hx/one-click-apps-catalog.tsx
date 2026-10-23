@@ -406,13 +406,21 @@ export function OneClickAppsCatalog({
             <div>
               <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/20 text-primary mb-2">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>{t("oneClickCatalogTitle", "Complete 2,550+ Awesome-Selfhosted, SysAdmin & selfh.st Directory")}</span>
+                <span>
+                  {t(
+                    "oneClickCatalogTitle",
+                    "Complete 2,550+ Awesome-Selfhosted, SysAdmin & selfh.st Directory",
+                  )}
+                </span>
               </div>
               <h2 className="text-2xl font-bold tracking-tight text-foreground">
                 {t("oneClickCatalogTitle", "One-Click Self-Hosted Software Catalog")}
               </h2>
               <p className="text-sm text-muted-foreground mt-1 max-w-2xl">
-                {t("oneClickCatalogDesc", "Browse 112+ tags and categories from awesome-selfhosted.net, sysadmin.awesome-selfhosted.net, and selfh.st/apps. Launch any application instantly with smart zero-config port discovery, persistent volumes, and custom domains.")}
+                {t(
+                  "oneClickCatalogDesc",
+                  "Browse 112+ tags and categories from awesome-selfhosted.net, sysadmin.awesome-selfhosted.net, and selfh.st/apps. Launch any application instantly with smart zero-config port discovery, persistent volumes, and custom domains.",
+                )}
               </p>
             </div>
 
@@ -501,7 +509,9 @@ export function OneClickAppsCatalog({
                 </span>
               )}
             </div>
-            <span className="text-[11px] text-emerald-500 font-medium">✓ {t("readyToDeploy", "Ready to deploy")}</span>
+            <span className="text-[11px] text-emerald-500 font-medium">
+              ✓ {t("readyToDeploy", "Ready to deploy")}
+            </span>
           </div>
         )}
       </div>

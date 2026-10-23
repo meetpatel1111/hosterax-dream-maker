@@ -32,9 +32,14 @@ function AppsCatalogPage() {
             <Sparkles className="h-3.5 w-3.5" />
             <span>{t("softwareDirectory", "Software Directory & Templates")}</span>
           </div>
-          <h1 className="text-2xl font-semibold tracking-tight mt-1">{t("appStoreCatalog", "App Store & Catalog")}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight mt-1">
+            {t("appStoreCatalog", "App Store & Catalog")}
+          </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {t("appStoreDesc", "Discover, install, and run 2,550+ self-hosted software packages and starter templates with zero-config.")}
+            {t(
+              "appStoreDesc",
+              "Discover, install, and run 2,550+ self-hosted software packages and starter templates with zero-config.",
+            )}
           </p>
         </div>
 

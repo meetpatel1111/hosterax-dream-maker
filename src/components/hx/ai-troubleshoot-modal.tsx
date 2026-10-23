@@ -1,7 +1,7 @@
 // src/components/hx/ai-troubleshoot-modal.tsx
 // Contextual AI Troubleshooting & 1-Click Automated Remediation Modal
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect } from "react";
 import {
   Sparkles,
   AlertTriangle,
@@ -26,11 +26,7 @@ interface AiTroubleshootModalProps {
   onClose: () => void;
 }
 
-export function AiTroubleshootModal({
-  projectName,
-  isOpen,
-  onClose,
-}: AiTroubleshootModalProps) {
+export function AiTroubleshootModal({ projectName, isOpen, onClose }: AiTroubleshootModalProps) {
   const { user } = useAuth();
   const userRole = (user?.role as string) || "admin";
 
@@ -41,21 +37,25 @@ export function AiTroubleshootModal({
   const [fixSuccessMessage, setFixSuccessMessage] = useState<string | null>(null);
   const [activeFixId, setActiveFixId] = useState<string | null>(null);
 
-  const runDiagnosis = async () => {
+  const runDiagnosis = useCallback(async () => {
     setFixSuccessMessage(null);
     try {
       const res = await diagnoseMutation.mutateAsync(projectName);
       setDiagnosticResult(res);
     } catch {}
-  };
+  }, [diagnoseMutation, projectName]);
 
   useEffect(() => {
     if (isOpen && projectName) {
       runDiagnosis();
     }
-  }, [isOpen, projectName]);
+  }, [isOpen, projectName, runDiagnosis]);
 
-  const handleApplyFix = async (fix: { id: string; type: string; parameters: Record<string, any> }) => {
+  const handleApplyFix = async (fix: {
+    id: string;
+    type: string;
+    parameters: Record<string, any>;
+  }) => {
     setActiveFixId(fix.id);
     setFixSuccessMessage(null);
     try {
@@ -112,7 +112,9 @@ export function AiTroubleshootModal({
               className="flex items-center gap-1.5 rounded-lg bg-muted px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80 transition-colors border border-border/60"
               title="Re-run Diagnostic Scan"
             >
-              <RefreshCw className={cn("w-3.5 h-3.5", diagnoseMutation.isPending && "animate-spin")} />
+              <RefreshCw
+                className={cn("w-3.5 h-3.5", diagnoseMutation.isPending && "animate-spin")}
+              />
               <span>Rescan</span>
             </button>
             <button
@@ -130,7 +132,9 @@ export function AiTroubleshootModal({
           {diagnoseMutation.isPending && (
             <div className="py-12 flex flex-col items-center justify-center gap-3 text-muted-foreground">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="font-mono text-xs">Inspecting container state, memory heap, and exit codes...</p>
+              <p className="font-mono text-xs">
+                Inspecting container state, memory heap, and exit codes...
+              </p>
             </div>
           )}
 
@@ -144,8 +148,8 @@ export function AiTroubleshootModal({
                   diagnosticResult.status === "healthy"
                     ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
                     : diagnosticResult.status === "warning"
-                    ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
-                    : "bg-destructive/10 border-destructive/30 text-destructive"
+                      ? "bg-amber-500/10 border-amber-500/30 text-amber-400"
+                      : "bg-destructive/10 border-destructive/30 text-destructive",
                 )}
               >
                 <div className="flex items-center gap-2.5">
@@ -198,7 +202,9 @@ export function AiTroubleshootModal({
                           {iss.type}
                         </span>
                       </div>
-                      <p className="text-xs text-muted-foreground leading-relaxed">{iss.description}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">
+                        {iss.description}
+                      </p>
                       {iss.evidence && (
                         <div className="rounded bg-muted/60 p-2 font-mono text-[10px] text-destructive whitespace-pre-wrap border border-border/40">
                           {iss.evidence}
@@ -224,7 +230,9 @@ export function AiTroubleshootModal({
                         <div className="space-y-0.5">
                           <div className="flex items-center gap-2">
                             <Zap className="w-3.5 h-3.5 text-primary" />
-                            <span className="font-semibold text-foreground text-xs">{fix.title}</span>
+                            <span className="font-semibold text-foreground text-xs">
+                              {fix.title}
+                            </span>
                           </div>
                           <p className="text-[11px] text-muted-foreground">{fix.description}</p>
                         </div>

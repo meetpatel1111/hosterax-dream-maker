@@ -1,5 +1,15 @@
 import { useMemo } from "react";
-import { Cpu, MemoryStick, Network, HardDrive, ShieldCheck, Activity, Box, Zap, Flame } from "lucide-react";
+import {
+  Cpu,
+  MemoryStick,
+  Network,
+  HardDrive,
+  ShieldCheck,
+  Activity,
+  Box,
+  Zap,
+  Flame,
+} from "lucide-react";
 import { useEngineSystem, useProjectMetrics, useGpuTelemetry } from "@/lib/engine";
 
 type HealthMetricsProps = {
@@ -230,7 +240,8 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
                   GPU Core: <strong>{primaryGpu.utilizationGpuPercent}%</strong>
                 </div>
                 <div className="text-emerald-400 font-semibold">
-                  VRAM: {primaryGpu.memoryUsedMb} MB / {primaryGpu.memoryTotalMb} MB ({primaryGpu.memoryUsagePercent}%)
+                  VRAM: {primaryGpu.memoryUsedMb} MB / {primaryGpu.memoryTotalMb} MB (
+                  {primaryGpu.memoryUsagePercent}%)
                 </div>
               </div>
             </div>

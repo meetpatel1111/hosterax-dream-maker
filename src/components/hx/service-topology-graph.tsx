@@ -150,7 +150,11 @@ export function ServiceTopologyGraph({
             </div>
             <div className="space-y-1 text-[11px] font-mono text-muted-foreground">
               <div className="truncate">https://{magicHost}</div>
-              {lanIp && <div className="text-emerald-400 truncate">http://{lanIp}:{port}</div>}
+              {lanIp && (
+                <div className="text-emerald-400 truncate">
+                  http://{lanIp}:{port}
+                </div>
+              )}
             </div>
           </div>
 
@@ -238,10 +242,14 @@ export function ServiceTopologyGraph({
           <div className="flex items-center gap-2">
             <Activity className="h-3.5 w-3.5 text-primary" />
             <span>
-              {selectedNode === "ingress" && "Ingress: Direct TCP/HTTP traffic load balanced across loopback and local Wi-Fi interfaces."}
-              {selectedNode === "edge" && "Edge Gateway: Automated SSL cert provisioning via Let's Encrypt / internal CA with zero-downtime proxying."}
-              {selectedNode === "app" && `Application Service: Running container on isolated bridge network with Autonomous AutoHeal v6 watchdog.`}
-              {selectedNode === "storage" && "Persistence: Encrypted volume storage with scheduled snapshot backups to local disk & S3."}
+              {selectedNode === "ingress" &&
+                "Ingress: Direct TCP/HTTP traffic load balanced across loopback and local Wi-Fi interfaces."}
+              {selectedNode === "edge" &&
+                "Edge Gateway: Automated SSL cert provisioning via Let's Encrypt / internal CA with zero-downtime proxying."}
+              {selectedNode === "app" &&
+                `Application Service: Running container on isolated bridge network with Autonomous AutoHeal v6 watchdog.`}
+              {selectedNode === "storage" &&
+                "Persistence: Encrypted volume storage with scheduled snapshot backups to local disk & S3."}
             </span>
           </div>
 

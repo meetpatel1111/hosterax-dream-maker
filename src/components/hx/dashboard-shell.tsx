@@ -148,7 +148,9 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             </div>
             <div className="min-w-0 flex-1 truncate text-xs">
               <div className="truncate font-medium">{user?.email || "admin@hosterax.internal"}</div>
-              <div className="text-muted-foreground text-[10px]">{t("primaryWorkspace", "Primary Workspace")}</div>
+              <div className="text-muted-foreground text-[10px]">
+                {t("primaryWorkspace", "Primary Workspace")}
+              </div>
             </div>
           </div>
           <button

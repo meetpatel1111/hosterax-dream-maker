@@ -157,7 +157,9 @@ export class SelfHealEngine {
     if (this.running) return;
     this.running = true;
     this.reconciling = false;
-    console.log("[self-heal] Autonomous Self-Healing Engine started (AutoHeal v6 Mesh - Zero Spawn Mode)");
+    console.log(
+      "[self-heal] Autonomous Self-Healing Engine started (AutoHeal v6 Mesh - Zero Spawn Mode)",
+    );
 
     // Run watchdog probe every 15 seconds (with overlap guard to minimize background CPU/RAM)
     this.timer = setInterval(() => {
@@ -881,7 +883,8 @@ export class SelfHealEngine {
 
   probeHttpEndpoint(host, port, endpointPath = "/", expectedStatus = 200, timeoutMs = 3000) {
     return new Promise((resolve) => {
-      const cleanPath = endpointPath && endpointPath.startsWith("/") ? endpointPath : `/${endpointPath || ""}`;
+      const cleanPath =
+        endpointPath && endpointPath.startsWith("/") ? endpointPath : `/${endpointPath || ""}`;
       const req = http.request(
         {
           hostname: host || "127.0.0.1",

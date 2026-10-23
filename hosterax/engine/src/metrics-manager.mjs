@@ -13,7 +13,7 @@ export class MetricsManager {
     this.HOME = HOME;
     this.LOGDIR = LOGDIR;
     this.dockerApi = dockerApi;
-    
+
     // In-memory ring buffers: projectName -> Array of max 30 metrics snapshots
     this.metricsHistory = new Map();
     // In-memory active alerts: projectName -> [alerts]
@@ -85,16 +85,24 @@ export class MetricsManager {
             let cpuPercent = 0;
 
             if (rawStats.cpu_stats && rawStats.precpu_stats) {
-              cpuDelta = (rawStats.cpu_stats.cpu_usage?.total_usage || 0) - (rawStats.precpu_stats.cpu_usage?.total_usage || 0);
-              systemDelta = (rawStats.cpu_stats.system_cpu_usage || 0) - (rawStats.precpu_stats.system_cpu_usage || 0);
-              const onlineCpus = rawStats.cpu_stats.online_cpus || (rawStats.cpu_stats.cpu_usage?.percpu_usage?.length || 1);
+              cpuDelta =
+                (rawStats.cpu_stats.cpu_usage?.total_usage || 0) -
+                (rawStats.precpu_stats.cpu_usage?.total_usage || 0);
+              systemDelta =
+                (rawStats.cpu_stats.system_cpu_usage || 0) -
+                (rawStats.precpu_stats.system_cpu_usage || 0);
+              const onlineCpus =
+                rawStats.cpu_stats.online_cpus ||
+                rawStats.cpu_stats.cpu_usage?.percpu_usage?.length ||
+                1;
               if (systemDelta > 0 && cpuDelta > 0) {
                 cpuPercent = (cpuDelta / systemDelta) * onlineCpus * 100.0;
               }
             }
 
-            const memUsage = (rawStats.memory_stats.usage || 0) - (rawStats.memory_stats.stats?.cache || 0);
-            const memLimit = rawStats.memory_stats.limit || (1024 * 1024 * 1024);
+            const memUsage =
+              (rawStats.memory_stats.usage || 0) - (rawStats.memory_stats.stats?.cache || 0);
+            const memLimit = rawStats.memory_stats.limit || 1024 * 1024 * 1024;
             const usedMb = Math.round((memUsage / 1048576) * 10) / 10;
             const limitMb = Math.round((memLimit / 1048576) * 10) / 10;
             const memPerc = limitMb > 0 ? Math.round((usedMb / limitMb) * 1000) / 10 : 0;
@@ -127,8 +135,13 @@ export class MetricsManager {
       // Fallback only if native socket unavailable
       const res = spawnSync(
         "docker",
-        ["stats", "--no-stream", "--format", '{"id":"{{.ID}}","name":"{{.Name}}","cpu":"{{.CPUPerc}}","mem":"{{.MemUsage}}","memPerc":"{{.MemPerc}}","net":"{{.NetIO}}","block":"{{.BlockIO}}"}'],
-        { encoding: "utf8", timeout: 4000 }
+        [
+          "stats",
+          "--no-stream",
+          "--format",
+          '{"id":"{{.ID}}","name":"{{.Name}}","cpu":"{{.CPUPerc}}","mem":"{{.MemUsage}}","memPerc":"{{.MemPerc}}","net":"{{.NetIO}}","block":"{{.BlockIO}}"}',
+        ],
+        { encoding: "utf8", timeout: 4000 },
       );
 
       if (res.status === 0 && res.stdout) {
@@ -137,7 +150,9 @@ export class MetricsManager {
           try {
             const raw = JSON.parse(line);
             const rawName = raw.name || "";
-            const projectName = rawName.startsWith("hx_") ? rawName.slice(3).toLowerCase() : rawName.toLowerCase();
+            const projectName = rawName.startsWith("hx_")
+              ? rawName.slice(3).toLowerCase()
+              : rawName.toLowerCase();
             const cpu = parseFloat(raw.cpu.replace("%", "")) || 0;
             const memPerc = parseFloat(raw.memPerc.replace("%", "")) || 0;
             let usedMb = 0;
@@ -171,7 +186,8 @@ export class MetricsManager {
           } catch {}
         }
       }
-    } catch {} finally {
+    } catch {
+    } finally {
       this.isCollecting = false;
     }
   }
@@ -188,7 +204,9 @@ export class MetricsManager {
 
   evaluateAlerts(projectName, snapshot) {
     try {
-      const rules = this.db.prepare("SELECT * FROM alert_rules WHERE project=? AND enabled=1").all(projectName);
+      const rules = this.db
+        .prepare("SELECT * FROM alert_rules WHERE project=? AND enabled=1")
+        .all(projectName);
       for (const rule of rules) {
         let isTriggered = false;
         let val = 0;
@@ -215,20 +233,44 @@ export class MetricsManager {
             };
             this.activeAlerts.set(alertKey, alertObj);
 
-            this.db.prepare(`
+            this.db
+              .prepare(
+                `
               INSERT INTO alert_history (id, project, metric_type, value, threshold, message, status, created_at)
               VALUES (?, ?, ?, ?, ?, ?, 'triggered', ?)
-            `).run(alertObj.id, projectName, rule.metric_type, val, rule.threshold, alertObj.message, Date.now());
+            `,
+              )
+              .run(
+                alertObj.id,
+                projectName,
+                rule.metric_type,
+                val,
+                rule.threshold,
+                alertObj.message,
+                Date.now(),
+              );
           }
         } else {
           if (this.activeAlerts.has(alertKey)) {
             const existing = this.activeAlerts.get(alertKey);
             this.activeAlerts.delete(alertKey);
 
-            this.db.prepare(`
+            this.db
+              .prepare(
+                `
               INSERT INTO alert_history (id, project, metric_type, value, threshold, message, status, created_at)
               VALUES (?, ?, ?, ?, ?, ?, 'resolved', ?)
-            `).run(`res_${Date.now().toString(36)}`, projectName, rule.metric_type, snapshot.cpuPercent, rule.threshold, `${rule.metric_type.toUpperCase()} normalized below threshold`, Date.now());
+            `,
+              )
+              .run(
+                `res_${Date.now().toString(36)}`,
+                projectName,
+                rule.metric_type,
+                snapshot.cpuPercent,
+                rule.threshold,
+                `${rule.metric_type.toUpperCase()} normalized below threshold`,
+                Date.now(),
+              );
           }
         }
       }
@@ -292,7 +334,11 @@ export class MetricsManager {
     return {
       cpuUsagePercent: cpuUsage,
       cores: cpus.length,
-      loadAverage: { "1m": Math.round(loadAvg[0] * 100) / 100, "5m": Math.round(loadAvg[1] * 100) / 100, "15m": Math.round(loadAvg[2] * 100) / 100 },
+      loadAverage: {
+        "1m": Math.round(loadAvg[0] * 100) / 100,
+        "5m": Math.round(loadAvg[1] * 100) / 100,
+        "15m": Math.round(loadAvg[2] * 100) / 100,
+      },
       memory: {
         totalMb: Math.round(totalMem / 1048576),
         usedMb: Math.round(usedMem / 1048576),
@@ -393,11 +439,15 @@ export class MetricsManager {
     const id = `rule_${clean}_${metricType}`;
     const now = Date.now();
 
-    this.db.prepare(`
+    this.db
+      .prepare(
+        `
       INSERT INTO alert_rules (id, project, metric_type, threshold, duration_seconds, enabled, created_at, updated_at)
       VALUES (?, ?, ?, ?, 60, 1, ?, ?)
       ON CONFLICT(id) DO UPDATE SET threshold=excluded.threshold, updated_at=excluded.updated_at
-    `).run(id, clean, metricType, Number(threshold), now, now);
+    `,
+      )
+      .run(id, clean, metricType, Number(threshold), now, now);
 
     return {
       id,
@@ -410,7 +460,9 @@ export class MetricsManager {
 
   listAlertRules(projectName) {
     if (projectName) {
-      return this.db.prepare("SELECT * FROM alert_rules WHERE project=?").all(projectName.toLowerCase().trim());
+      return this.db
+        .prepare("SELECT * FROM alert_rules WHERE project=?")
+        .all(projectName.toLowerCase().trim());
     }
     return this.db.prepare("SELECT * FROM alert_rules").all();
   }
