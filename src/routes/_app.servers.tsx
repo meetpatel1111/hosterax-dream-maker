@@ -49,8 +49,9 @@ function ServersPage() {
 
   const totalServers = servers.length;
   const onlineServers = servers.filter((s) => s.status === "online").length;
-  const totalCores = servers.reduce((acc, s) => acc + (s.cpu_cores || 1), 0);
+  const totalCores = servers.reduce((acc, s) => acc + (s.cpu_cores || 0), 0);
   const totalRamGb = Math.round(servers.reduce((acc, s) => acc + (s.total_ram_mb || 0), 0) / 1024);
+  const hasUnknownSpecs = servers.some((s) => !s.cpu_cores || !s.total_ram_mb);
 
   async function handlePingTest(server: ServerNode) {
     setPingingId(server.id);
@@ -71,14 +72,17 @@ function ServersPage() {
 
   async function handleOpenBootstrap(server: ServerNode) {
     setBootstrapServer(server);
+    setBootstrapScript("");
     try {
       const res = await fetch(`${engine.url}/api/servers/${server.id}/bootstrap`, {
-        headers: { authorization: `Bearer ${engine.token}` },
+        credentials: "omit",
+        headers: engine.token ? { authorization: `Bearer ${engine.token}` } : {},
       });
-      const text = await res.text();
-      setBootstrapScript(text);
-    } catch {
-      setBootstrapScript("#!/bin/bash\ncurl -fsSL https://get.docker.com | sh\n");
+      if (!res.ok) throw new Error(`The engine answered ${res.status}`);
+      setBootstrapScript(await res.text());
+    } catch (e: any) {
+      setBootstrapServer(null);
+      toast.error(`Could not load the bootstrap script: ${e.message || "engine unreachable"}`);
     }
   }
 
@@ -117,14 +121,14 @@ function ServersPage() {
             >
               <Zap className="w-3 h-3 mr-1" /> Multi-Node Infrastructure
             </Badge>
-            <span className="text-xs text-muted-foreground">Phase 2 Parity</span>
           </div>
           <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
             Compute Nodes & Servers
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Manage local and remote VPS compute nodes, run agentless SSH health checks, and
-            bootstrap remote Docker instances.
+            Register remote VPS hosts, check that they are reachable, and get a script that prepares
+            them for Docker. Deploying applications to remote nodes is not available yet — projects
+            currently run on the machine hosting the engine.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -166,8 +170,10 @@ function ServersPage() {
             <Cpu className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono">{totalCores}</span>
-            <span className="text-xs text-muted-foreground">CPU cores</span>
+            <span className="text-2xl font-bold font-mono">{totalCores || "—"}</span>
+            <span className="text-xs text-muted-foreground">
+              CPU cores{hasUnknownSpecs ? " (remote specs unknown)" : ""}
+            </span>
           </div>
         </div>
 
@@ -179,8 +185,12 @@ function ServersPage() {
             <HardDrive className="w-4 h-4 text-sky-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono">{totalRamGb} GB</span>
-            <span className="text-xs text-muted-foreground">available</span>
+            <span className="text-2xl font-bold font-mono">
+              {totalRamGb ? `${totalRamGb} GB` : "—"}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {hasUnknownSpecs ? "known nodes only" : "installed"}
+            </span>
           </div>
         </div>
 
@@ -192,8 +202,8 @@ function ServersPage() {
             <Radio className="w-4 h-4 text-purple-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-base font-bold font-mono text-purple-400">Agentless SSH</span>
-            <span className="text-xs text-muted-foreground">Zero Overhead</span>
+            <span className="text-base font-bold font-mono text-purple-400">Registry only</span>
+            <span className="text-xs text-muted-foreground">SSH deploys not implemented</span>
           </div>
         </div>
       </div>
@@ -212,7 +222,7 @@ function ServersPage() {
             <Server className="mb-2 h-10 w-10 text-muted-foreground/30" />
             <p className="font-semibold text-base">No Servers Connected</p>
             <p className="text-xs text-muted-foreground mt-1 mb-4">
-              Add your first target VPS node to start deploying applications remotely.
+              Register a VPS to check its reachability and prepare it with the bootstrap script.
             </p>
             <Button size="sm" onClick={() => setShowAddModal(true)}>
               <Plus className="w-4 h-4 mr-2" /> Add Server Node
@@ -248,7 +258,8 @@ function ServersPage() {
                         )}
                       </div>
                       <div className="text-xs text-muted-foreground font-mono mt-0.5">
-                        {server.host}:{server.port} · {server.os_info || "Linux"}
+                        {server.type === "local" ? "this machine" : `${server.host}:${server.port}`}{" "}
+                        · {server.os_info || "OS unknown"}
                       </div>
                     </div>
                   </div>
@@ -276,24 +287,28 @@ function ServersPage() {
                 <div className="grid grid-cols-3 gap-2 bg-muted/20 p-3 rounded-lg text-xs font-mono">
                   <div>
                     <span className="text-muted-foreground text-[10px] block">
-                      CPU ({server.cpu_cores || 1} Cores)
+                      CPU ({server.cpu_cores ? `${server.cpu_cores} cores` : "unknown"})
                     </span>
                     <span className="font-semibold text-foreground">
-                      {server.cpu_usage_pct || 5}%
+                      {server.type === "local" ? `${Math.round(server.cpu_usage_pct || 0)}%` : "—"}
                     </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground text-[10px] block">
-                      RAM ({Math.round((server.total_ram_mb || 4096) / 1024)} GB)
+                      RAM (
+                      {server.total_ram_mb
+                        ? `${Math.round(server.total_ram_mb / 1024)} GB`
+                        : "unknown"}
+                      )
                     </span>
                     <span className="font-semibold text-foreground">
-                      {server.ram_usage_pct || 25}%
+                      {server.type === "local" ? `${Math.round(server.ram_usage_pct || 0)}%` : "—"}
                     </span>
                   </div>
                   <div>
                     <span className="text-muted-foreground text-[10px] block">Containers</span>
                     <span className="font-semibold text-foreground">
-                      {server.containers_count || 0} active
+                      {server.type === "local" ? `${server.containers_count || 0} active` : "—"}
                     </span>
                   </div>
                 </div>
@@ -301,7 +316,7 @@ function ServersPage() {
                 {/* Docker & SSH Badges */}
                 <div className="flex items-center justify-between text-xs pt-1 border-t border-border/40">
                   <span className="font-mono text-muted-foreground text-[11px]">
-                    {server.docker_version || "Docker Engine"}
+                    {server.docker_version || "Docker version unknown"}
                   </span>
                   <div className="flex items-center gap-1.5">
                     {server.type === "remote" && (
@@ -353,15 +368,15 @@ function ServersPage() {
               Bootstrap Compute Node: {bootstrapServer?.name}
             </DialogTitle>
             <DialogDescription>
-              Run this one-line command via SSH on your target VPS to install Docker Engine,
-              configure networking, and register with HosteraX.
+              Review this script, then run it over SSH on the target VPS as root. It installs Docker
+              Engine; it does not connect back to HosteraX.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-3 py-2">
             <div className="relative">
               <pre className="p-3.5 rounded-lg bg-muted/60 font-mono text-xs text-foreground overflow-x-auto whitespace-pre-wrap max-h-60">
-                {bootstrapScript}
+                {bootstrapScript || "Loading…"}
               </pre>
             </div>
             <div className="p-3 rounded-lg border bg-muted/20 text-xs text-muted-foreground">

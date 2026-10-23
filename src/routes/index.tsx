@@ -29,7 +29,7 @@ function Landing() {
         <div className="mx-auto max-w-6xl px-6 py-24 text-center">
           <div className="inline-flex items-center gap-2 rounded-full border border-border bg-surface px-3 py-1 text-xs font-mono text-muted-foreground">
             <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
-            v0.2.2 · Apache 2.0
+            Apache 2.0 · self-hosted
           </div>
           <h1 className="mt-6 text-5xl font-semibold tracking-tight md:text-6xl">
             Deploy anything.
@@ -37,7 +37,7 @@ function Landing() {
             <span className="text-primary">On your own infra.</span>
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-lg text-muted-foreground">
-            Push-to-deploy from any git repo. Auto-detects 42 stacks, provisions SSL, manages
+            Push-to-deploy from any git repo. Auto-detects 120+ stacks, provisions SSL, manages
             databases, streams build logs — zero YAML.
           </p>
           <div className="mt-8 flex justify-center gap-3">
@@ -88,7 +88,7 @@ function Landing() {
               {
                 i: Rocket,
                 t: "Zero-config deploys",
-                d: "42 stacks across 12 languages, auto-detected.",
+                d: "120+ stacks across 30 languages, auto-detected.",
               },
               { i: Shield, t: "Automatic SSL", d: "Let's Encrypt with wildcard + auto-renewal." },
               {

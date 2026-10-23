@@ -36,17 +36,18 @@ interface ChatMessage {
   timestamp: number;
 }
 
-const QUICK_PROMPTS = [
+// `fill: true` prompts need a project name, so they pre-fill the input instead of sending right away.
+const QUICK_PROMPTS: Array<{ label: string; prompt: string; fill?: boolean }> = [
   {
     label: "🔍 Diagnose Cluster",
     prompt: "Diagnose cluster health and check for failing containers",
   },
   { label: "📊 Live Metrics", prompt: "Show system metrics and node telemetry" },
   { label: "⚡ Reclaim RAM", prompt: "Reclaim idle memory across all containers" },
-  { label: "📜 Error Logs", prompt: "Search error logs in stirling-pdf" },
+  { label: "📜 Error Logs", prompt: "Search error logs in ", fill: true },
   { label: "🌿 PR Previews", prompt: "List active ephemeral PR preview environments" },
   { label: "🧠 Check GPU", prompt: "Show NVIDIA GPU VRAM allocation and check if llama3:8b fits" },
-  { label: "🚀 Restart Service", prompt: "Restart stirling-pdf and verify readiness probe" },
+  { label: "🚀 Restart Service", prompt: "Restart ", fill: true },
   { label: "🛡️ SSL & DNS", prompt: "Check edge routing and SSL status" },
 ];
 
@@ -60,8 +61,9 @@ export function AICopilot() {
   );
 
   const { user } = useAuth();
-  const userRole = (user?.role as string) || "admin";
-  const userEmail = (user?.email as string) || "admin@hosterax.local";
+  // The role is decided by the engine from your API token; this is only used for display.
+  const userRole = (user?.role as string) || "viewer";
+  const userEmail = (user?.email as string) || "unknown";
 
   const chatMutation = useAiChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -86,7 +88,7 @@ export function AICopilot() {
         {
           id: "welcome",
           role: "assistant",
-          content: `👋 **HosteraX AIOps Copilot Active**\n\nI have full operational control over your infrastructure stack, governed by your **\`${userRole.toUpperCase()}\`** RBAC role.\n\nType any natural language command (e.g. *"Restart stirling-pdf"*, *"Diagnose cluster"*, *"Scale to zero after 15m"*, *"Show GPU telemetry"*), or pick a quick action below.`,
+          content: `👋 **HosteraX AIOps Copilot Active**\n\nI have full operational control over your infrastructure stack, governed by your **\`${userRole.toUpperCase()}\`** RBAC role.\n\nType any natural language command (e.g. *"Restart my-app"*, *"Diagnose cluster"*, *"Scale to zero after 15m"*, *"Show GPU telemetry"*), or pick a quick action below.`,
           timestamp: Date.now(),
         },
       ]);
@@ -124,7 +126,6 @@ export function AICopilot() {
       const res = await chatMutation.mutateAsync({
         prompt: promptToSend,
         conversationHistory: history,
-        userRole,
         userEmail,
       });
 
@@ -180,8 +181,8 @@ export function AICopilot() {
         confirmedAction: {
           toolName: actionToExecute.toolName,
           parameters: actionToExecute.parameters,
+          ticket: actionToExecute.ticket,
         },
-        userRole,
         userEmail,
       });
 
@@ -304,7 +305,14 @@ export function AICopilot() {
               {QUICK_PROMPTS.map((qp, i) => (
                 <button
                   key={i}
-                  onClick={() => handleSend(qp.prompt)}
+                  onClick={() => {
+                    if (qp.fill) {
+                      setInput(qp.prompt);
+                      inputRef.current?.focus();
+                    } else {
+                      handleSend(qp.prompt);
+                    }
+                  }}
                   disabled={chatMutation.isPending}
                   className="whitespace-nowrap rounded-md bg-muted/60 hover:bg-muted px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground transition-all duration-150 border border-border/50 active:scale-95"
                 >
@@ -433,7 +441,7 @@ export function AICopilot() {
                     placeholder={
                       userRole === "viewer"
                         ? "Ask about cluster health, logs, diagnostics (Read-Only)..."
-                        : "Type any command (e.g. 'restart stirling-pdf', 'scale to zero 15m')..."
+                        : "Type any command (e.g. 'restart my-app', 'scale to zero 15m')..."
                     }
                     disabled={chatMutation.isPending}
                     className="w-full rounded-xl bg-background border border-border/80 px-3.5 py-2.5 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary font-sans transition-all"

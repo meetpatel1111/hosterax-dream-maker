@@ -1,7 +1,9 @@
 // src/lib/live-translator.ts
-// Dynamic Real-Time Full-DOM Live Translation Library for HosteraX
-// Translates any arbitrary text, sentences, descriptions, third-party catalogs,
-// and UI elements dynamically using an intelligent live translation bridge with LRU caching.
+// OPT-IN machine translation for text that is not covered by the bundled dictionaries in i18n.ts.
+//
+// PRIVACY: when enabled, any text visible on screen (project names, logs, mail, …) is sent to
+// third-party translation services (Google Translate, MyMemory). It is therefore OFF by default and
+// only activates after an explicit choice in Settings → Language.
 
 import { LanguageCode } from "./i18n";
 
@@ -12,6 +14,15 @@ const CACHE_PREFIX = "hx_trans_v1_";
 // WeakMaps to store original untranslated text and attributes for lossless restoration
 const originalTextMap = new WeakMap<Node, string>();
 const originalAttrMap = new WeakMap<Element, Record<string, string>>();
+
+const OPT_IN_KEY = "hx.liveTranslate";
+export function isLiveTranslateEnabled(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(OPT_IN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 let currentLanguage: LanguageCode = "en";
 let observer: MutationObserver | null = null;
@@ -73,6 +84,7 @@ function setCachedTranslation(text: string, lang: LanguageCode, translated: stri
  */
 async function fetchLiveTranslation(text: string, targetLang: LanguageCode): Promise<string> {
   const trimmed = text.trim();
+  if (!isLiveTranslateEnabled()) return text; // never leave the machine without consent
   if (!trimmed || targetLang === "en" || shouldSkip(trimmed)) return text;
 
   const cached = getCachedTranslation(trimmed, targetLang);
@@ -248,7 +260,7 @@ function processNode(node: Node, lang: LanguageCode) {
  */
 export function startLiveTranslator(lang: LanguageCode) {
   currentLanguage = lang;
-  if (typeof document === "undefined") return;
+  if (typeof document === "undefined" || !isLiveTranslateEnabled()) return;
 
   // Run full DOM sweep
   processNode(document.body, lang);
@@ -278,6 +290,21 @@ export function startLiveTranslator(lang: LanguageCode) {
 
 export function updateLiveTranslationLanguage(lang: LanguageCode) {
   currentLanguage = lang;
-  if (typeof document === "undefined") return;
+  if (typeof document === "undefined" || !isLiveTranslateEnabled()) return;
   processNode(document.body, lang);
+}
+
+/** Turns machine translation on/off. Turning it off restores the original English text. */
+export function setLiveTranslateEnabled(on: boolean) {
+  try {
+    localStorage.setItem(OPT_IN_KEY, on ? "1" : "0");
+  } catch {}
+  if (typeof document === "undefined") return;
+  if (on) {
+    startLiveTranslator(currentLanguage);
+  } else {
+    observer?.disconnect();
+    observer = null;
+    processNode(document.body, "en");
+  }
 }

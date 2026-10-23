@@ -180,7 +180,7 @@ export function OneClickApps() {
           <Package className="h-4 w-4 text-primary" /> Quick Install Apps
         </h2>
         <a href="/new" className="text-xs font-medium text-primary hover:underline">
-          Browse All 2,550+ Apps →
+          Browse All 2,500+ Apps →
         </a>
       </div>
       <div className="mb-4 grid gap-2 md:grid-cols-2 lg:grid-cols-4">

@@ -99,7 +99,7 @@ export function StarterTemplatesCatalog({
                 <span>🐳</span> Looking for self-hosted apps?
               </div>
               <p className="text-muted-foreground mt-0.5">
-                Browse our complete catalog of 2,550+ one-click applications.
+                Browse our complete catalog of 2,500+ one-click applications.
               </p>
             </div>
           </div>

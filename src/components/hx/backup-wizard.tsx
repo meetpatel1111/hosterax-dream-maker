@@ -93,10 +93,23 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
       });
 
       toast.success(
-        `Snapshot created successfully (${res.sizeMb || 0.1} MB, verified SHA-256 integrity)${
-          res.s3Synced ? " & replicated to S3 bucket!" : "!"
+        `Snapshot created (${res.sizeMb ?? 0} MB, SHA-256 recorded)${
+          res.s3Synced ? " and replicated to S3." : "."
         }`,
       );
+      // "S3 / R2" was chosen as the destination: replicate this snapshot now (auto-sync may be off).
+      if (destination === "s3" && !res.s3Synced) {
+        if (!s3Config?.configured) {
+          toast.warning("S3 is not configured yet — the snapshot was kept on local disk only.");
+        } else {
+          try {
+            await engine.call("POST", `/api/backups/${res.id}/sync-s3`);
+            toast.success("Snapshot replicated to S3.");
+          } catch (e: any) {
+            toast.error(`Saved locally, but the S3 upload failed: ${e?.message}`);
+          }
+        }
+      }
       backupsQuery.refetch();
       remoteBackupsQuery.refetch();
       setActiveTab("history");
@@ -174,24 +187,19 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   const restoreBackup = async (b: BackupItem) => {
     if (
       !confirm(
-        `Are you sure you want to restore snapshot "${b.id}" to ${b.database_name}? This will restore the database to this exact point in time.`,
+        `Restore snapshot "${b.id}" into ${b.database_name}? Current data will be overwritten with the data from ${new Date(b.created_at).toLocaleString()}.`,
       )
     ) {
       return;
     }
 
     setRestoringId(b.id);
-    const toastId = toast.loading(`Verifying SHA-256 checksum & restoring snapshot ${b.id}...`);
+    const toastId = toast.loading(`Verifying checksum and restoring snapshot ${b.id}…`);
 
     try {
-      const res = await engine.call<any>("POST", `/api/backups/${b.id}/restore`, {
-        targetContainer: b.database_name,
-      });
+      const res = await engine.call<any>("POST", `/api/backups/${b.id}/restore`);
 
-      toast.success(
-        res.message || `Snapshot ${b.id} restored successfully with verified SHA256 integrity!`,
-        { id: toastId },
-      );
+      toast.success(res.message || `Snapshot ${b.id} restored.`, { id: toastId });
       backupsQuery.refetch();
     } catch (err: any) {
       toast.error(err?.message || "Restore failed", { id: toastId });
@@ -211,8 +219,24 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const downloadBackup = (id: string) => {
-    window.open(`${engine.url}/api/backups/${id}/download`, "_blank");
+  // window.open() cannot send the Authorization header, so fetch the archive and save the blob.
+  const downloadBackup = async (id: string) => {
+    try {
+      const r = await fetch(`${engine.url}/api/backups/${id}/download`, {
+        headers: engine.token ? { authorization: `Bearer ${engine.token}` } : {},
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `HTTP ${r.status}`);
+      const name =
+        /filename="?([^";]+)"?/.exec(r.headers.get("content-disposition") || "")?.[1] || `${id}.gz`;
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast.error(err?.message || "Download failed");
+    }
   };
 
   return (
@@ -333,8 +357,9 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                   Streaming
                 </div>
                 <p>
-                  Every snapshot is compressed with gzip and verified with SHA-256 checksums before
-                  storage. If configured, snapshots automatically stream to your remote S3 bucket.
+                  Every snapshot is gzip-compressed and fingerprinted with a SHA-256 checksum, which
+                  is re-checked before any restore. With S3 auto-sync on (Storage tab), new
+                  snapshots are also uploaded to your bucket.
                 </p>
               </div>
 
@@ -387,7 +412,16 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                           <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted-foreground">
                             {b.id}
                           </span>
-                          <span className="rounded-full bg-success/15 text-success px-2 py-0.2 text-[10px] uppercase font-semibold">
+                          <span
+                            className={`rounded-full px-2 py-0.2 text-[10px] uppercase font-semibold ${
+                              b.status === "completed"
+                                ? "bg-success/15 text-success"
+                                : b.status === "in_progress"
+                                  ? "bg-amber-500/15 text-amber-400"
+                                  : "bg-destructive/15 text-destructive"
+                            }`}
+                            title={b.error_message || undefined}
+                          >
                             {b.status}
                           </span>
                           {b.destination === "s3_synced" && (
@@ -397,31 +431,34 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                           )}
                         </div>
                         <div className="text-muted-foreground text-[11px]">
-                          {b.db_type.toUpperCase()} · {b.sizeMb || 0.1} MB ({b.file_size_bytes || 0}{" "}
+                          {b.db_type.toUpperCase()} · {b.sizeMb ?? 0} MB ({b.file_size_bytes ?? 0}{" "}
                           bytes) · Created {new Date(b.created_at).toLocaleString()}
+                          {b.error_message ? ` · ${b.error_message}` : ""}
                         </div>
                         <div
                           className="font-mono text-[10px] text-muted-foreground/70 truncate max-w-md"
                           title={b.sha256}
                         >
-                          {b.sha256 || "sha256:verified"}
+                          {b.sha256 || "no checksum recorded"}
                         </div>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {s3Config?.configured && b.destination !== "s3_synced" && (
-                          <button
-                            disabled={syncingId === b.id}
-                            onClick={() => handleSyncToS3(b.id)}
-                            className="inline-flex items-center gap-1 rounded-md border border-border bg-sky-500/10 text-sky-400 px-2.5 py-1.5 text-xs font-medium hover:bg-sky-500/20 transition-colors"
-                            title="Push snapshot to remote S3 bucket"
-                          >
-                            <UploadCloud
-                              className={`h-3.5 w-3.5 ${syncingId === b.id ? "animate-spin" : ""}`}
-                            />
-                            Sync S3
-                          </button>
-                        )}
+                        {s3Config?.configured &&
+                          b.status === "completed" &&
+                          b.destination !== "s3_synced" && (
+                            <button
+                              disabled={syncingId === b.id}
+                              onClick={() => handleSyncToS3(b.id)}
+                              className="inline-flex items-center gap-1 rounded-md border border-border bg-sky-500/10 text-sky-400 px-2.5 py-1.5 text-xs font-medium hover:bg-sky-500/20 transition-colors"
+                              title="Push snapshot to remote S3 bucket"
+                            >
+                              <UploadCloud
+                                className={`h-3.5 w-3.5 ${syncingId === b.id ? "animate-spin" : ""}`}
+                              />
+                              Sync S3
+                            </button>
+                          )}
                         <button
                           onClick={() => downloadBackup(b.id)}
                           className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
@@ -430,7 +467,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                           <Download className="h-3.5 w-3.5 text-muted-foreground" /> Download
                         </button>
                         <button
-                          disabled={restoringId === b.id}
+                          disabled={restoringId === b.id || b.status !== "completed"}
                           onClick={() => restoreBackup(b)}
                           className="inline-flex items-center gap-1.5 rounded-md border border-border bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
                         >

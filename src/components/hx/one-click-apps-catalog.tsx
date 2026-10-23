@@ -31,7 +31,7 @@ import {
 
 // Top featured categories for the quick bar
 const FEATURED_TAGS = [
-  { id: "all", label: "🌟 All (2,550+)", icon: "✨" },
+  { id: "all", label: "🌟 All (2,500+)", icon: "✨" },
   { id: "selfhst-software", label: "selfh.st (1,330+)", icon: "🚀" },
   { id: "analytics", label: "Analytics", icon: "📊" },
   { id: "automation", label: "Automation", icon: "⚡" },
@@ -145,6 +145,7 @@ export function OneClickAppsCatalog({
       map.set(k, {
         ...app,
         source: app.source || "verified",
+        imageVerified: true,
         sources: ["verified"],
       });
     }
@@ -187,6 +188,7 @@ export function OneClickAppsCatalog({
           website: app.website || app.url,
           url: app.url || app.website,
           source: app.source || "awesome_selfhosted",
+          imageVerified: app.imageVerified,
           sources: app.sources || [app.source || "awesome_selfhosted"],
           logoUrl: app.logoUrl,
           svgUrl: app.svgUrl,
@@ -366,6 +368,17 @@ export function OneClickAppsCatalog({
       return;
     }
 
+    // Directory entries don't publish container images; for most of them the image below is only
+    // a best guess derived from the project's repository name.
+    if (
+      item.imageVerified === false &&
+      !confirm(
+        `"${item.name}" has no verified container image.\n\nHosteraX will try "${item.image}", which is a guess based on the project's GitHub name and may not exist or may not be the official image. Only continue if you recognise this image.\n\nDeploy anyway?`,
+      )
+    ) {
+      return;
+    }
+
     try {
       setInstallingId(item.id);
       const projName = item.slug || item.name.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
@@ -409,7 +422,7 @@ export function OneClickAppsCatalog({
                 <span>
                   {t(
                     "oneClickCatalogTitle",
-                    "Complete 2,550+ Awesome-Selfhosted, SysAdmin & selfh.st Directory",
+                    "Complete 2,500+ Awesome-Selfhosted, SysAdmin & selfh.st Directory",
                   )}
                 </span>
               </div>
@@ -574,7 +587,7 @@ export function OneClickAppsCatalog({
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               type="text"
-              placeholder={t("searchAppsPlaceholder", "Search across 2,550+ self-hosted apps...")}
+              placeholder={t("searchAppsPlaceholder", "Search across 2,500+ self-hosted apps...")}
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
@@ -598,7 +611,7 @@ export function OneClickAppsCatalog({
               }}
               className="flex-1 bg-surface border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-medium truncate"
             >
-              <option value="all">🌟 All Categories (2,550+ Apps)</option>
+              <option value="all">🌟 All Categories (2,500+ Apps)</option>
               {(tagsData?.tags || []).map((t: any, idx: number) => (
                 <option key={`${t.slug || t.id}-${idx}`} value={t.slug || t.id}>
                   {t.icon || "📦"} {t.label} ({t.count} apps)
@@ -810,6 +823,14 @@ export function OneClickAppsCatalog({
                     <div className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground/80 bg-surface-2/50 px-2 py-1 rounded-md border border-border/30 mb-3 truncate">
                       <Container className="w-3 h-3 shrink-0 text-primary/70" />
                       <span className="truncate">{item.image}</span>
+                      {item.imageVerified === false && (
+                        <span
+                          className="ml-auto shrink-0 rounded bg-amber-500/15 px-1 py-0.5 text-[9px] font-semibold text-amber-400"
+                          title="This image name is a guess derived from the project's GitHub repository."
+                        >
+                          unverified
+                        </span>
+                      )}
                     </div>
 
                     {/* Language & License & Updated Badges */}

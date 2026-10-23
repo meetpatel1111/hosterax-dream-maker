@@ -17,7 +17,6 @@ import {
   X,
 } from "lucide-react";
 import { useAiDiagnose, useAiExecuteFix, type AiDiagnosticResult } from "@/lib/engine";
-import { useAuth } from "@/lib/auth-context";
 import { cn } from "@/lib/utils";
 
 interface AiTroubleshootModalProps {
@@ -27,9 +26,6 @@ interface AiTroubleshootModalProps {
 }
 
 export function AiTroubleshootModal({ projectName, isOpen, onClose }: AiTroubleshootModalProps) {
-  const { user } = useAuth();
-  const userRole = (user?.role as string) || "admin";
-
   const diagnoseMutation = useAiDiagnose();
   const executeFixMutation = useAiExecuteFix();
 
@@ -63,7 +59,6 @@ export function AiTroubleshootModal({ projectName, isOpen, onClose }: AiTroubles
         projectName,
         fixType: fix.type,
         parameters: fix.parameters,
-        userRole,
       });
       if (res.success) {
         setFixSuccessMessage(res.message);

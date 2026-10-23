@@ -163,6 +163,16 @@ function TeamPage() {
         </div>
       </div>
 
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-xs text-amber-200/90">
+        <span className="font-semibold">Directory only, for now.</span> Organizations and roles
+        record who is on your team, but they do not create logins and are not yet enforced by the
+        engine. Access today is controlled with scoped{" "}
+        <a href="/tokens" className="underline">
+          API tokens
+        </a>{" "}
+        (read / deploy / admin). Per-user sign-in and role enforcement are on the roadmap.
+      </div>
+
       {/* Workspace Switcher & Stats Card */}
       {activeOrg && (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

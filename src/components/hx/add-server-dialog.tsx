@@ -2,6 +2,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useState } from "react";
 import { Cpu, Terminal, Key } from "lucide-react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEngine } from "@/lib/engine";
 
 type AddServerDialogProps = {
@@ -11,6 +12,7 @@ type AddServerDialogProps = {
 
 export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
   const engine = useEngine();
+  const qc = useQueryClient();
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("22");
@@ -26,11 +28,12 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
         name,
         type,
         host: type === "remote" ? host : undefined,
-        port: type === "remote" ? parseInt(port) : undefined,
+        port: type === "remote" ? parseInt(port, 10) || 22 : undefined,
         username: type === "remote" ? username : undefined,
         private_key: type === "remote" ? privateKey : undefined,
       });
       toast.success("Server added successfully");
+      qc.invalidateQueries({ queryKey: ["server-nodes"] });
       onOpenChange(false);
     } catch (e: any) {
       toast.error(e.message || "Failed to add server");
@@ -54,7 +57,9 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
             >
               <Terminal className="h-6 w-6" />
               <div className="font-medium">Remote VPS</div>
-              <div className="text-center text-xs">Connect via SSH to a remote server.</div>
+              <div className="text-center text-xs">
+                Register a remote server (reachability check only).
+              </div>
             </button>
             <button
               onClick={() => setType("local")}
@@ -118,6 +123,10 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
                   <label className="mb-1.5 block text-sm font-medium flex items-center gap-2">
                     <Key className="h-4 w-4" /> SSH Private Key
                   </label>
+                  <p className="mb-1.5 text-[11px] text-muted-foreground">
+                    Stored encrypted on the engine host. It is not used to deploy yet — remote SSH
+                    deployment is not implemented.
+                  </p>
                   <textarea
                     value={privateKey}
                     onChange={(e) => setPrivateKey(e.target.value)}

@@ -29,6 +29,17 @@ import {
 import { toast } from "sonner";
 import { useEngine } from "@/lib/engine";
 
+/** Mirrors the engine's check (security.mjs `isSafeImageRef`) so bad input fails fast in the UI. */
+function isValidImageRef(ref: string): boolean {
+  return (
+    ref.length > 0 &&
+    ref.length <= 255 &&
+    /^[A-Za-z0-9][A-Za-z0-9._\-/:@]*$/.test(ref) &&
+    !ref.includes("..") &&
+    !ref.includes("//")
+  );
+}
+
 export const Route = createFileRoute("/_app/dockerhub")({
   head: () => ({ meta: [{ title: "Registry Explorer (Docker Hub & GHCR) — HosteraX" }] }),
   component: ContainerRegistryExplorerPage,
@@ -512,7 +523,7 @@ function ContainerRegistryExplorerPage() {
 
   const handleDirectLaunch = () => {
     const trimmed = directImageInput.trim();
-    if (!trimmed) {
+    if (!trimmed || !isValidImageRef(trimmed)) {
       toast.error(
         "Please enter a valid container image (e.g. redis:alpine, quay.io/coreos/etcd:latest)",
       );
@@ -542,8 +553,8 @@ function ContainerRegistryExplorerPage() {
             </span>
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Discover, search all 13.2M+ public container images from Docker Hub and GitHub Container
-            Registry, inspect version tags, and 1-click deploy to HosteraX.
+            Discover, search public container images from Docker Hub and GitHub Container Registry,
+            inspect version tags, and 1-click deploy to HosteraX.
           </p>
         </div>
 
@@ -624,7 +635,7 @@ function ContainerRegistryExplorerPage() {
               placeholder={
                 activeRegistry === "ghcr"
                   ? "Search all GHCR packages (e.g. immich-app/immich-server, home-assistant, twenty, jellyfin)..."
-                  : "Search all 13,298,000+ Docker Hub images (e.g. postgres, redis, apache/airflow, ollama, nginx)..."
+                  : "Search Docker Hub images (e.g. postgres, redis, apache/airflow, ollama, nginx)..."
               }
               value={searchQuery}
               onChange={(e) => {
@@ -774,7 +785,7 @@ function ContainerRegistryExplorerPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-muted-foreground font-mono">
           <div className="flex items-center gap-2 flex-wrap">
             {searchLoading && displayResults.length === 0 ? (
-              <span>Searching 13,298,370+ container images...</span>
+              <span>Searching container images...</span>
             ) : (
               <span>
                 {activeRegistry === "dockerhub" ? (

@@ -17,7 +17,8 @@ import {
   AlertCircle,
   ExternalLink,
 } from "lucide-react";
-import { formatMagicDnsUrl, useScaleToZero, useEngine } from "@/lib/engine";
+import { useQuery } from "@tanstack/react-query";
+import { formatMagicDnsUrl, useScaleToZero, useEngine, useBackups } from "@/lib/engine";
 import { toast } from "sonner";
 
 interface ServiceTopologyGraphProps {
@@ -39,6 +40,36 @@ export function ServiceTopologyGraph({
 
   const projectName = project?.name || "app";
   const port = project?.port || 8080;
+  const containerName = `hx_${projectName.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+
+  const { data: edge } = useQuery({
+    queryKey: ["edge-status", engine.url],
+    queryFn: () =>
+      engine.call<{ provider: string; containerStatus: string; activeSslCertificates: number }>(
+        "GET",
+        "/api/edge/status",
+      ),
+    refetchInterval: 15000,
+    retry: false,
+  });
+  const { data: heal } = useQuery({
+    queryKey: ["self-heal-status", engine.url],
+    queryFn: () => engine.call<any>("GET", "/api/self-heal/status"),
+    refetchInterval: 5000,
+    retry: false,
+  });
+  const { data: backups = [] } = useBackups(undefined, projectName);
+  const health = heal?.projects?.[projectName];
+  const providerLabel =
+    edge?.provider === "openresty"
+      ? "OpenResty"
+      : edge?.provider === "external"
+        ? "External proxy"
+        : "Caddy 2";
+  const edgeRunning = edge?.containerStatus === "running";
+  const volumeNote = backups.length
+    ? `${backups.filter((b) => b.status === "completed").length} snapshot(s)`
+    : "No snapshots yet";
   const magicHost = formatMagicDnsUrl(projectName, activeProvider);
   const isSuspended = scaleZero?.isSleeping;
 
@@ -82,9 +113,6 @@ export function ServiceTopologyGraph({
           <div>
             <div className="font-semibold text-sm flex items-center gap-2">
               <span>Application Service Topology & Dependency Mesh</span>
-              <span className="text-[10px] font-mono uppercase bg-surface-2 px-1.5 py-0.5 rounded text-muted-foreground">
-                Aspire v2 Mesh
-              </span>
             </div>
             <p className="text-xs text-muted-foreground">
               Real-time interactive data flow, edge ingress, and container dependency topology.
@@ -170,16 +198,25 @@ export function ServiceTopologyGraph({
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
                 <Shield className="h-4 w-4 text-violet-400" />
-                <span>2. Caddy 2 Edge Gateway</span>
+                <span>2. {providerLabel} edge</span>
               </div>
               <span className="text-[10px] font-mono text-violet-400 bg-violet-950/50 px-1 rounded">
-                TLS / HTTP-01
+                {edgeRunning ? "running" : "stopped"}
               </span>
             </div>
             <div className="space-y-1 text-[11px] font-mono text-muted-foreground">
               <div>Port 80 & 443 ➔ : {port}</div>
-              <div className="text-emerald-400 flex items-center gap-1">
-                <CheckCircle2 className="h-3 w-3" /> Auto-HTTPS Active
+              <div
+                className={`flex items-center gap-1 ${edgeRunning ? "text-emerald-400" : "text-amber-400"}`}
+              >
+                {edgeRunning ? (
+                  <CheckCircle2 className="h-3 w-3" />
+                ) : (
+                  <AlertCircle className="h-3 w-3" />
+                )}
+                {edgeRunning
+                  ? `${edge?.activeSslCertificates ?? 0} active certificate(s)`
+                  : "Edge container not running"}
               </div>
             </div>
           </div>
@@ -207,7 +244,7 @@ export function ServiceTopologyGraph({
               )}
             </div>
             <div className="space-y-1 text-[11px] font-mono text-muted-foreground">
-              <div>Container: hx_{projectName}</div>
+              <div>Container: {containerName}</div>
               <div className="text-foreground font-semibold">Port: :{port} (HTTP)</div>
             </div>
           </div>
@@ -227,12 +264,12 @@ export function ServiceTopologyGraph({
                 <span>4. Volumes & Persistence</span>
               </div>
               <span className="text-[10px] font-mono text-emerald-400 bg-emerald-950/50 px-1 rounded">
-                S3 / MinIO
+                volumes
               </span>
             </div>
             <div className="space-y-1 text-[11px] font-mono text-muted-foreground">
-              <div>Volume: /var/lib/{projectName}</div>
-              <div className="text-muted-foreground">Auto-Backups: Daily (WAL)</div>
+              <div>Volumes: hx_vol_{projectName.toLowerCase().replace(/[^a-z0-9]/g, "_")}_*</div>
+              <div className="text-muted-foreground">Backups: {volumeNote}</div>
             </div>
           </div>
         </div>
@@ -245,18 +282,31 @@ export function ServiceTopologyGraph({
               {selectedNode === "ingress" &&
                 "Ingress: Direct TCP/HTTP traffic load balanced across loopback and local Wi-Fi interfaces."}
               {selectedNode === "edge" &&
-                "Edge Gateway: Automated SSL cert provisioning via Let's Encrypt / internal CA with zero-downtime proxying."}
+                "Edge Gateway: reverse proxy that routes hostnames to this container; certificates come from Let's Encrypt (public domains) or a local CA."}
               {selectedNode === "app" &&
-                `Application Service: Running container on isolated bridge network with Autonomous AutoHeal v6 watchdog.`}
+                `Application Service: container on the Docker bridge network, supervised by the self-healing watchdog.`}
               {selectedNode === "storage" &&
-                "Persistence: Encrypted volume storage with scheduled snapshot backups to local disk & S3."}
+                "Persistence: named Docker volumes; snapshots are created from the Backups wizard or a scheduled backup job and can be replicated to S3."}
             </span>
           </div>
 
           <div className="flex items-center gap-2 font-mono text-[11px]">
-            <span className="text-emerald-400 font-medium">Health: 100% OK</span>
+            <span
+              className={`font-medium ${
+                health?.status === "healthy"
+                  ? "text-emerald-400"
+                  : health
+                    ? "text-amber-400"
+                    : "text-muted-foreground"
+              }`}
+            >
+              Health: {health?.status ?? "not probed yet"}
+            </span>
             <span>•</span>
-            <span>Latency: &lt;1.2ms</span>
+            <span>
+              Latency:{" "}
+              {health?.latencyMs != null && health.latencyMs > 0 ? `${health.latencyMs} ms` : "—"}
+            </span>
           </div>
         </div>
       </div>

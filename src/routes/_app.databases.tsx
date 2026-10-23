@@ -70,7 +70,7 @@ function DatabasesPage() {
               <Link
                 key={d.id}
                 to="/p/$slug"
-                params={{ slug: d.projects?.slug ?? "" }}
+                params={{ slug: d.project ?? "" }}
                 className="flex items-center gap-4 p-4 hover:bg-accent/40 transition-colors"
               >
                 <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-2 font-mono text-xs uppercase font-semibold text-primary">
@@ -79,7 +79,7 @@ function DatabasesPage() {
                 <div className="flex-1">
                   <div className="text-sm font-medium text-foreground">{d.name}</div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
-                    {d.projects?.name} · {d.engine} · {d.size_mb} MB
+                    {d.project} · {d.engine} · {d.size_mb} MB
                   </div>
                 </div>
                 <StatusBadge status={d.status} />

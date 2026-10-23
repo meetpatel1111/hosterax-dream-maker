@@ -12,7 +12,7 @@ export const Route = createFileRoute("/_app/apps")({
       {
         name: "description",
         content:
-          "Browse 2,550+ Awesome-Selfhosted applications and starter templates for 1-click deployment.",
+          "Browse 2,500+ Awesome-Selfhosted applications and starter templates for 1-click deployment.",
       },
     ],
   }),
@@ -38,7 +38,7 @@ function AppsCatalogPage() {
           <p className="text-sm text-muted-foreground mt-0.5">
             {t(
               "appStoreDesc",
-              "Discover, install, and run 2,550+ self-hosted software packages and starter templates with zero-config.",
+              "Discover, install, and run 2,500+ self-hosted software packages and starter templates with zero-config.",
             )}
           </p>
         </div>
@@ -54,7 +54,7 @@ function AppsCatalogPage() {
             }`}
           >
             <span>🐳</span>
-            <span>{t("oneClickApps", "One-Click Apps")} (2,550+)</span>
+            <span>{t("oneClickApps", "One-Click Apps")} (2,500+)</span>
           </button>
           <button
             onClick={() => setCatalogSection("templates")}

@@ -424,7 +424,7 @@ function MailboxesPage() {
   }
 
   const unreadCount = messages.filter((m) => !m.is_read && folder === "inbox").length;
-  const storageMb = (messages.length * 0.04).toFixed(2);
+  const storageMb = Number(activeMailbox?.used_mb ?? 0).toFixed(2);
 
   return (
     <div className="space-y-6 p-6 max-w-7xl mx-auto">
@@ -438,14 +438,14 @@ function MailboxesPage() {
             >
               <Mail className="w-3 h-3 mr-1" /> Self-Hosted Email Stack
             </Badge>
-            <span className="text-xs text-muted-foreground">Production Engine</span>
+            <span className="text-xs text-muted-foreground">Webmail + outbound relay</span>
           </div>
           <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
             Mailboxes & Email Stack
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Domain mailboxes, DNS anti-spam verification, inbound webhook piping, and outbound SMTP
-            relays.
+            Domain mailboxes, DKIM/SPF/DMARC records, alias forwarding, and outbound SMTP relays.
+            Mail from the internet is not received yet — an inbound SMTP server is on the roadmap.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -484,7 +484,7 @@ function MailboxesPage() {
               : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
           }`}
         >
-          <Forward className="w-3.5 h-3.5" /> Aliases & Inbound Webhooks ({aliases.length})
+          <Forward className="w-3.5 h-3.5" /> Aliases & Webhooks ({aliases.length})
         </button>
         <button
           onClick={() => setActiveTab("relays")}
@@ -838,8 +838,8 @@ function MailboxesPage() {
             <div>
               <h3 className="text-base font-semibold">Email Aliases & Webhook Forwarders</h3>
               <p className="text-xs text-muted-foreground">
-                Route incoming emails to external addresses or pipe raw email payloads directly into
-                HTTP Webhook endpoints.
+                When a message is addressed to an alias, forward it to an external address or POST
+                its payload to an HTTP endpoint.
               </p>
             </div>
             <Button size="sm" onClick={() => setAddAliasOpen(true)}>
@@ -920,8 +920,8 @@ function MailboxesPage() {
             <div>
               <h3 className="text-base font-semibold">Outbound SMTP Relays</h3>
               <p className="text-xs text-muted-foreground">
-                Connect Resend, Gmail, Brevo, AWS SES, Postmark, or SendGrid for 100% inbox
-                deliverability.
+                Connect Resend, Gmail, Brevo, AWS SES, Postmark, or SendGrid to deliver mail to the
+                internet. Outbound mail is DKIM-signed with your domain's key.
               </p>
             </div>
             <Button size="sm" onClick={() => setAddRelayOpen(true)}>
