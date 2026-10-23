@@ -17,13 +17,11 @@ export const Route = createFileRoute("/auth")({
 });
 
 function AuthPage() {
-  const { session, loading, signInLocal } = useAuth();
+  const { session, loading, signIn, continueLocal } = useAuth();
   const engine = useEngine();
   const nav = useNavigate();
-  const [email, setEmail] = useState("admin@hosterax.local");
-  const [password, setPassword] = useState("");
+  const [engineUrl, setEngineUrl] = useState(engine.url);
   const [tokenInput, setTokenInput] = useState("");
-  const [useToken, setUseToken] = useState(false);
   const [busy, setBusy] = useState(false);
 
   if (!loading && session) return <Navigate to="/dashboard" />;
@@ -32,37 +30,31 @@ function AuthPage() {
     e.preventDefault();
     setBusy(true);
     try {
-      if (useToken && tokenInput.trim()) {
-        engine.save(engine.url, tokenInput.trim());
-        signInLocal({ email: "admin@hosterax.local", name: "Engine Admin" }, tokenInput.trim());
-        toast.success("Authenticated via Engine Token");
-        nav({ to: "/dashboard" });
+      const err = await signIn(tokenInput, engineUrl);
+      if (err) {
+        toast.error(err);
         return;
       }
-
-      // Call local engine login
-      const res = await engine.call<any>("POST", "/api/auth/login", {
-        email,
-        password,
-      });
-
-      if (res?.token) {
-        engine.save(engine.url, res.token);
-      }
-      signInLocal(res?.user || { email, name: "Admin" }, res?.token);
-      toast.success("Signed in to HosteraX Control Plane");
+      toast.success("Signed in");
       nav({ to: "/dashboard" });
-    } catch (e: any) {
-      toast.error(e?.message ?? "Authentication failed");
     } finally {
       setBusy(false);
     }
   }
 
-  function handleLocalAdmin() {
-    signInLocal();
-    toast.success("Signed in as Local Administrator");
-    nav({ to: "/dashboard" });
+  async function handleLocal() {
+    setBusy(true);
+    try {
+      const err = await continueLocal();
+      if (err) {
+        toast.error(err);
+        return;
+      }
+      toast.success("Connected to the local engine");
+      nav({ to: "/dashboard" });
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -75,79 +67,58 @@ function AuthPage() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Sign in to HosteraX</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Self-hosted, 100% offline-capable control plane.
+              Access is granted by your engine. Use an API token, or continue directly if the engine
+              runs on this machine.
             </p>
           </div>
 
           <button
             type="button"
-            onClick={handleLocalAdmin}
-            className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors"
+            onClick={handleLocal}
+            disabled={busy}
+            className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/40 bg-primary/10 px-4 py-2.5 text-xs font-semibold text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
           >
-            <Server className="h-4 w-4" /> 1-Click Local Admin Sign-In
+            <Server className="h-4 w-4" /> Continue on this device
           </button>
 
           <div className="relative flex items-center justify-center">
             <div className="w-full border-t border-border" />
             <span className="bg-card px-2 text-[10px] uppercase font-mono tracking-widest text-muted-foreground">
-              or credentials
+              or use a token
             </span>
           </div>
 
           <form onSubmit={submit} className="space-y-3">
-            {!useToken ? (
-              <>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                    Email / Username
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="admin@hosterax.local"
-                    className="w-full rounded-md border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Password (default: hosterax)"
-                    className="w-full rounded-md border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
-                  />
-                </div>
-              </>
-            ) : (
-              <div>
-                <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                  Master Engine Token
-                </label>
-                <input
-                  type="password"
-                  required
-                  value={tokenInput}
-                  onChange={(e) => setTokenInput(e.target.value)}
-                  placeholder="hxt_..."
-                  className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
-                />
-              </div>
-            )}
-
-            <div className="flex items-center justify-between text-xs pt-1">
-              <button
-                type="button"
-                onClick={() => setUseToken(!useToken)}
-                className="text-primary hover:underline flex items-center gap-1 font-mono text-[11px]"
-              >
-                <Key className="h-3 w-3" />
-                {useToken ? "Use email & password" : "Use Engine token"}
-              </button>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                Engine URL
+              </label>
+              <input
+                type="url"
+                required
+                value={engineUrl}
+                onChange={(e) => setEngineUrl(e.target.value)}
+                placeholder="http://localhost:7777"
+                className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                API token
+              </label>
+              <input
+                type="password"
+                required
+                autoComplete="off"
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+                placeholder="hxt_..."
+                className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
+              />
+              <p className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground">
+                <Key className="h-3 w-3" /> The first token is printed in the engine's console when
+                it starts. Create more under Settings → API tokens.
+              </p>
             </div>
 
             <button
@@ -155,14 +126,14 @@ function AuthPage() {
               disabled={busy}
               className="w-full rounded-md bg-primary py-2 text-sm font-medium text-primary-foreground glow-primary hover:opacity-90 disabled:opacity-50 transition-all"
             >
-              {busy ? "Signing in..." : "Sign in to Control Plane"}
+              {busy ? "Checking…" : "Sign in with token"}
             </button>
           </form>
         </div>
 
         <div className="flex items-center justify-center gap-1.5 text-xs text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-          <span>Standalone SQLite Engine · No external dependencies</span>
+          <span>Tokens are verified by your engine and never leave your infrastructure</span>
         </div>
       </div>
     </div>

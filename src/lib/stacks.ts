@@ -1549,6 +1549,8 @@ export type OneClickAppDef = {
   healthPath?: string;
   tags: string[];
   popular?: boolean;
+  /** false when `image` is only a guess derived from the project's repository name */
+  imageVerified?: boolean;
   source?: "verified" | "awesome_selfhosted" | "awesome_sysadmin" | "selfhst" | string;
   sources?: string[];
   website?: string;
@@ -1579,7 +1581,7 @@ export const ONE_CLICK_APP_CATEGORIES = [
 ] as const;
 
 export const ONE_CLICK_SOURCES = [
-  { id: "all", label: "✨ All (2,550+ Apps)", icon: "✨" },
+  { id: "all", label: "✨ All (2,500+ Apps)", icon: "✨" },
   { id: "verified", label: "🌟 Verified 1-Click", icon: "🛡️" },
   { id: "awesome_selfhosted", label: "⚡ Awesome-Selfhosted", icon: "📚" },
   { id: "awesome_sysadmin", label: "🛠️ SysAdmin / DevOps", icon: "⚙️" },
@@ -1625,7 +1627,7 @@ export const ONE_CLICK_APPS_CATALOG: OneClickAppDef[] = [
     website: "https://openwebui.com",
     stars: "65k+",
     env: {
-      WEBUI_AUTH: "false",
+      WEBUI_AUTH: "true",
     },
   },
   {

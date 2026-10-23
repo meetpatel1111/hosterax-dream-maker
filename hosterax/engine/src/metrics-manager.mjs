@@ -2,7 +2,7 @@
 // Real-Time Container Metrics, Alerting Watchdog, and Log Analytics Subsystem for HosteraX
 // Tracks live CPU/RAM/Net/Disk I/O, historical ring buffers, log level parsing, and threshold alerts.
 
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "./safe-exec.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";

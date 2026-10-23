@@ -1,6 +1,8 @@
 import http from "node:http";
+import https from "node:https";
 import net from "node:net";
-import { spawnSync, execSync } from "node:child_process";
+import { spawn, execSync, execFile } from "node:child_process";
+import { spawnSync } from "./safe-exec.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -29,7 +31,7 @@ export class SelfHealEngine {
     // In-memory event log for UI timeline
     this.events = [];
     // Docker daemon socket health
-    this.daemonHealthy = true;
+    this.daemonHealthy = true; // optimistic until the first probe (runs immediately on start())
     this.lastDaemonCheckTs = 0;
 
     // Ensure database tables for persistent self-healing events & probe configurations
@@ -65,7 +67,19 @@ export class SelfHealEngine {
     this.running = false;
   }
 
+  /**
+   * Effective probe policy for a project: the saved `health_configs` row wins, otherwise the
+   * project's own health path with conservative defaults.
+   */
   getHealthConfig(project) {
+    const defaults = {
+      probePath: "/",
+      expectedStatus: 200,
+      startupDelaySeconds: 60,
+      timeoutSeconds: 3,
+      blueGreen: true,
+      maxRetries: 4,
+    };
     try {
       const row = this.db.prepare("SELECT * FROM health_configs WHERE project=?").get(project);
       if (row) {
@@ -78,15 +92,11 @@ export class SelfHealEngine {
           maxRetries: row.max_retries,
         };
       }
-    } catch {}
-    return {
-      probePath: "/",
-      expectedStatus: 200,
-      startupDelaySeconds: 5,
-      timeoutSeconds: 3,
-      blueGreen: true,
-      maxRetries: 4,
-    };
+      const proj = this.db.prepare("SELECT * FROM projects WHERE name=?").get(project);
+      return { ...defaults, probePath: proj?.health_path || proj?.health_check_path || "/" };
+    } catch {
+      return defaults;
+    }
   }
 
   setHealthConfig(project, config) {
@@ -169,7 +179,8 @@ export class SelfHealEngine {
     // Run AutoPrune disk cleaner every 30 minutes
     this.pruneTimer = setInterval(() => this.runAutoPrune(), 30 * 60 * 1000);
 
-    // Initial check
+    // Initial check (probe Docker right away so the dashboard never shows a stale "healthy")
+    this.probeDockerDaemon().catch(() => {});
     setTimeout(() => this.runReconciliationLoop(), 1500);
   }
 
@@ -179,74 +190,50 @@ export class SelfHealEngine {
     if (this.pruneTimer) clearInterval(this.pruneTimer);
   }
 
+  /**
+   * Probes the Docker daemon: native socket API first, `docker version` CLI as fallback so a
+   * socket-path mismatch can never wrongly mark a working Docker as offline.
+   */
   async probeDockerDaemon() {
-    try {
-      if (this.dockerApi) {
+    let version = null;
+    if (this.dockerApi) {
+      try {
         const ver = await this.dockerApi.getVersion();
-        const isOk = Boolean(ver && ver.Version);
-        if (isOk !== this.daemonHealthy) {
-          if (!isOk) {
-            this.logEvent(
-              "system",
-              "daemon_unresponsive",
-              "Docker daemon socket is unresponsive or offline. Suspending container probes.",
-              "error",
-            );
-          } else {
-            this.logEvent(
-              "system",
-              "daemon_recovered",
-              `Docker daemon connected (Engine v${ver.Version}). Resuming probes.`,
-              "info",
-            );
-          }
-        }
-        this.daemonHealthy = isOk;
-        this.daemonVersion = isOk ? ver.Version : null;
-        this.lastDaemonCheckTs = Date.now();
-        return this.daemonHealthy;
-      }
-
-      const res = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
-        encoding: "utf8",
-        timeout: 2500,
+        if (ver && ver.Version) version = ver.Version;
+      } catch {}
+    }
+    if (!version) {
+      version = await new Promise((resolve) => {
+        execFile(
+          "docker",
+          ["version", "--format", "{{.Server.Version}}"],
+          { encoding: "utf8", timeout: 2500 },
+          (err, stdout) => resolve(!err && stdout && stdout.trim() ? stdout.trim() : null),
+        );
       });
-      const isOk = res.status === 0 && Boolean(res.stdout?.trim());
-      if (isOk !== this.daemonHealthy) {
-        if (!isOk) {
-          this.logEvent(
-            "system",
-            "daemon_unresponsive",
-            "Docker daemon socket is unresponsive or offline. Suspending container probes.",
-            "error",
-          );
-        } else {
-          this.logEvent(
-            "system",
-            "daemon_recovered",
-            `Docker daemon connected (Engine v${res.stdout.trim()}). Resuming probes.`,
-            "info",
-          );
-        }
-      }
-      this.daemonHealthy = isOk;
-      this.daemonVersion = isOk ? res.stdout.trim() : null;
-      this.lastDaemonCheckTs = Date.now();
-      return this.daemonHealthy;
-    } catch {
-      if (this.daemonHealthy) {
+    }
+    const isOk = Boolean(version);
+    if (isOk !== this.daemonHealthy) {
+      if (!isOk) {
         this.logEvent(
           "system",
           "daemon_unresponsive",
           "Docker daemon socket is unresponsive or offline. Suspending container probes.",
           "error",
         );
+      } else {
+        this.logEvent(
+          "system",
+          "daemon_recovered",
+          `Docker daemon connected (Engine v${version}). Resuming probes.`,
+          "info",
+        );
       }
-      this.daemonHealthy = false;
-      this.daemonVersion = null;
-      this.lastDaemonCheckTs = Date.now();
-      return false;
     }
+    this.daemonHealthy = isOk;
+    this.daemonVersion = isOk ? version : null;
+    this.lastDaemonCheckTs = Date.now();
+    return this.daemonHealthy;
   }
 
   async runReconciliationLoop() {
@@ -254,12 +241,17 @@ export class SelfHealEngine {
     this.reconciling = true;
     try {
       // 1. Verify Docker Daemon Socket Health First
-      const daemonOk = this.probeDockerDaemon();
+      const daemonOk = await this.probeDockerDaemon();
       if (!daemonOk) {
         return;
       }
 
-      const projects = this.db.prepare("SELECT * FROM projects").all();
+      // Stopped, sleeping (scale-to-zero), disabled and archived projects must stay down.
+      const projects = this.db
+        .prepare(
+          "SELECT * FROM projects WHERE COALESCE(enabled,1)=1 AND COALESCE(status,'') NOT IN ('archived','stopped','sleeping')",
+        )
+        .all();
       if (!projects || projects.length === 0) return;
 
       for (const proj of projects) {
@@ -352,27 +344,12 @@ export class SelfHealEngine {
     return { ok: true, message: `Circuit Breaker for "${name}" reset to CLOSED.` };
   }
 
-  getHealthConfig(name) {
-    try {
-      const proj = this.db.prepare("SELECT * FROM projects WHERE name=?").get(name);
-      return {
-        probePath: proj?.health_path || proj?.health_check_path || "/",
-        expectedStatus: 200,
-        timeoutSeconds: 3,
-        startupDelaySeconds: 60,
-      };
-    } catch {
-      return {
-        probePath: "/",
-        expectedStatus: 200,
-        timeoutSeconds: 3,
-        startupDelaySeconds: 60,
-      };
-    }
-  }
-
   async probeAndHealProject(proj) {
     const name = proj.name;
+    if (proj.enabled === 0 || ["archived", "stopped", "sleeping"].includes(proj.status)) {
+      this.healthMap.delete(name);
+      return;
+    }
     const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
     const port = proj.port || 3000;
     const target = proj.target || "docker";
@@ -883,6 +860,7 @@ export class SelfHealEngine {
 
   probeHttpEndpoint(host, port, endpointPath = "/", expectedStatus = 200, timeoutMs = 3000) {
     return new Promise((resolve) => {
+      if (!port || Number(port) <= 0) return resolve(false);
       const cleanPath =
         endpointPath && endpointPath.startsWith("/") ? endpointPath : `/${endpointPath || ""}`;
       const req = http.request(
@@ -892,19 +870,13 @@ export class SelfHealEngine {
           path: cleanPath,
           method: "GET",
           timeout: timeoutMs,
-          headers: { "User-Agent": "HosteraX-AutoHeal/6.0", Accept: "*/*" },
+          headers: { Host: "localhost", "User-Agent": "HosteraX-AutoHeal/6.0", Accept: "*/*" },
         },
         (res) => {
-          // Drain body to prevent resource leak
-          res.resume();
-          // Any HTTP status code < 500 (2xx, 3xx, 4xx) confirms the web server process is live and serving requests!
-          if (expectedStatus && expectedStatus !== 200) {
-            resolve(res.statusCode === expectedStatus);
-          } else if (res.statusCode >= 200 && res.statusCode < 500) {
-            resolve(true);
-          } else {
-            resolve(false);
-          }
+          res.resume(); // drain body to avoid leaking the socket
+          // A custom expected status must match exactly; otherwise any non-5xx proves the server is serving.
+          if (expectedStatus && expectedStatus !== 200) resolve(res.statusCode === expectedStatus);
+          else resolve(res.statusCode >= 200 && res.statusCode < 500);
         },
       );
       req.on("timeout", () => {
@@ -918,6 +890,7 @@ export class SelfHealEngine {
 
   probeTcpPort(host, port, timeoutMs = 2000) {
     return new Promise((resolve) => {
+      if (!port || Number(port) <= 0) return resolve(false);
       const socket = new net.Socket();
       socket.setTimeout(timeoutMs);
       socket.once("connect", () => {
@@ -932,7 +905,7 @@ export class SelfHealEngine {
         socket.destroy();
         resolve(false);
       });
-      socket.connect(port, host);
+      socket.connect(Number(port), host || "127.0.0.1");
     });
   }
 
@@ -1091,16 +1064,19 @@ export class SelfHealEngine {
       this.logEvent(
         projectName,
         "chaos_injected",
-        "Chaos Drill: Injecting simulated 92% memory saturation event...",
+        "Chaos Drill [SIMULATED]: no real memory pressure is applied — this only exercises the alert path.",
         "warning",
       );
       this.logEvent(
         projectName,
         "memory_warning_near_oom",
-        "Memory utilization reached 92.4%. Predictive OOM Sentinel active.",
+        "[SIMULATED] Memory utilization 92% (drill event, not a measurement).",
         "warning",
       );
-      return { ok: true, message: "Memory spike alert simulated." };
+      return {
+        ok: true,
+        message: "Simulated memory alert recorded (no real memory pressure was applied).",
+      };
     }
 
     if (chaosType === "flapping") {
@@ -1119,60 +1095,190 @@ export class SelfHealEngine {
     return { ok: true, message: `Chaos ${chaosType} simulated.` };
   }
 
+  /** Runs a docker CLI command (no shell) and resolves { ok, stdout }. */
+  dockerCli(args, timeout = 3500) {
+    return new Promise((resolve) => {
+      execFile(
+        "docker",
+        args,
+        { encoding: "utf8", timeout, maxBuffer: 4 * 1024 * 1024 },
+        (err, stdout) => resolve({ ok: !err, stdout: stdout || "" }),
+      );
+    });
+  }
+
+  /** True when the registry answers HTTPS (any status) within the timeout. */
+  probeRegistry(host = "registry-1.docker.io", timeoutMs = 4000) {
+    return new Promise((resolve) => {
+      const req = https.request(
+        { host, path: "/v2/", method: "GET", timeout: timeoutMs },
+        (res) => {
+          res.resume();
+          resolve({ ok: true, status: res.statusCode });
+        },
+      );
+      req.on("timeout", () => {
+        req.destroy();
+        resolve({ ok: false, status: 0 });
+      });
+      req.on("error", () => resolve({ ok: false, status: 0 }));
+      req.end();
+    });
+  }
+
+  /**
+   * 9-stage audit. Every stage performs a real check against Docker / the database / the network;
+   * a stage that cannot be verified is reported as "warning", never silently "passed".
+   */
   async runFullPipelineAudit(projectName) {
     const proj = this.db.prepare("SELECT * FROM projects WHERE name=?").get(projectName);
     if (!proj) throw new Error("Project not found");
 
     const name = proj.name;
     const cleanName = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    const containerName = `hx_${cleanName}`;
     const port = proj.port || 3000;
     const cfg = this.getHealthConfig(name);
     const startT = Date.now();
+    const stage = (id, title, status, detail) => ({ stage: id, name: title, status, detail });
 
-    // 1. Stage: Build Healer
-    let buildStatus = {
-      stage: "build",
-      name: "1. Build Healer",
-      status: "passed",
-      detail: "Multi-stage builder ready, arch emulation (amd64) active",
-    };
+    const daemonUp = await this.probeDockerDaemon();
+    let inspect = null;
+    if (daemonUp) {
+      const res = await this.dockerCli(["inspect", containerName]);
+      if (res.ok) {
+        try {
+          inspect = JSON.parse(res.stdout)[0] || null;
+        } catch {}
+      }
+    }
 
-    // 2. Stage: Registry Resolver
-    let registryStatus = {
-      stage: "registry",
-      name: "2. Registry Resolver",
-      status: "passed",
-      detail: "Docker Hub / GHCR connectivity verified, 0 rate limit blocks",
-    };
+    // 1. Build: outcome of the most recent deployment
+    const lastDep = this.db
+      .prepare(
+        "SELECT id, phase, version, exit_code, finished_at FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1",
+      )
+      .get(name);
+    let buildStatus;
+    if (!lastDep)
+      buildStatus = stage("build", "1. Build Healer", "warning", "No deployment has been run yet");
+    else if (lastDep.phase === "failed" || (lastDep.exit_code ?? 0) !== 0)
+      buildStatus = stage(
+        "build",
+        "1. Build Healer",
+        "failing",
+        `Last deployment ${lastDep.version || lastDep.id} failed (exit ${lastDep.exit_code ?? "?"})`,
+      );
+    else if (["ready", "success"].includes(lastDep.phase))
+      buildStatus = stage(
+        "build",
+        "1. Build Healer",
+        "passed",
+        `Last deployment ${lastDep.version || lastDep.id} succeeded`,
+      );
+    else
+      buildStatus = stage(
+        "build",
+        "1. Build Healer",
+        "warning",
+        `Last deployment is still ${lastDep.phase}`,
+      );
 
-    // 3. Stage: Pull Fallback
-    let pullStatus = {
-      stage: "pull",
-      name: "3. Pull Engine",
-      status: "passed",
-      detail: `Image verified: ${proj.repo || "standard image"}`,
-    };
+    // 2. Registry connectivity
+    const reg = await this.probeRegistry();
+    const registryStatus = reg.ok
+      ? stage(
+          "registry",
+          "2. Registry Resolver",
+          "passed",
+          `Docker Hub registry reachable (HTTP ${reg.status})`,
+        )
+      : stage(
+          "registry",
+          "2. Registry Resolver",
+          "warning",
+          "Docker Hub registry unreachable (offline or blocked) — only locally cached images can be used",
+        );
 
-    // 4. Stage: Container Startup Guard
-    let startupStatus = {
-      stage: "startup",
-      name: "4. Startup Guard",
-      status: "passed",
-      detail: "--init (Tini PID 1) active, clean entrypoint execution",
-    };
+    // 3. Image present locally
+    let pullStatus;
+    if (!daemonUp)
+      pullStatus = stage(
+        "pull",
+        "3. Pull Engine",
+        "warning",
+        "Docker daemon is offline — cannot inspect images",
+      );
+    else if (!inspect)
+      pullStatus = stage(
+        "pull",
+        "3. Pull Engine",
+        "warning",
+        `Container ${containerName} does not exist`,
+      );
+    else {
+      const img = await this.dockerCli([
+        "image",
+        "inspect",
+        inspect.Config?.Image || "",
+        "--format",
+        "{{.Id}}",
+      ]);
+      pullStatus = img.ok
+        ? stage(
+            "pull",
+            "3. Pull Engine",
+            "passed",
+            `Image ${inspect.Config?.Image} present locally (${img.stdout.trim().slice(7, 19)})`,
+          )
+        : stage(
+            "pull",
+            "3. Pull Engine",
+            "failing",
+            `Image ${inspect.Config?.Image} is missing locally`,
+          );
+    }
 
-    // 5. Stage: Network Healer
+    // 4. Container startup state
+    let startupStatus;
+    if (!inspect)
+      startupStatus = stage(
+        "startup",
+        "4. Startup Guard",
+        daemonUp ? "failing" : "warning",
+        daemonUp ? `Container ${containerName} not found` : "Docker daemon offline",
+      );
+    else {
+      const st = inspect.State || {};
+      const restarts = inspect.RestartCount ?? 0;
+      const init = inspect.HostConfig?.Init ? "init (PID 1 reaper) enabled" : "no init process";
+      startupStatus = st.Running
+        ? stage(
+            "startup",
+            "4. Startup Guard",
+            restarts > 3 ? "warning" : "passed",
+            `Running; ${restarts} restart(s); ${init}`,
+          )
+        : stage(
+            "startup",
+            "4. Startup Guard",
+            "failing",
+            `Not running (status ${st.Status}, exit code ${st.ExitCode})`,
+          );
+    }
+
+    // 5. Network
     const portOpen = await this.probeTcpPort("127.0.0.1", port, 2000);
-    let networkStatus = {
-      stage: "network",
-      name: "5. Network Healer",
-      status: portOpen ? "passed" : "warning",
-      detail: portOpen
-        ? `Host port :${port} bound and accepting connections`
-        : `Port :${port} not responding yet`,
-    };
+    const networkStatus = stage(
+      "network",
+      "5. Network Healer",
+      portOpen ? "passed" : "failing",
+      portOpen
+        ? `Host port :${port} is accepting connections`
+        : `Nothing is listening on host port :${port}`,
+    );
 
-    // 6. Stage: Health Check
+    // 6. HTTP health
     let httpOk = false;
     let latencyMs = 0;
     if (portOpen) {
@@ -1186,50 +1292,82 @@ export class SelfHealEngine {
       );
       latencyMs = Date.now() - pStart;
     }
-    let healthStatus = {
-      stage: "health",
-      name: "6. Health Probes",
-      status: httpOk || portOpen ? "passed" : "failing",
-      detail: httpOk
-        ? `HTTP ${cfg.probePath} returned ${cfg.expectedStatus} OK (${latencyMs}ms)`
-        : `TCP socket active (${latencyMs}ms)`,
-    };
+    const healthStatus = stage(
+      "health",
+      "6. Health Probes",
+      httpOk ? "passed" : portOpen ? "warning" : "failing",
+      httpOk
+        ? `GET ${cfg.probePath} answered as expected (${latencyMs}ms)`
+        : portOpen
+          ? `Port is open but GET ${cfg.probePath} did not return the expected response`
+          : "No response — port closed",
+    );
 
-    // 7. Stage: Storage Sentinel
-    let storageStatus = {
-      stage: "storage",
-      name: "7. Storage Sentinel",
-      status: "passed",
-      detail: `Named volumes persistent (hx_vol_${cleanName}_*), 0 data loss risk`,
-    };
-
-    // 8. Stage: Resource Sentinel
-    let memUsage = "0.45%";
-    try {
-      const statsRes = spawnSync(
-        "docker",
-        ["stats", "--no-stream", "--format", "{{.MemPerc}}", `hx_${cleanName}`],
-        { encoding: "utf8", timeout: 2500 },
+    // 7. Storage: named volumes vs. bind mounts / no persistence
+    let storageStatus;
+    if (!inspect)
+      storageStatus = stage(
+        "storage",
+        "7. Storage Sentinel",
+        "warning",
+        "Container not inspectable",
       );
-      if (statsRes.stdout) memUsage = statsRes.stdout.trim();
-    } catch {}
-    let resourceStatus = {
-      stage: "resources",
-      name: "8. Resource Sentinel",
-      status: "passed",
-      detail: `RAM usage: ${memUsage} (safe below 90% OOM threshold), disk space healthy`,
-    };
+    else {
+      const mounts = inspect.Mounts || [];
+      const named = mounts.filter((m) => m.Type === "volume");
+      const binds = mounts.filter((m) => m.Type === "bind");
+      storageStatus = stage(
+        "storage",
+        "7. Storage Sentinel",
+        binds.length ? "warning" : "passed",
+        mounts.length
+          ? `${named.length} named volume(s), ${binds.length} bind mount(s)`
+          : "Stateless container (no persistent mounts)",
+      );
+    }
 
-    // 9. Stage: Orchestration & Rollback
-    const pastDeploys = this.db
-      .prepare("SELECT COUNT(*) as c FROM deployments WHERE project=?")
-      .get(name);
-    let orchStatus = {
-      stage: "orchestration",
-      name: "9. Orchestration & Rollback",
-      status: "passed",
-      detail: `Blue-Green active, CrashLoop counter: 0/4, Rollback targets: ${pastDeploys?.c || 0} versions`,
-    };
+    // 8. Resources: container memory + host disk
+    let memPct = null;
+    if (inspect?.State?.Running) {
+      const stats = await this.dockerCli(
+        ["stats", "--no-stream", "--format", "{{.MemPerc}}", containerName],
+        4500,
+      );
+      const parsed = parseFloat(stats.stdout);
+      if (stats.ok && Number.isFinite(parsed)) memPct = parsed;
+    }
+    let diskFreePct = null;
+    try {
+      const st = fs.statfsSync(this.HOME);
+      diskFreePct = Math.round((st.bavail / st.blocks) * 100);
+    } catch {}
+    const resWarn = (memPct ?? 0) > 75 || (diskFreePct ?? 100) < 10;
+    const resFail = (memPct ?? 0) > 90 || (diskFreePct ?? 100) < 3;
+    const resourceStatus = stage(
+      "resources",
+      "8. Resource Sentinel",
+      resFail ? "failing" : resWarn ? "warning" : memPct === null ? "warning" : "passed",
+      `Container RAM: ${memPct === null ? "n/a" : memPct.toFixed(1) + "%"}; host disk free: ${diskFreePct === null ? "n/a" : diskFreePct + "%"}`,
+    );
+
+    // 9. Orchestration: circuit breaker + rollback targets
+    const circuit = this.getCircuit(name);
+    const rollbackTargets =
+      this.db
+        .prepare(
+          "SELECT COUNT(*) c FROM deployments WHERE project=? AND phase IN ('ready','success')",
+        )
+        .get(name)?.c || 0;
+    const orchStatus = stage(
+      "orchestration",
+      "9. Orchestration & Rollback",
+      circuit.state === "OPEN"
+        ? "failing"
+        : circuit.state === "HALF-OPEN" || circuit.failures > 0
+          ? "warning"
+          : "passed",
+      `Circuit ${circuit.state} (${circuit.failures} recent failure(s)); ${rollbackTargets} rollback target(s)`,
+    );
 
     const stages = [
       buildStatus,
@@ -1242,19 +1380,23 @@ export class SelfHealEngine {
       resourceStatus,
       orchStatus,
     ];
+    const failing = stages.filter((x) => x.status === "failing").length;
+    const warning = stages.filter((x) => x.status === "warning").length;
 
     this.logEvent(
       name,
       "pipeline_audit_completed",
-      `Full 9-stage self-healing audit passed in ${Date.now() - startT}ms.`,
-      "success",
+      `9-stage audit finished in ${Date.now() - startT}ms: ${failing} failing, ${warning} warning, ${9 - failing - warning} passed.`,
+      failing ? "error" : warning ? "warning" : "success",
     );
 
     return {
       project: name,
       auditTimestamp: Date.now(),
       durationMs: Date.now() - startT,
-      overallStatus: stages.every((s) => s.status === "passed") ? "all_healthy" : "warning",
+      overallStatus: failing === 0 && warning === 0 ? "all_healthy" : "warning",
+      failing,
+      warnings: warning,
       stages,
     };
   }
@@ -1333,60 +1475,5 @@ export class SelfHealEngine {
       image: resolvedImage,
       message: `Auto-Remediated! Clean restart initiated for "${projectName}".`,
     };
-  }
-
-  async probeTcpPort(host, port, timeoutMs = 3000) {
-    if (!port || port <= 0) return false;
-    return new Promise((resolve) => {
-      const socket = new net.Socket();
-      socket.setTimeout(timeoutMs);
-      socket.on("connect", () => {
-        socket.end();
-        socket.destroy();
-        resolve(true);
-      });
-      socket.on("timeout", () => {
-        socket.destroy();
-        resolve(false);
-      });
-      socket.on("error", () => {
-        socket.destroy();
-        resolve(false);
-      });
-      socket.connect(Number(port), host || "127.0.0.1");
-    });
-  }
-
-  async probeHttpEndpoint(host, port, reqPath = "/", expectedStatus = 200, timeoutMs = 3000) {
-    if (!port || port <= 0) return false;
-    return new Promise((resolve) => {
-      const req = http.request(
-        {
-          host: host || "127.0.0.1",
-          port: Number(port),
-          path: reqPath.startsWith("/") ? reqPath : `/${reqPath}`,
-          method: "GET",
-          timeout: timeoutMs,
-          headers: {
-            Host: "localhost",
-            "User-Agent": "HosteraX-SelfHeal-Probe/1.0",
-            Accept: "*/*",
-          },
-        },
-        (res) => {
-          // Any non-5xx response means the web server is alive and functioning
-          const isAlive = res.statusCode < 500;
-          resolve(isAlive);
-        },
-      );
-      req.on("timeout", () => {
-        req.destroy();
-        resolve(false);
-      });
-      req.on("error", () => {
-        resolve(false);
-      });
-      req.end();
-    });
   }
 }

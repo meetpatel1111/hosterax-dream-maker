@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { remoteLogosEnabled } from "@/lib/privacy";
 
 interface AppLogoProps {
   name: string;
@@ -37,6 +38,7 @@ export function AppLogo({
   // Multi-tier fallback chain prioritizing real vector SVGs
   const candidateUrls = useMemo(() => {
     const list: string[] = [];
+    if (!remoteLogosEnabled()) return list;
 
     // 1. Direct explicit SVG
     if (svgUrl) list.push(svgUrl);
@@ -64,16 +66,8 @@ export function AppLogo({
       list.push(`https://github.com/${ghMatch[1]}.png?size=128`);
     }
 
-    // 6. High-res domain favicon / icon
-    try {
-      if (targetUrl.startsWith("http")) {
-        const host = new URL(targetUrl).hostname;
-        if (host && !host.includes("github.com") && !host.includes("gitlab.com")) {
-          list.push(`https://www.google.com/s2/favicons?domain=${host}&sz=128`);
-          list.push(`https://icon.horse/icon/${host}`);
-        }
-      }
-    } catch {}
+    // (Third-party favicon lookup services are intentionally not used: they would learn which
+    // apps and domains you browse.)
 
     // Deduplicate
     return Array.from(new Set(list));
@@ -116,6 +110,8 @@ export function AppLogo({
             src={currentSrc}
             alt={`${name} logo`}
             loading="lazy"
+            referrerPolicy="no-referrer"
+            decoding="async"
             onLoad={() => setLoaded(true)}
             onError={handleError}
             className={`object-contain transition-all duration-200 group-hover:scale-110 ${imgSizeClasses} ${

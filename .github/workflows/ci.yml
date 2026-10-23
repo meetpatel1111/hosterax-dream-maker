@@ -45,6 +45,9 @@ jobs:
       - name: Build Frontend Production Bundle
         run: npm run build
 
+      - name: Build Dashboard Bundle Served by the Engine
+        run: npm run build:engine
+
       - name: Prepare All-In-One NPM Package Bundle
         run: npm run package:npm
 

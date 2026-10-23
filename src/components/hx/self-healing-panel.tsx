@@ -93,7 +93,7 @@ interface HealthConfig {
 interface PipelineStage {
   stage: string;
   name: string;
-  status: "passed" | "warning" | "failing";
+  status: "passed" | "warning" | "failing" | "unknown";
   detail: string;
 }
 
@@ -102,6 +102,8 @@ interface AuditResult {
   auditTimestamp: number;
   durationMs: number;
   overallStatus: "all_healthy" | "warning";
+  failing?: number;
+  warnings?: number;
   stages: PipelineStage[];
 }
 
@@ -307,7 +309,10 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
     },
     onSuccess: (data) => {
       setAuditData(data);
-      toast.success(`9-Stage Audit completed in ${data.durationMs}ms: All safeguards verified`);
+      const summary = `9-stage audit finished in ${data.durationMs}ms`;
+      if (data.failing) toast.error(`${summary}: ${data.failing} stage(s) failing`);
+      else if (data.warnings) toast.warning(`${summary}: ${data.warnings} warning(s)`);
+      else toast.success(`${summary}: all stages passed`);
       qc.invalidateQueries({ queryKey: ["self-heal-events"] });
     },
     onError: (err: any) => {
@@ -318,6 +323,13 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   // Trigger Chaos Drill
   const chaosMutation = useMutation({
     mutationFn: async (type: "kill" | "memory_spike" | "flapping") => {
+      if (
+        type === "kill" &&
+        !confirm(
+          `This force-kills the running container of "${projectName}" and restarts it. Expect a few seconds of downtime. Continue?`,
+        )
+      )
+        throw new Error("Cancelled");
       return engine.call("POST", `/api/projects/${encodeURIComponent(projectName!)}/chaos-test`, {
         type,
       });
@@ -328,7 +340,7 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
       qc.invalidateQueries({ queryKey: ["self-heal-events"] });
     },
     onError: (err: any) => {
-      toast.error(`Chaos drill failed: ${err.message}`);
+      if (err.message !== "Cancelled") toast.error(`Chaos drill failed: ${err.message}`);
     },
   });
 
@@ -366,62 +378,23 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
 
   const projectHealth = projectName && status?.projects ? status.projects[projectName] : null;
 
+  // Before an audit has run nothing has been verified, so every stage is "not run" rather than "passed".
   const defaultStages: PipelineStage[] = [
-    {
-      stage: "build",
-      name: "1. Build Healer",
-      status: "passed",
-      detail: "Multi-stage builder & amd64 emulation ready",
-    },
-    {
-      stage: "registry",
-      name: "2. Registry Resolver",
-      status: "passed",
-      detail: "Multi-registry fallback active (ghcr, quay, docker)",
-    },
-    {
-      stage: "pull",
-      name: "3. Pull Engine",
-      status: "passed",
-      detail: "Universal Image Resolver with live Docker Hub & DHI discovery",
-    },
-    {
-      stage: "startup",
-      name: "4. Startup Guard",
-      status: "passed",
-      detail: "--init (Tini PID 1) active, env injection ready",
-    },
-    {
-      stage: "network",
-      name: "5. Network Healer",
-      status: "passed",
-      detail: "Dynamic port rebind & bridge cleanup active",
-    },
-    {
-      stage: "health",
-      name: "6. Health Probes",
-      status: projectHealth?.status === "healthy" ? "passed" : "warning",
-      detail: "3-tier probes (Startup, Readiness, Liveness)",
-    },
-    {
-      stage: "storage",
-      name: "7. Storage Sentinel",
-      status: "passed",
-      detail: "Named volume persistence (hx_vol_*) active",
-    },
-    {
-      stage: "resources",
-      name: "8. Resource Sentinel",
-      status: "passed",
-      detail: "Predictive 90% OOM guard & AutoPrune active",
-    },
-    {
-      stage: "orchestration",
-      name: "9. Orchestration",
-      status: "passed",
-      detail: "CrashLoop auto-remediation & zero downtime active",
-    },
-  ];
+    ["build", "1. Build Healer", "Outcome of the latest build"],
+    ["registry", "2. Registry Resolver", "Registry reachability (Docker Hub)"],
+    ["pull", "3. Pull Engine", "Image present on this host"],
+    ["startup", "4. Startup Guard", "Container running, restart count"],
+    ["network", "5. Network Healer", "Host port accepting connections"],
+    ["health", "6. Health Probes", "HTTP probe against your health path"],
+    ["storage", "7. Storage Sentinel", "Named volumes vs. bind mounts"],
+    ["resources", "8. Resource Sentinel", "Container RAM and host disk headroom"],
+    ["orchestration", "9. Orchestration", "Circuit breaker and rollback targets"],
+  ].map(([stage, name, detail]) => ({
+    stage,
+    name,
+    status: "unknown" as const,
+    detail: `${detail} — click “Run 9-Stage Audit” to check`,
+  }));
 
   const displayStages = auditData?.stages || defaultStages;
 
@@ -445,11 +418,11 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-lg font-semibold tracking-tight">
-                  AutoHeal v7 Autonomous Resilience & Docker Hub Tags Explorer
+                  Self-healing watchdog &amp; Docker Hub image explorer
                 </h3>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-0.5 text-[11px] font-medium text-success">
                   <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
-                  Docker Hub Tags & Hardened DHI Mesh Active
+                  Watchdog active
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
@@ -572,7 +545,7 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                 {projectHealth.status === "healthy" ? (
                   <>
                     <CheckCircle2 className="h-4 w-4 text-success" />
-                    <span className="font-semibold text-success">Healthy (200 OK)</span>
+                    <span className="font-semibold text-success">Healthy</span>
                   </>
                 ) : projectHealth.status === "recovering" ? (
                   <>
@@ -606,7 +579,11 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   {projectHealth.latencyMs > 0 ? `${projectHealth.latencyMs} ms` : "< 1 ms"}
                 </span>
                 <span className="text-xs font-normal text-muted-foreground">
-                  ({projectHealth.memoryPercent || "0.4"}% RAM)
+                  (
+                  {projectHealth.memoryPercent != null
+                    ? `${projectHealth.memoryPercent}% RAM`
+                    : "RAM n/a"}
+                  )
                 </span>
               </div>
               <div className="mt-1 text-xs text-muted-foreground font-mono">
@@ -668,7 +645,7 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
             <span className="text-[11px] font-mono text-muted-foreground">
               {auditData
                 ? `Last audited: ${new Date(auditData.auditTimestamp).toLocaleTimeString()} (${auditData.durationMs}ms)`
-                : "Continuous watchdog monitoring"}
+                : "Run the audit to verify each stage"}
             </span>
           </div>
 
@@ -687,6 +664,10 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                 <div className="flex items-center justify-center h-6 w-6 rounded-full bg-surface-2 mb-1.5">
                   {st.status === "passed" ? (
                     <CheckCircle2 className="h-3.5 w-3.5 text-success" />
+                  ) : st.status === "unknown" ? (
+                    <HelpCircle className="h-3.5 w-3.5 text-muted-foreground" />
+                  ) : st.status === "failing" ? (
+                    <AlertTriangle className="h-3.5 w-3.5 text-destructive" />
                   ) : (
                     <AlertTriangle className="h-3.5 w-3.5 text-warning" />
                   )}
@@ -694,8 +675,18 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                 <span className="text-[10px] font-medium text-foreground truncate w-full">
                   {st.name.split(". ")[1]}
                 </span>
-                <span className="text-[9px] font-mono text-success uppercase mt-0.5">
-                  {st.status}
+                <span
+                  className={`text-[9px] font-mono uppercase mt-0.5 ${
+                    st.status === "passed"
+                      ? "text-success"
+                      : st.status === "failing"
+                        ? "text-destructive"
+                        : st.status === "warning"
+                          ? "text-warning"
+                          : "text-muted-foreground"
+                  }`}
+                >
+                  {st.status === "unknown" ? "not run" : st.status}
                 </span>
               </button>
             ))}
@@ -975,8 +966,8 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Safely inject simulated failure scenarios to verify HosteraX's autonomous detection,
-            circuit breaking, and resurrection capabilities in real time.
+            Exercise HosteraX's detection, circuit breaking and recovery. The crash drill really
+            kills and restarts the container; the memory drill is simulated (alert path only).
           </p>
 
           <div className="grid gap-3 sm:grid-cols-3">

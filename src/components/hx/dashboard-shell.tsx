@@ -43,7 +43,7 @@ const NAV = [
   { to: "/mail", key: "mail" as const, label: "Mailboxes", icon: Mail },
   { to: "/activity", key: "activity" as any, label: "Activity", icon: Activity },
   { to: "/tokens", key: "tokens" as any, label: "API Tokens", icon: KeyRound },
-  { to: "/oauth", key: "oauth" as any, label: "OAuth Apps", icon: ShieldCheck },
+  { to: "/oauth", key: "oauth" as any, label: "OAuth (planned)", icon: ShieldCheck },
   { to: "/settings", key: "settings" as const, label: "Settings", icon: Settings },
 ];
 

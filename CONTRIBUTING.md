@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to **HosteraX**! HosteraX is an open-source, autonomous cloud control plane with native Model Context Protocol (MCP) support, licensed under the [Apache License 2.0](./LICENSE).
 
-We welcome contributions of all kinds: new features, bug fixes, template app submissions to our 2,502+ catalog, UI improvements, and documentation enhancements.
+We welcome contributions of all kinds: new features, bug fixes, template app submissions to our 2,500+ catalog, UI improvements, and documentation enhancements.
 
 ---
 
@@ -43,7 +43,9 @@ _The Engine Daemon boots on `http://localhost:7777` with SQLite database initial
 npm run dev
 ```
 
-_The Web Dashboard will be available at `http://localhost:8080`._
+_The Web Dashboard dev server will be available at `http://localhost:8080`. Run the engine separately (`npm run hosterax -- up`) and set `HOSTERAX_DEV=1` so it trusts the dev-server origin._
+
+To test what ships in the Docker image, npm package and desktop app, run `npm run build:engine` and start the engine: it serves `.output/public` and runs `.output/server/index.mjs` on port 7777.
 
 ---
 
@@ -73,13 +75,13 @@ hosterax-dream-maker/
 │   ├── engine/           # Native Node.js ESM Backend Daemon (:7777)
 │   │   ├── src/          # Zero-build .mjs managers (mcp-server, self-heal, backup, etc.)
 │   │   └── test/         # Native node:test suite
-│   ├── cli/              # Zero-dependency CLI package ('hosterax' & 'htx' on npm)
+│   ├── cli/              # Lightweight CLI package ('hosterax' & 'htx' on npm)
 │   └── desktop/          # Electron 34 native desktop app with embedded engine supervisor
-├── src/                  # TanStack Start + React 19 Frontend Dashboard (:8080)
+├── src/                  # TanStack Start + React 19 Frontend Dashboard (dev server :8080; served by the engine on :7777 in production)
 │   ├── routes/           # File-based routing (_app.*.tsx)
 │   ├── components/hx/    # HosteraX domain UI components
 │   └── lib/              # API client, schemas, i18n, and stack definitions
-└── scripts/              # Consolidated 2,502+ app catalog ingestion and sync toolchain
+└── scripts/              # Consolidated 2,500+ app catalog ingestion and sync toolchain
 ```
 
 - **Backend & CLI**: Use standard Node.js native ECMAScript Modules (`.mjs`) with zero compile overhead.
@@ -90,7 +92,7 @@ hosterax-dream-maker/
 
 ## 🏪 Adding New Templates to the App Store
 
-To add or update open-source templates in the 2,502+ App Store catalog:
+To add or update open-source templates in the 2,500+ App Store catalog:
 
 1. Run the catalog pipeline:
    ```bash

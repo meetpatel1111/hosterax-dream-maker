@@ -60,7 +60,7 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
     return {
       cpu: cpuVal,
       mem: memVal,
-      net: docker?.network_io || "Active",
+      net: docker?.network_io || "—",
       disk: diskVal,
       uptime: uptimeStr,
     };
@@ -166,7 +166,7 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <HardDrive className="h-4 w-4 text-primary" /> NVMe Storage
+              <HardDrive className="h-4 w-4 text-primary" /> Disk
             </span>
             <span className="font-mono text-xs text-primary font-semibold">
               {metrics.disk.toFixed(1)}%
@@ -194,7 +194,7 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
         <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-              <Network className="h-4 w-4 text-primary" /> Network & Sockets
+              <Network className="h-4 w-4 text-primary" /> Network & sockets
             </span>
             <span className="font-mono text-xs text-emerald-400 font-semibold flex items-center gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-ping" />
@@ -202,10 +202,10 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
             </span>
           </div>
           <div className="mt-3 font-mono text-lg font-bold text-foreground truncate">
-            {docker?.network_io || (sys?.docker?.running ? "Docker Bridge" : "Native Loop")}
+            {docker?.network_io || (sys?.docker?.running ? "Docker bridge" : "Host network")}
           </div>
           <div className="mt-2 flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>Platform: {sys?.os?.platform || "Linux / Windows"}</span>
+            <span>Platform: {sys?.os?.platform || "—"}</span>
             <span>Uptime: {metrics.uptime}</span>
           </div>
         </div>

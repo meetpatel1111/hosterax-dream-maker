@@ -54,29 +54,9 @@ export function EdgeProviderSelector() {
 
   const { data: edgeStatus, isLoading: statusLoading } = useQuery<EdgeStatus>({
     queryKey: ["edge-status", engine.url],
-    queryFn: async () => {
-      try {
-        return await engine.call<EdgeStatus>("GET", "/api/edge/status");
-      } catch {
-        return {
-          provider: "caddy",
-          containerName: "hx_edge",
-          containerStatus: "running",
-          httpPort: 80,
-          httpsPort: 443,
-          adminPort: 2019,
-          autoHttps: true,
-          onDemandTls: true,
-          hstsEnabled: true,
-          acmeEmail: "",
-          totalDomains: 0,
-          activeSslCertificates: 0,
-          uptime: "Active",
-          lastSyncAt: Date.now(),
-        };
-      }
-    },
+    queryFn: () => engine.call<EdgeStatus>("GET", "/api/edge/status"),
     refetchInterval: 4000,
+    retry: false,
   });
 
   const { data: settings } = useQuery<EdgeSettings>({
@@ -155,6 +135,7 @@ export function EdgeProviderSelector() {
 
   const isRunning =
     edgeStatus?.containerStatus === "running" || edgeStatus?.containerStatus === "Up";
+  const unreachable = !statusLoading && !edgeStatus;
 
   return (
     <div className="rounded-xl border border-border bg-card p-6 shadow-sm space-y-6">
@@ -175,7 +156,11 @@ export function EdgeProviderSelector() {
                 }`}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
-                {isRunning ? "Edge Live" : "Edge Standby"}
+                {unreachable
+                  ? "Engine unreachable"
+                  : isRunning
+                    ? "Edge running"
+                    : "Edge not running"}
               </span>
             </h2>
             <p className="text-xs text-muted-foreground">

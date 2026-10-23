@@ -1,7 +1,7 @@
 // src/components/hx/container-terminal.tsx
 // Interactive In-Container Web Terminal, Dynamic Hot Resource Resizer & Low-Level Docker State
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Terminal as TerminalIcon,
   Play,
@@ -19,6 +19,7 @@ import {
   CornerDownLeft,
 } from "lucide-react";
 import {
+  useEngine,
   useDockerExec,
   useDockerInspect,
   useDockerTop,
@@ -38,22 +39,24 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
   const [cmd, setCmd] = useState("");
   const [history, setHistory] = useState<
     Array<{ command: string; output: string; exitCode: number; time: string }>
-  >([
-    {
-      command: "uname -a",
-      output: "Linux container 6.18.33.2-standard #1 SMP x86_64 Linux",
-      exitCode: 0,
-      time: new Date().toLocaleTimeString(),
-    },
-  ]);
+  >([]);
 
   const [memoryMb, setMemoryMb] = useState(1024);
   const [cpus, setCpus] = useState(2);
 
+  const engine = useEngine();
   const execMutation = useDockerExec();
   const updateMutation = useDockerUpdateResources();
   const { data: inspect, isLoading: isInspectLoading } = useDockerInspect(actualContainer);
   const { data: top } = useDockerTop(actualContainer);
+
+  // Start the sliders from the container's real limits (0 = unlimited in Docker → keep our defaults).
+  useEffect(() => {
+    const mem = inspect?.HostConfig?.Memory;
+    const nano = inspect?.HostConfig?.NanoCpus;
+    if (mem && mem > 0) setMemoryMb(Math.min(4096, Math.max(128, Math.round(mem / 1048576))));
+    if (nano && nano > 0) setCpus(Math.min(8, Math.max(0.5, Math.round((nano / 1e9) * 2) / 2)));
+  }, [inspect?.Id, inspect?.HostConfig?.Memory, inspect?.HostConfig?.NanoCpus]);
 
   const handleRunCommand = async (customCmd?: string) => {
     const targetCmd = (customCmd || cmd).trim();
@@ -90,8 +93,13 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
         memoryMb,
         cpus,
       });
+      // Persist the limits too, otherwise the next deploy would silently revert them.
+      await engine.call("POST", `/api/projects/${projectName}/quotas`, {
+        cpu_limit: cpus,
+        memory_mb_limit: memoryMb,
+      });
       toast.success(
-        `⚡ Hot-updated resources for ${projectName} (RAM: ${memoryMb}MB, CPUs: ${cpus}) with ZERO downtime!`,
+        `Resources updated live for ${projectName} (RAM: ${memoryMb} MB, CPUs: ${cpus}) and saved for future deploys`,
       );
     } catch (e: any) {
       toast.error(e.message || "Failed to update container resources");
@@ -116,20 +124,24 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
           <div className="flex items-center gap-2 font-mono text-sm">
             <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
             <span className="font-semibold text-emerald-400 capitalize">
-              {inspect?.State?.Status || "Running"}
+              {inspect?.State?.Status || (isInspectLoading ? "…" : "Unknown")}
             </span>
           </div>
           <div className="text-[11px] text-muted-foreground mt-1">
-            Health: {inspect?.State?.Health?.Status || "Healthy"}
+            Health: {inspect?.State?.Health?.Status || "no healthcheck defined"}
           </div>
         </div>
 
         <div className="p-4 rounded-xl bg-card border border-border/60">
           <div className="text-xs font-medium text-muted-foreground mb-1">Bridge IP Address</div>
           <div className="font-mono text-sm font-semibold text-foreground">
-            {inspect?.NetworkSettings?.IPAddress || "172.17.0.2"}
+            {inspect?.NetworkSettings?.IPAddress ||
+              Object.values<any>(inspect?.NetworkSettings?.Networks ?? {})[0]?.IPAddress ||
+              "—"}
           </div>
-          <div className="text-[11px] text-muted-foreground mt-1">Network: docker0</div>
+          <div className="text-[11px] text-muted-foreground mt-1">
+            Network: {Object.keys(inspect?.NetworkSettings?.Networks ?? {})[0] ?? "—"}
+          </div>
         </div>
 
         <div className="p-4 rounded-xl bg-card border border-border/60">
@@ -138,7 +150,7 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
             {inspect?.RestartCount ?? 0} Crash Restarts
           </div>
           <div className="text-[11px] text-muted-foreground mt-1">
-            PID: {inspect?.State?.Pid || 1024}
+            PID: {inspect?.State?.Pid || "—"}
           </div>
         </div>
 
@@ -147,7 +159,9 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
           <div className="font-mono text-xs font-semibold text-muted-foreground truncate">
             {inspect?.Id ? inspect.Id.slice(0, 16) : actualContainer}
           </div>
-          <div className="text-[11px] text-emerald-400 mt-1">Native Socket Connected</div>
+          <div className="text-[11px] text-muted-foreground mt-1">
+            {inspect?.Id ? "via Docker API" : "container not found"}
+          </div>
         </div>
       </div>
 
@@ -160,7 +174,7 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
               Interactive Terminal: {actualContainer}
             </span>
             <span className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              Native Exec API
+              docker exec
             </span>
           </div>
 
@@ -178,8 +192,8 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
         {/* Terminal Output Stream */}
         <div className="p-4 font-mono text-xs text-zinc-300 min-h-[260px] max-h-[380px] overflow-y-auto space-y-4">
           <div className="text-zinc-500 text-[11px]">
-            # Connected to Docker daemon via Named Pipe / Unix Socket. Commands run in rootless
-            execution sandbox.
+            # Commands run inside the container with `docker exec`, as the container's default user
+            (often root). Use with care.
           </div>
 
           {history.map((h, i) => (
@@ -264,7 +278,7 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
                 <code className="text-primary font-mono text-[11px]">
                   POST /containers/:id/update
                 </code>{" "}
-                with zero downtime.
+                without restarting it.
               </p>
             </div>
           </div>

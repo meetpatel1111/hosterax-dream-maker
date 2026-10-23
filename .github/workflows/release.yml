@@ -40,6 +40,12 @@ jobs:
       - name: TypeScript Check
         run: npx tsc --noEmit
 
+      - name: Lint
+        run: npm run lint
+
+      - name: Check Prettier Formatting
+        run: npx prettier --check "src/**/*.{ts,tsx}" "hosterax/**/*.{mjs,js,json}" "*.{md,json}"
+
       - name: Run Engine Tests
         run: npm run test:engine
 
@@ -79,7 +85,7 @@ jobs:
 
       - name: Build Web Dashboard & Bundle Full App into NPM Package
         run: |
-          npm run build
+          npm run build:engine
           npm run package:npm
 
       - name: Build & Pack NPM Tarball
@@ -118,7 +124,7 @@ jobs:
             pkg.publishConfig = { registry: "https://npm.pkg.github.com" };
             fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2));
           '
-          npm publish || echo "GitHub Packages publication completed"
+          npm publish || echo "::warning ::GitHub Packages publish failed (the version may already exist)"
 
       - name: Upload NPM Tarball Artifact
         uses: actions/upload-artifact@v4
@@ -164,10 +170,9 @@ jobs:
             ghcr.io/${{ steps.repo.outputs.OWNER }}/hosterax
             ghcr.io/${{ steps.repo.outputs.OWNER }}/hosterax-dream-maker
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}},value=${{ inputs.version || github.ref_name }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version || github.ref_name }}
+            type=semver,pattern={{major}},value=${{ inputs.version || github.ref_name }}
             type=raw,value=latest
 
       - name: Build and Push Multi-Arch Image
@@ -237,12 +242,12 @@ jobs:
 
       - name: Build Web Dashboard & Prepare Desktop Assets
         run: |
-          npm run build
+          npm run build:engine
           npm run desktop:prepare
 
       - name: Package Desktop Binary
         working-directory: ./hosterax/desktop
-        run: npm run make || echo "Desktop packaging step completed"
+        run: npm run make
 
       - name: Normalize Artifact Filenames
         env:
@@ -286,15 +291,16 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: hosterax/desktop/out/normalized/
-          if-no-files-found: ignore
+          if-no-files-found: warn
 
   # =========================================================================
   # 5. GitHub Release & Checksums
   # =========================================================================
   create-release:
     name: Publish GitHub Release & Checksums
-    needs: [publish-npm, publish-docker, build-desktop]
-    if: always() && !cancelled() && needs.gate.result == 'success'
+    needs: [gate, publish-npm, publish-docker, build-desktop]
+    # Desktop installers may fail on one OS without blocking the npm package and Docker image.
+    if: ${{ !cancelled() && needs.gate.result == 'success' && needs.publish-npm.result == 'success' && needs.publish-docker.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -316,9 +322,6 @@ jobs:
 
           # Package standalone CLI, Dashboard, and Engine archives
           tar -czf "final-dist/hosterax-cli-${REL_VER}.tar.gz" hosterax/cli/src hosterax/cli/package.json
-          if [ -d ".output/public" ]; then
-            tar -czf "final-dist/hosterax-dashboard-${REL_VER}.tar.gz" -C .output/public .
-          fi
           tar -czf "final-dist/hosterax-engine-${REL_VER}.tar.gz" hosterax/engine/src hosterax/engine/package.json
 
           cd final-dist

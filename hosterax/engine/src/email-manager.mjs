@@ -2,6 +2,8 @@
 // Self-Hosted Email Stack, Inbound Forwarding, SMTP Relay & Zero-Email Webmail Subsystem for HosteraX
 // Features real live DNS queries (node:dns), automated SPF/DKIM/DMARC/MX, Email Aliases/Webhooks, and Outbound SMTP Relay.
 
+import { hashPassword } from "./security.mjs";
+import { encryptSecret, decryptSecret } from "./secrets.mjs";
 import crypto from "node:crypto";
 import dns from "node:dns";
 import net from "node:net";
@@ -13,6 +15,7 @@ export class EmailManager {
     this.db = db;
     this.HOME = HOME;
     this.initSchema();
+    this.ensureDkimKeys();
     this.ensureDefaultDomain();
   }
 
@@ -95,15 +98,32 @@ export class EmailManager {
     } catch {}
   }
 
-  generateDkimPublicKey() {
-    const pub =
-      "MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQC3w0jK6mXQkFfV9V18L1uXj" +
-      crypto
-        .randomBytes(32)
-        .toString("base64")
-        .replace(/[^a-zA-Z0-9]/g, "") +
-      "IDAQAB";
-    return pub;
+  /** Real RSA-2048 DKIM key pair. The private key is kept encrypted; only the public half goes to DNS. */
+  generateDkimKeyPair() {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "der" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+    return { publicKey: publicKey.toString("base64"), privateKey };
+  }
+
+  /** Domains created by older versions carry a fabricated key with no private half — replace it. */
+  ensureDkimKeys() {
+    try {
+      this.db.exec("ALTER TABLE email_domains ADD COLUMN dkim_private_key TEXT");
+    } catch {}
+    const rows = this.db
+      .prepare("SELECT id FROM email_domains WHERE dkim_private_key IS NULL OR dkim_private_key=''")
+      .all();
+    for (const r of rows) {
+      const kp = this.generateDkimKeyPair();
+      this.db
+        .prepare(
+          "UPDATE email_domains SET dkim_public_key=?, dkim_private_key=?, dkim_status='configured' WHERE id=?",
+        )
+        .run(kp.publicKey, encryptSecret(kp.privateKey), r.id);
+    }
   }
 
   ensureDefaultDomain() {
@@ -111,17 +131,17 @@ export class EmailManager {
     if (!existing) {
       const id = "edom_default";
       const domain = "hosterax.internal";
-      const pubKey = this.generateDkimPublicKey();
+      const kp = this.generateDkimKeyPair();
       const now = Date.now();
 
       this.db
         .prepare(
           `
-        INSERT INTO email_domains (id, domain, spf_status, dkim_status, dmarc_status, mx_status, dkim_selector, dkim_public_key, last_verified_at, created_at)
-        VALUES (?, ?, 'verified', 'verified', 'verified', 'verified', 'mail', ?, ?, ?)
+        INSERT INTO email_domains (id, domain, spf_status, dkim_status, dmarc_status, mx_status, dkim_selector, dkim_public_key, dkim_private_key, last_verified_at, created_at)
+        VALUES (?, ?, 'local', 'local', 'local', 'local', 'mail', ?, ?, ?, ?)
       `,
         )
-        .run(id, domain, pubKey, now, now);
+        .run(id, domain, kp.publicKey, encryptSecret(kp.privateKey), now, now);
 
       // Create admin mailbox with welcoming seed email
       const mboxId = "mbox_admin";
@@ -139,8 +159,8 @@ export class EmailManager {
           `
         INSERT INTO email_messages (id, mailbox_id, from_address, to_address, subject, body_text, body_html, folder, is_read, is_starred, created_at)
         VALUES (?, ?, 'notifications@hosterax.internal', 'admin@hosterax.internal', 'Welcome to your HosteraX Self-Hosted Email Stack',
-        'Your HosteraX Mail Server is fully configured with automated SPF, DKIM, DMARC, and MX routing.',
-        '<h3>Welcome to HosteraX Mail!</h3><p>Your self-hosted mailserver is configured with SPF, DKIM, and DMARC enforcement.</p>',
+        'This workspace stores mail locally and can relay outbound mail through an SMTP provider. Add a domain and publish its DNS records to send authenticated mail.',
+        '<h3>Welcome to HosteraX Mail!</h3><p>Add a domain, publish the SPF / DKIM / DMARC records shown on the Mail page, then connect an outbound SMTP relay to deliver mail.</p>',
         'inbox', 0, 1, ?)
       `,
         )
@@ -159,7 +179,11 @@ export class EmailManager {
   }
 
   listDomains() {
-    const domains = this.db.prepare("SELECT * FROM email_domains ORDER BY created_at ASC").all();
+    const domains = this.db
+      .prepare(
+        "SELECT id, domain, spf_status, dkim_status, dmarc_status, mx_status, dkim_selector, dkim_public_key, last_verified_at, created_at FROM email_domains ORDER BY created_at ASC",
+      )
+      .all();
     return domains.map((d) => {
       const mailboxCount =
         this.db.prepare("SELECT COUNT(*) as count FROM mailboxes WHERE domain_id=?").get(d.id)
@@ -230,10 +254,8 @@ export class EmailManager {
       domain.includes("127.0.0.1") ||
       domain.includes("localhost")
     ) {
-      spfStatus = "verified";
-      dkimStatus = "verified";
-      dmarcStatus = "verified";
-      mxStatus = "verified";
+      // Private/internal names have no public DNS — report that honestly instead of "verified".
+      spfStatus = dkimStatus = dmarcStatus = mxStatus = "local";
     } else {
       // 1. Check live SPF TXT records
       try {
@@ -250,9 +272,11 @@ export class EmailManager {
           `${d.dkim_selector || "mail"}._domainkey.${domain}`,
         );
         const flatDkim = dkimTxt.map((chunk) => chunk.join(""));
-        if (flatDkim.some((t) => t.includes("v=DKIM1") || t.includes("k=rsa"))) {
-          dkimStatus = "verified";
-        }
+        const published = flatDkim
+          .map((t) => /p=([A-Za-z0-9+/=\s]+)/.exec(t)?.[1]?.replace(/\s+/g, ""))
+          .filter(Boolean);
+        if (published.includes(d.dkim_public_key)) dkimStatus = "verified";
+        else if (published.length) dkimStatus = "mismatch"; // a record exists, but not our key
       } catch {}
 
       // 3. Check live DMARC TXT record
@@ -288,22 +312,27 @@ export class EmailManager {
   }
 
   addDomain(domainName) {
-    const cleanDomain = domainName.toLowerCase().trim();
+    const cleanDomain = String(domainName || "")
+      .toLowerCase()
+      .trim()
+      .replace(/\.$/, "");
+    if (!/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}$/.test(cleanDomain))
+      throw new Error(`Invalid domain name: ${JSON.stringify(domainName)}`);
     const existing = this.db.prepare("SELECT * FROM email_domains WHERE domain=?").get(cleanDomain);
     if (existing) return this.getDomain(existing.id);
 
     const id = `edom_${crypto.randomBytes(6).toString("hex")}`;
-    const pubKey = this.generateDkimPublicKey();
+    const kp = this.generateDkimKeyPair();
     const now = Date.now();
 
     this.db
       .prepare(
         `
-      INSERT INTO email_domains (id, domain, spf_status, dkim_status, dmarc_status, mx_status, dkim_selector, dkim_public_key, last_verified_at, created_at)
-      VALUES (?, ?, 'configured', 'configured', 'configured', 'configured', 'mail', ?, ?, ?)
+      INSERT INTO email_domains (id, domain, spf_status, dkim_status, dmarc_status, mx_status, dkim_selector, dkim_public_key, dkim_private_key, last_verified_at, created_at)
+      VALUES (?, ?, 'configured', 'configured', 'configured', 'configured', 'mail', ?, ?, ?, ?)
     `,
       )
-      .run(id, cleanDomain, pubKey, now, now);
+      .run(id, cleanDomain, kp.publicKey, encryptSecret(kp.privateKey), now, now);
 
     return this.getDomain(id);
   }
@@ -311,6 +340,7 @@ export class EmailManager {
   getDomain(id) {
     const d = this.db.prepare("SELECT * FROM email_domains WHERE id=? OR domain=?").get(id, id);
     if (!d) return null;
+    delete d.dkim_private_key;
     return {
       ...d,
       dns_records: this.calculateDnsRecords(d),
@@ -331,22 +361,34 @@ export class EmailManager {
 
   // ────────── Mailboxes ──────────
   listMailboxes(domainId = null) {
+    // used_mb is derived from the stored messages, not a column that nothing keeps up to date.
+    const cols =
+      "id, domain_id, email, name, quota_mb, created_at, " +
+      "ROUND(COALESCE((SELECT SUM(LENGTH(COALESCE(body_text,'')) + LENGTH(COALESCE(body_html,''))) FROM email_messages m WHERE m.mailbox_id = mailboxes.id), 0) / 1048576.0, 3) AS used_mb";
     if (domainId) {
       return this.db
-        .prepare("SELECT * FROM mailboxes WHERE domain_id=? ORDER BY email ASC")
+        .prepare(`SELECT ${cols} FROM mailboxes WHERE domain_id=? ORDER BY email ASC`)
         .all(domainId);
     }
-    return this.db.prepare("SELECT * FROM mailboxes ORDER BY created_at DESC").all();
+    return this.db.prepare(`SELECT ${cols} FROM mailboxes ORDER BY created_at DESC`).all();
   }
 
   createMailbox({ domain_id, email, name, quota_mb = 5120, password = "" }) {
-    const cleanEmail = email.toLowerCase().trim();
+    const cleanEmail = String(email || "")
+      .toLowerCase()
+      .trim();
+    if (!/^[a-z0-9._%+-]{1,64}@[a-z0-9.-]+$/.test(cleanEmail))
+      throw new Error(`Invalid email address: ${JSON.stringify(email)}`);
+    const dom = this.db.prepare("SELECT domain FROM email_domains WHERE id=?").get(domain_id);
+    if (!dom) throw new Error("Email domain not found.");
+    if (cleanEmail.split("@")[1] !== dom.domain)
+      throw new Error(`Mailbox address must belong to the domain "${dom.domain}".`);
     const existing = this.db.prepare("SELECT * FROM mailboxes WHERE email=?").get(cleanEmail);
     if (existing) throw new Error(`Mailbox "${cleanEmail}" already exists.`);
 
     const id = `mbox_${crypto.randomBytes(6).toString("hex")}`;
     const now = Date.now();
-    const pwHash = password ? crypto.createHash("sha256").update(password).digest("hex") : null;
+    const pwHash = password ? hashPassword(password) : null; // salted scrypt
 
     this.db
       .prepare(
@@ -365,7 +407,7 @@ export class EmailManager {
         now,
       );
 
-    return this.db.prepare("SELECT * FROM mailboxes WHERE id=?").get(id);
+    return this.listMailboxes().find((m) => m.id === id);
   }
 
   deleteMailbox(id) {
@@ -385,7 +427,16 @@ export class EmailManager {
   }
 
   createAlias({ domain_id, source_email, destination_type = "email", destination_target }) {
-    const cleanSource = source_email.toLowerCase().trim();
+    const cleanSource = String(source_email || "")
+      .toLowerCase()
+      .trim();
+    if (!/^[a-z0-9._%+-]{1,64}@[a-z0-9.-]+$/.test(cleanSource))
+      throw new Error(`Invalid alias address: ${JSON.stringify(source_email)}`);
+    if (!["email", "webhook"].includes(destination_type))
+      throw new Error("destination_type must be 'email' or 'webhook'");
+    if (!destination_target || !String(destination_target).trim())
+      throw new Error("destination_target is required");
+    if (destination_type === "webhook") this.assertWebhookUrl(destination_target);
     const existing = this.db
       .prepare("SELECT * FROM email_aliases WHERE source_email=?")
       .get(cleanSource);
@@ -421,6 +472,15 @@ export class EmailManager {
     }));
   }
 
+  /** Real (decrypted) relay password; blank or masked input falls back to the stored one. */
+  resolveRelayPassword(relayId, supplied) {
+    if (supplied && !String(supplied).includes("•")) return supplied;
+    const row = relayId
+      ? this.db.prepare("SELECT password FROM email_smtp_relays WHERE id=?").get(relayId)
+      : null;
+    return row?.password ? decryptSecret(row.password) : "";
+  }
+
   saveSmtpRelay({
     id,
     name,
@@ -440,6 +500,9 @@ export class EmailManager {
     }
 
     const existing = this.db.prepare("SELECT id FROM email_smtp_relays WHERE id=?").get(relayId);
+    const storedPassword = encryptSecret(
+      this.resolveRelayPassword(existing ? relayId : null, password),
+    );
     if (existing) {
       this.db
         .prepare(
@@ -475,14 +538,14 @@ export class EmailManager {
           host,
           Number(port),
           username,
-          password,
+          storedPassword,
           from_email,
           is_default ? 1 : 0,
           now,
         );
     }
 
-    return this.db.prepare("SELECT * FROM email_smtp_relays WHERE id=?").get(relayId);
+    return this.listSmtpRelays().find((r) => r.id === relayId);
   }
 
   deleteSmtpRelay(id) {
@@ -491,6 +554,10 @@ export class EmailManager {
   }
 
   async testSmtpRelay(relayConfig) {
+    relayConfig = {
+      ...relayConfig,
+      password: this.resolveRelayPassword(relayConfig.id, relayConfig.password),
+    };
     if (relayConfig.password) {
       return new Promise((resolve) => {
         const transporter = nodemailer.createTransport({
@@ -557,6 +624,9 @@ export class EmailManager {
   async sendMessage({ mailbox_id, to, subject, body_text, body_html }) {
     const mbox = this.db.prepare("SELECT * FROM mailboxes WHERE id=?").get(mailbox_id);
     if (!mbox) throw new Error("Mailbox not found.");
+    if (!/^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]+$/.test(String(to || "").trim()))
+      throw new Error("Recipient is not a valid email address.");
+    if (!String(subject || "").trim()) throw new Error("Subject is required.");
 
     const id = `msg_${crypto.randomBytes(6).toString("hex")}`;
     const now = Date.now();
@@ -593,8 +663,9 @@ export class EmailManager {
           secure: Number(defaultRelay.port) === 465,
           auth: {
             user: defaultRelay.username || defaultRelay.from_email || mbox.email,
-            pass: defaultRelay.password,
+            pass: decryptSecret(defaultRelay.password),
           },
+          ...this.dkimOptionsFor(mbox),
         });
 
         const fromSender =
@@ -638,8 +709,9 @@ export class EmailManager {
       alias.destination_type === "webhook" &&
       alias.destination_target.startsWith("http")
     ) {
-      fetch(alias.destination_target, {
+      fetch(this.assertWebhookUrl(alias.destination_target), {
         method: "POST",
+        signal: AbortSignal.timeout(10_000),
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           event: "inbound_email",
@@ -661,6 +733,40 @@ export class EmailManager {
           "Saved to local mailbox. Connect an Outbound SMTP Relay (Resend, SES, Postmark, SendGrid) to deliver directly to personal inboxes like Gmail / Outlook.",
       },
     };
+  }
+
+  /** nodemailer DKIM options for the mailbox's domain (signs outbound mail with our real key). */
+  dkimOptionsFor(mbox) {
+    try {
+      const d = this.db
+        .prepare("SELECT domain, dkim_selector, dkim_private_key FROM email_domains WHERE id=?")
+        .get(mbox.domain_id);
+      if (!d?.dkim_private_key) return {};
+      return {
+        dkim: {
+          domainName: d.domain,
+          keySelector: d.dkim_selector || "mail",
+          privateKey: decryptSecret(d.dkim_private_key),
+        },
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  /** Webhook targets must be http(s) and must not point at cloud metadata endpoints. */
+  assertWebhookUrl(raw) {
+    let u;
+    try {
+      u = new URL(String(raw).trim());
+    } catch {
+      throw new Error("Webhook target is not a valid URL");
+    }
+    if (!["http:", "https:"].includes(u.protocol))
+      throw new Error("Webhook target must be http(s)");
+    if (/^(169\.254\.|fe80:|\[fe80:|metadata\.google\.internal$)/i.test(u.hostname))
+      throw new Error("Webhook target points at a link-local / metadata address");
+    return u.toString();
   }
 
   markMessageRead(id, isRead = 1) {
@@ -695,8 +801,9 @@ export class EmailManager {
 
     const start = Date.now();
     try {
-      const response = await fetch(alias.destination_target, {
+      const response = await fetch(this.assertWebhookUrl(alias.destination_target), {
         method: "POST",
+        signal: AbortSignal.timeout(10_000),
         headers: {
           "content-type": "application/json",
           "user-agent": "HosteraX-Email-Webhook/1.0",

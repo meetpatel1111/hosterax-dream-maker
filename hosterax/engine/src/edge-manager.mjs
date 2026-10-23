@@ -8,6 +8,7 @@
 // Lua layer  = analytics, request logging, rule guard, geo — all on ngx.shared.dict
 //              (no Redis, no file I/O on the hot path), exposed on 127.0.0.1:9145.
 
+import { isSafeHostname } from "./security.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -149,6 +150,21 @@ export class EdgeManager {
     const current = this.getSettings();
     const updated = { ...current, ...newSettings };
 
+    // Validate: these values are written into generated proxy config and docker -p flags.
+    if (!["caddy", "openresty", "external"].includes(updated.provider)) {
+      throw new Error("provider must be caddy, openresty or external");
+    }
+    for (const key of ["http_port", "https_port", "admin_port"]) {
+      const n = Number(updated[key]);
+      if (!Number.isInteger(n) || n < 1 || n > 65535)
+        throw new Error(`${key} must be a port number`);
+      updated[key] = n;
+    }
+    updated.acme_email = String(updated.acme_email || "").trim();
+    if (updated.acme_email && !/^[^\s@{}"']+@[^\s@{}"']+\.[^\s@{}"']+$/.test(updated.acme_email)) {
+      throw new Error("acme_email is not a valid email address");
+    }
+
     this.db
       .prepare(
         `UPDATE edge_settings SET 
@@ -284,10 +300,22 @@ export class EdgeManager {
         if (d.verified || d.hostname) hostnames.add(d.hostname);
       }
 
+      // Hostnames end up verbatim in Caddy/nginx config: drop anything that is not a plain DNS name.
+      const safeHostnames = Array.from(hostnames)
+        .map((h) => String(h).trim().toLowerCase())
+        .filter((h) => {
+          const ok = isSafeHostname(h);
+          if (!ok)
+            console.warn(`[edge] Ignoring invalid hostname ${JSON.stringify(h)} for ${p.name}`);
+          return ok;
+        });
+      const upstreamPort = Number(p.port);
+      if (!Number.isInteger(upstreamPort) || upstreamPort < 1 || upstreamPort > 65535) continue;
+
       routeList.push({
         project: p.name,
-        port: p.port,
-        hostnames: Array.from(hostnames),
+        port: upstreamPort,
+        hostnames: safeHostnames,
         domains: projDomains,
       });
     }
@@ -667,8 +695,9 @@ http {
       `  }\n`;
 
     for (const r of routeList) {
-      const siteConfPath = path.join(this.openrestySitesDir, `${r.project}.conf`);
-      let conf = `# OpenResty configuration for project: ${r.project}\n`;
+      const safeProject = String(r.project).replace(/[^A-Za-z0-9_.-]/g, "_");
+      const siteConfPath = path.join(this.openrestySitesDir, `${safeProject}.conf`);
+      let conf = `# OpenResty configuration for project: ${safeProject}\n`;
 
       for (const host of r.hostnames) {
         const dom = r.domains.find((d) => d.hostname === host);

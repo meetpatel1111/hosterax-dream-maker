@@ -512,13 +512,13 @@ function Dashboard() {
             <Sparkles className="h-5 w-5 text-primary" />
             <span>App Store & 1-Click Software Catalog</span>
             <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-mono font-medium text-primary">
-              2,550+ Apps
+              2,500+ Apps
             </span>
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
             Browse 112+ curated categories from awesome-selfhosted.net, sysadmin, and selfh.st.
-            Launch Nextcloud, Vaultwarden, Immich, Uptime Kuma, WordPress, and 42+ framework starter
-            templates in 1 click.
+            Launch Nextcloud, Vaultwarden, Immich, Uptime Kuma, WordPress, and 120+ framework
+            starter templates in 1 click.
           </p>
         </div>
         <Link

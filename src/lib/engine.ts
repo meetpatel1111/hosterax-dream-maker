@@ -17,18 +17,15 @@ function read(): EngineState {
 let state: EngineState = read();
 const listeners = new Set<() => void>();
 
-// Auto-discover local engine bootstrap token if not set
-if (typeof window !== "undefined") {
-  if (!state.token && (state.url.includes("localhost") || state.url.includes("127.0.0.1"))) {
-    fetch(state.url + "/api/token")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.token) {
-          setEngineConfig(state.url, d.token);
-        }
-      })
-      .catch(() => {});
-  }
+// A local engine trusts requests from its own dashboard (same machine, same origin), so no token is
+// needed there. Remote engines require one: the 401 handler below sends the user to /auth.
+let lastUnauthorizedNotice = 0;
+function notifyUnauthorized() {
+  if (typeof window === "undefined") return;
+  const now = Date.now();
+  if (now - lastUnauthorizedNotice < 15000) return;
+  lastUnauthorizedNotice = now;
+  window.dispatchEvent(new CustomEvent("hx:unauthorized"));
 }
 
 function emit() {
@@ -63,38 +60,15 @@ export function useEngine() {
 
   const call = useCallback(
     async <T>(method: string, path: string, body?: unknown): Promise<T> => {
-      let activeToken = token;
-      let r = await fetch(url + path, {
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      if (token) headers.authorization = "Bearer " + token;
+      const r = await fetch(url + path, {
         method,
-        headers: {
-          "content-type": "application/json",
-          authorization: activeToken ? "Bearer " + activeToken : "",
-        },
+        headers,
         body: body ? JSON.stringify(body) : undefined,
       });
 
-      // Auto-heal 401 Unauthorized for local engine bootstrap
-      if (r.status === 401 && (url.includes("localhost") || url.includes("127.0.0.1"))) {
-        try {
-          const bootRes = await fetch(url + "/api/token");
-          if (bootRes.ok) {
-            const bootData = await bootRes.json();
-            if (bootData?.token) {
-              setEngineConfig(url, bootData.token);
-              activeToken = bootData.token;
-              // Retry with fresh token
-              r = await fetch(url + path, {
-                method,
-                headers: {
-                  "content-type": "application/json",
-                  authorization: "Bearer " + activeToken,
-                },
-                body: body ? JSON.stringify(body) : undefined,
-              });
-            }
-          }
-        } catch {}
-      }
+      if (r.status === 401) notifyUnauthorized();
 
       if (!r.ok) {
         let err: any;
@@ -113,7 +87,24 @@ export function useEngine() {
     [url, token],
   );
 
-  return useMemo(() => ({ url, token, save: setEngineConfig, call }), [url, token, call]);
+  /** Uploads a binary body (e.g. a project archive) with the same auth the JSON calls use. */
+  const upload = useCallback(
+    async <T>(path: string, body: Blob, contentType = "application/octet-stream"): Promise<T> => {
+      const headers: Record<string, string> = { "content-type": contentType };
+      if (token) headers.authorization = "Bearer " + token;
+      const r = await fetch(url + path, { method: "POST", headers, body });
+      if (r.status === 401) notifyUnauthorized();
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || `Upload failed (${r.status})`);
+      return data as T;
+    },
+    [url, token],
+  );
+
+  return useMemo(
+    () => ({ url, token, save: setEngineConfig, call, upload }),
+    [url, token, call, upload],
+  );
 }
 
 export function useEngineHealth() {
@@ -1040,6 +1031,8 @@ export type AiToolCall = {
 export type AiConfirmationRequired = {
   toolName: string;
   parameters: Record<string, any>;
+  /** Server-signed, short-lived proof that the user was asked — must be echoed back to confirm. */
+  ticket: string;
   title: string;
   warning: string;
 };
@@ -1093,9 +1086,12 @@ export function useAiChat() {
     mutationFn: async (payload: {
       prompt?: string;
       conversationHistory?: Array<{ role: "user" | "assistant"; content: string }>;
-      userRole?: string;
-      userEmail?: string;
-      confirmedAction?: { toolName: string; parameters: Record<string, any> } | null;
+      userEmail?: string; // audit label only — permissions come from the API token, not from the client
+      confirmedAction?: {
+        toolName: string;
+        parameters: Record<string, any>;
+        ticket: string;
+      } | null;
     }) => {
       return await eng.call<AiChatResponse>("POST", "/api/ai/chat", payload);
     },
@@ -1119,7 +1115,6 @@ export function useAiExecuteFix() {
       projectName: string;
       fixType: string;
       parameters?: Record<string, any>;
-      userRole?: string;
     }) => {
       return await eng.call<{ success: boolean; message: string }>(
         "POST",
@@ -1273,6 +1268,8 @@ export function useDockerUpdateResources() {
     }) => {
       const resources = {
         Memory: memoryMb * 1048576,
+        // Docker rejects an update where Memory exceeds the container's existing swap limit.
+        MemorySwap: memoryMb * 2 * 1048576,
         NanoCPUs: Math.round(cpus * 1e9),
       };
       return await eng.call<any>("POST", `/api/docker/containers/${containerName}/update`, {

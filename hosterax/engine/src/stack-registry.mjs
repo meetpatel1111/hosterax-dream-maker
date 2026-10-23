@@ -1,5 +1,5 @@
 // HosteraX Universal Stack Registry & Zero-Config Detectors.
-// 42 stacks across 10 languages, priority-ordered detection with manifest-dep gates.
+// 120+ stacks across 30+ languages, priority-ordered detection with manifest-dep gates.
 import fs from "node:fs";
 import path from "node:path";
 import { EXTRA_STACKS, EXTRA_ORDER, EXTRA_PACKAGE_MANAGERS } from "./stack-registry-extra.mjs";

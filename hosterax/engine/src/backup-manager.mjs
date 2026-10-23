@@ -1,8 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
+import os from "node:os";
+import zlib from "node:zlib";
+import { pipeline } from "node:stream/promises";
+import { spawn, execFile } from "node:child_process";
+import { spawnSync } from "./safe-exec.mjs";
 import { S3StorageClient } from "./s3-storage.mjs";
+import { isSafeContainerName } from "./security.mjs";
+import { encryptSecret, decryptSecret } from "./secrets.mjs";
 
 export class BackupManager {
   constructor({ db, HOME }) {
@@ -61,6 +67,53 @@ export class BackupManager {
         updated_at INTEGER NOT NULL
       );
     `);
+
+    try {
+      this.db.exec("ALTER TABLE backups ADD COLUMN container_name TEXT");
+    } catch {}
+
+    // Older versions recorded a tiny placeholder text file as a "completed" snapshot whenever the
+    // real dump failed. Flag those honestly so nobody trusts them for a restore.
+    try {
+      const markers = [
+        "MONGODUMP_ARCHIVE_V1",
+        "-- HosteraX Managed Database Backup",
+        "-- HosteraX MySQL Dump",
+        "REDIS0009\nDATABASE=",
+        "VOLUME_SNAPSHOT_V1",
+      ];
+      const suspects = this.db
+        .prepare(
+          "SELECT id, file_path FROM backups WHERE status='completed' AND file_size_bytes < 1024",
+        )
+        .all();
+      for (const row of suspects) {
+        try {
+          const head = fs.readFileSync(row.file_path, "utf8").slice(0, 80);
+          if (markers.some((m) => head.startsWith(m))) {
+            this.db
+              .prepare("UPDATE backups SET status='invalid', error_message=? WHERE id=?")
+              .run(
+                "Placeholder file written by an older HosteraX version — this was never a real backup.",
+                row.id,
+              );
+          }
+        } catch {}
+      }
+    } catch {}
+
+    // Encrypt any S3 secret that is still stored in plaintext.
+    try {
+      for (const row of this.db
+        .prepare("SELECT id, secret_access_key FROM storage_providers")
+        .all()) {
+        const enc = encryptSecret(row.secret_access_key);
+        if (enc !== row.secret_access_key)
+          this.db
+            .prepare("UPDATE storage_providers SET secret_access_key=? WHERE id=?")
+            .run(enc, row.id);
+      }
+    } catch {}
   }
 
   /**
@@ -197,7 +250,14 @@ export class BackupManager {
     const dbSubDir = path.join(this.backupsDir, targetDb.replace(/[^a-zA-Z0-9_-]/g, "_"));
     fs.mkdirSync(dbSubDir, { recursive: true });
 
-    const ext = type === "mongodb" ? "dump.gz" : type === "redis" ? "rdb.gz" : "sql.gz";
+    const ext =
+      type === "mongodb" || type === "mongo"
+        ? "dump.gz"
+        : type === "redis"
+          ? "rdb.gz"
+          : ["postgres", "postgresql", "mysql", "mariadb"].includes(type)
+            ? "sql.gz"
+            : "tar.gz";
     const fileName = `${targetDb}_${Date.now()}.${ext}`;
     const outPath = path.join(dbSubDir, fileName);
 
@@ -207,11 +267,11 @@ export class BackupManager {
     this.db
       .prepare(
         `
-      INSERT INTO backups (id, project_name, database_name, db_type, file_path, file_size_bytes, sha256, destination, status, created_at)
-      VALUES (?, ?, ?, ?, ?, 0, '', 'local', 'in_progress', ?)
+      INSERT INTO backups (id, project_name, database_name, db_type, file_path, file_size_bytes, sha256, destination, status, created_at, container_name)
+      VALUES (?, ?, ?, ?, ?, 0, '', 'local', 'in_progress', ?, ?)
     `,
       )
-      .run(bkpId, projectName || targetDb, targetDb, type, outPath, createdAt);
+      .run(bkpId, projectName || targetDb, targetDb, type, outPath, createdAt, cont);
 
     try {
       if (type === "mongodb" || type === "mongo") {
@@ -294,6 +354,12 @@ export class BackupManager {
     const bkp = this.getBackup(id);
     if (!bkp) throw new Error(`Backup with ID "${id}" not found.`);
 
+    if (bkp.status !== "completed") {
+      throw new Error(
+        `Backup "${id}" is ${bkp.status} and cannot be restored${bkp.error_message ? `: ${bkp.error_message}` : "."}`,
+      );
+    }
+
     if (!fs.existsSync(bkp.file_path)) {
       throw new Error(`Backup file "${bkp.file_path}" does not exist on disk.`);
     }
@@ -306,7 +372,7 @@ export class BackupManager {
       );
     }
 
-    const cont = targetContainer || bkp.database_name || "hx_mongo";
+    const cont = bkp.container_name || targetContainer || bkp.database_name;
     const type = bkp.db_type.toLowerCase();
 
     if (type === "mongodb" || type === "mongo") {
@@ -349,289 +415,222 @@ export class BackupManager {
   }
 
   // -------------------------------------------------------------
-  // Internal Dump Implementations
+  // Internal helpers — everything runs `docker` WITHOUT a shell and fails loudly.
+  // A backup that did not really happen is never recorded as "completed".
+  // -------------------------------------------------------------
+
+  _assertContainer(name) {
+    if (!isSafeContainerName(name))
+      throw new Error(`Invalid container name: ${JSON.stringify(name)}`);
+  }
+
+  /** Streams `docker <args>` stdout into outPath (optionally gzip-compressed). */
+  async _streamToFile(args, outPath, { gzip = false } = {}) {
+    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const out = fs.createWriteStream(outPath);
+    let stderr = "";
+    let bytes = 0;
+    child.stderr.on("data", (d) => {
+      if (stderr.length < 4000) stderr += d.toString();
+    });
+    child.stdout.on("data", (d) => (bytes += d.length));
+    const written = new Promise((resolve, reject) => {
+      out.on("finish", resolve);
+      out.on("error", reject);
+    });
+    const exited = new Promise((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", resolve);
+    });
+    (gzip ? child.stdout.pipe(zlib.createGzip()) : child.stdout).pipe(out);
+    try {
+      const [code] = await Promise.all([exited, written]);
+      if (code !== 0)
+        throw new Error(
+          `docker ${args[0]} exited with code ${code}: ${stderr.trim() || "no error output"}`,
+        );
+      if (bytes === 0)
+        throw new Error(`docker ${args[0]} produced no data: ${stderr.trim() || "empty output"}`);
+    } catch (err) {
+      out.destroy();
+      try {
+        fs.rmSync(outPath, { force: true });
+      } catch {}
+      throw err;
+    }
+  }
+
+  /** Feeds a (optionally gunzipped) file to `docker <args>` on stdin. */
+  async _streamFromFile(args, filePath, { gunzip = false } = {}) {
+    const child = spawn("docker", args, { stdio: ["pipe", "pipe", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (d) => {
+      if (stderr.length < 4000) stderr += d.toString();
+    });
+    child.stdout.resume();
+    child.stdin.on("error", () => {}); // surfaced through the exit code
+    const exited = new Promise((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", resolve);
+    });
+    const src = fs.createReadStream(filePath);
+    const input = gunzip ? src.pipe(zlib.createGunzip()) : src;
+    src.on("error", (e) => child.kill() && child.stdin.destroy(e));
+    input.on("error", (e) => {
+      stderr += `input error: ${e.message}`;
+      child.stdin.end();
+    });
+    input.pipe(child.stdin);
+    const code = await exited;
+    if (code !== 0)
+      throw new Error(
+        `docker ${args[0]} exited with code ${code}: ${stderr.trim() || "no error output"}`,
+      );
+  }
+
+  _docker(args, timeout = 60000) {
+    return new Promise((resolve, reject) => {
+      execFile(
+        "docker",
+        args,
+        { encoding: "utf8", timeout, maxBuffer: 4 * 1024 * 1024 },
+        (err, stdout, stderr) =>
+          err
+            ? reject(new Error(`docker ${args[0]} failed: ${(stderr || err.message).trim()}`))
+            : resolve(stdout),
+      );
+    });
+  }
+
+  async _volumesOf(containerName) {
+    const out = await this._docker([
+      "inspect",
+      containerName,
+      "--format",
+      '{{range .Mounts}}{{if eq .Type "volume"}}{{.Name}} {{end}}{{end}}',
+    ]);
+    return out.split(/\s+/).filter(Boolean);
+  }
+
+  // -------------------------------------------------------------
+  // Dumps
   // -------------------------------------------------------------
 
   async _dumpMongo(containerName, outPath) {
-    return new Promise((resolve) => {
-      const outStream = fs.createWriteStream(outPath);
-      const child = spawn("docker", ["exec", containerName, "mongodump", "--archive", "--gzip"]);
-
-      child.stdout.pipe(outStream);
-      let hasData = false;
-      child.stdout.on("data", () => (hasData = true));
-
-      child.on("close", (code) => {
-        outStream.end(() => {
-          if (code === 0 && hasData && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-            resolve();
-          } else {
-            // Write local dump archive if docker container not attached
-            fs.writeFileSync(
-              outPath,
-              Buffer.from(`MONGODUMP_ARCHIVE_V1\nDATABASE=${containerName}\nDATE=${Date.now()}\n`),
-            );
-            resolve();
-          }
-        });
-      });
-      child.on("error", () => {
-        outStream.destroy();
-        fs.writeFileSync(
-          outPath,
-          Buffer.from(`MONGODUMP_ARCHIVE_V1\nDATABASE=${containerName}\nDATE=${Date.now()}\n`),
-        );
-        resolve();
-      });
-    });
+    this._assertContainer(containerName);
+    const script =
+      'exec mongodump --archive --gzip ${MONGO_INITDB_ROOT_USERNAME:+--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin}';
+    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath);
   }
 
   async _dumpPostgres(containerName, outPath) {
-    return new Promise((resolve) => {
-      const outStream = fs.createWriteStream(outPath);
-      const child = spawn("docker", [
+    this._assertContainer(containerName);
+    await this._streamToFile(
+      [
         "exec",
         containerName,
-        "pg_dumpall",
-        "-U",
-        "postgres",
-        "--clean",
-      ]);
-
-      const gzip = spawn("gzip", ["-c"]);
-      child.stdout.pipe(gzip.stdin);
-      gzip.stdout.pipe(outStream);
-
-      let hasData = false;
-      gzip.stdout.on("data", () => (hasData = true));
-
-      gzip.on("close", (code) => {
-        outStream.end(() => {
-          if (code === 0 && hasData && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-            resolve();
-          } else {
-            fs.writeFileSync(
-              outPath,
-              Buffer.from(
-                `-- HosteraX Managed Database Backup\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n-- Engine: PostgreSQL 16\n`,
-              ),
-            );
-            resolve();
-          }
-        });
-      });
-      child.on("error", () => {
-        outStream.destroy();
-        fs.writeFileSync(
-          outPath,
-          Buffer.from(
-            `-- HosteraX Managed Database Backup\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n-- Engine: PostgreSQL 16\n`,
-          ),
-        );
-        resolve();
-      });
-      gzip.on("error", () => {
-        outStream.destroy();
-        fs.writeFileSync(
-          outPath,
-          Buffer.from(
-            `-- HosteraX Managed Database Backup\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n-- Engine: PostgreSQL 16\n`,
-          ),
-        );
-        resolve();
-      });
-    });
+        "sh",
+        "-c",
+        'exec pg_dumpall -U "${POSTGRES_USER:-postgres}" --clean --if-exists',
+      ],
+      outPath,
+      { gzip: true },
+    );
   }
 
   async _dumpMysql(containerName, outPath) {
-    return new Promise((resolve) => {
-      const outStream = fs.createWriteStream(outPath);
-      const child = spawn("docker", [
-        "exec",
-        containerName,
-        "mysqldump",
-        "--all-databases",
-        "-u",
-        "root",
-      ]);
-
-      child.stdout.pipe(outStream);
-      let hasData = false;
-      child.stdout.on("data", () => (hasData = true));
-
-      child.on("close", (code) => {
-        outStream.end(() => {
-          if (code === 0 && hasData && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-            resolve();
-          } else {
-            fs.writeFileSync(
-              outPath,
-              Buffer.from(
-                `-- HosteraX MySQL Dump\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n`,
-              ),
-            );
-            resolve();
-          }
-        });
-      });
-      child.on("error", () => {
-        outStream.destroy();
-        fs.writeFileSync(
-          outPath,
-          Buffer.from(
-            `-- HosteraX MySQL Dump\n-- Database: ${containerName}\n-- Created: ${new Date().toISOString()}\n`,
-          ),
-        );
-        resolve();
-      });
-    });
+    this._assertContainer(containerName);
+    const script =
+      'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysqldump || command -v mariadb-dump)"; [ -n "$B" ] || { echo "mysqldump not found in container" >&2; exit 127; }; exec "$B" --all-databases --single-transaction -uroot ${P:+-p"$P"}';
+    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath, { gzip: true });
   }
 
   async _dumpRedis(containerName, outPath) {
-    return new Promise((resolve) => {
-      try {
-        spawnSync("docker", ["exec", containerName, "redis-cli", "BGSAVE"], { timeout: 3000 });
-      } catch {}
-
-      const outStream = fs.createWriteStream(outPath);
-      const child = spawn("docker", ["exec", containerName, "cat", "/data/dump.rdb"]);
-      child.stdout.pipe(outStream);
-      let hasData = false;
-      child.stdout.on("data", () => (hasData = true));
-
-      child.on("close", (code) => {
-        outStream.end(() => {
-          if (code === 0 && hasData && fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-            resolve();
-          } else {
-            fs.writeFileSync(
-              outPath,
-              Buffer.from(`REDIS0009\nDATABASE=${containerName}\nDATE=${Date.now()}\n`),
-            );
-            resolve();
-          }
-        });
-      });
-      child.on("error", () => {
-        outStream.destroy();
-        fs.writeFileSync(
-          outPath,
-          Buffer.from(`REDIS0009\nDATABASE=${containerName}\nDATE=${Date.now()}\n`),
-        );
-        resolve();
-      });
-    });
+    this._assertContainer(containerName);
+    const script =
+      'A=""; [ -n "$REDIS_PASSWORD" ] && A="-a $REDIS_PASSWORD --no-auth-warning"; [ "$(redis-cli $A SAVE)" = "OK" ] && cat /data/dump.rdb';
+    await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath, { gzip: true });
   }
 
+  /** Archives every named Docker volume attached to the container into one tar.gz. */
   async _dumpVolume(containerName, outPath) {
-    return new Promise((resolve) => {
-      const outStream = fs.createWriteStream(outPath);
-      const child = spawn("docker", ["exec", containerName, "tar", "-czf", "-", "/app/data"]);
-      child.stdout.pipe(outStream);
-      child.on("close", () => {
-        outStream.end(() => {
-          if (fs.existsSync(outPath) && fs.statSync(outPath).size > 0) {
-            resolve();
-          } else {
-            fs.writeFileSync(
-              outPath,
-              Buffer.from(`VOLUME_SNAPSHOT_V1\nCONTAINER=${containerName}\nDATE=${Date.now()}\n`),
-            );
-            resolve();
-          }
-        });
-      });
-      child.on("error", () => {
-        outStream.destroy();
-        fs.writeFileSync(
-          outPath,
-          Buffer.from(`VOLUME_SNAPSHOT_V1\nCONTAINER=${containerName}\nDATE=${Date.now()}\n`),
-        );
-        resolve();
-      });
-    });
+    this._assertContainer(containerName);
+    const volumes = await this._volumesOf(containerName);
+    if (volumes.length === 0) {
+      throw new Error(
+        `Container "${containerName}" has no named volumes — nothing persistent to back up.`,
+      );
+    }
+    const args = ["run", "--rm"];
+    for (const v of volumes) args.push("-v", `${v}:/backup/${v}:ro`);
+    args.push("alpine:3.20", "tar", "czf", "-", "-C", "/backup", ".");
+    await this._streamToFile(args, outPath);
   }
 
   // -------------------------------------------------------------
-  // Internal Restore Implementations
+  // Restores
   // -------------------------------------------------------------
 
   async _restoreMongo(containerName, filePath) {
-    return new Promise((resolve, reject) => {
-      const inStream = fs.createReadStream(filePath);
-      const child = spawn("docker", [
-        "exec",
-        "-i",
-        containerName,
-        "mongorestore",
-        "--archive",
-        "--gzip",
-        "--drop",
-      ]);
-
-      inStream.pipe(child.stdin);
-      let stderr = "";
-      child.stderr.on("data", (d) => (stderr += d.toString()));
-
-      child.on("close", (code) => {
-        if (code === 0 || stderr.includes("done")) {
-          resolve();
-        } else {
-          reject(new Error(`mongorestore failed with exit code ${code}: ${stderr}`));
-        }
-      });
-      child.on("error", reject);
-    });
+    this._assertContainer(containerName);
+    const script =
+      'exec mongorestore --archive --gzip --drop ${MONGO_INITDB_ROOT_USERNAME:+--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin}';
+    await this._streamFromFile(["exec", "-i", containerName, "sh", "-c", script], filePath);
   }
 
   async _restorePostgres(containerName, filePath) {
-    return new Promise((resolve, reject) => {
-      const inStream = fs.createReadStream(filePath);
-      const child = spawn("docker", ["exec", "-i", containerName, "psql", "-U", "postgres"]);
-
-      inStream.pipe(child.stdin);
-      let stderr = "";
-      child.stderr.on("data", (d) => (stderr += d.toString()));
-
-      child.on("close", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`psql restore failed with code ${code}: ${stderr}`));
-      });
-      child.on("error", reject);
-    });
+    this._assertContainer(containerName);
+    await this._streamFromFile(
+      [
+        "exec",
+        "-i",
+        containerName,
+        "sh",
+        "-c",
+        'exec psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d postgres',
+      ],
+      filePath,
+      { gunzip: true },
+    );
   }
 
   async _restoreMysql(containerName, filePath) {
-    return new Promise((resolve, reject) => {
-      const inStream = fs.createReadStream(filePath);
-      const child = spawn("docker", ["exec", "-i", containerName, "mysql", "-u", "root"]);
-
-      inStream.pipe(child.stdin);
-      let stderr = "";
-      child.stderr.on("data", (d) => (stderr += d.toString()));
-
-      child.on("close", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`mysql restore failed with code ${code}: ${stderr}`));
-      });
-      child.on("error", reject);
+    this._assertContainer(containerName);
+    const script =
+      'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysql || command -v mariadb)"; [ -n "$B" ] || { echo "mysql client not found in container" >&2; exit 127; }; exec "$B" -uroot ${P:+-p"$P"}';
+    await this._streamFromFile(["exec", "-i", containerName, "sh", "-c", script], filePath, {
+      gunzip: true,
     });
   }
 
   async _restoreRedis(containerName, filePath) {
-    // Copy rdb file to container and restart
-    spawnSync("docker", ["cp", filePath, `${containerName}:/data/dump.rdb`]);
-    spawnSync("docker", ["restart", containerName]);
+    this._assertContainer(containerName);
+    const tmp = path.join(os.tmpdir(), `hx-redis-${crypto.randomBytes(6).toString("hex")}.rdb`);
+    try {
+      await pipeline(fs.createReadStream(filePath), zlib.createGunzip(), fs.createWriteStream(tmp));
+      // The RDB must be swapped in while Redis is stopped, otherwise it overwrites it on shutdown.
+      await this._docker(["stop", containerName], 60000);
+      await this._docker(["cp", tmp, `${containerName}:/data/dump.rdb`]);
+      await this._docker(["start", containerName]);
+    } finally {
+      fs.rmSync(tmp, { force: true });
+    }
   }
 
   async _restoreVolume(containerName, filePath) {
-    return new Promise((resolve, reject) => {
-      const inStream = fs.createReadStream(filePath);
-      const child = spawn("docker", ["exec", "-i", containerName, "tar", "-xzf", "-", "-C", "/"]);
-      inStream.pipe(child.stdin);
-      child.on("close", () => resolve());
-      child.on("error", reject);
-    });
+    this._assertContainer(containerName);
+    const volumes = await this._volumesOf(containerName);
+    if (volumes.length === 0)
+      throw new Error(`Container "${containerName}" has no named volumes to restore into.`);
+    await this._docker(["stop", containerName], 60000);
+    try {
+      const args = ["run", "--rm", "-i"];
+      for (const v of volumes) args.push("-v", `${v}:/backup/${v}`);
+      args.push("alpine:3.20", "tar", "xzf", "-", "-C", "/backup");
+      await this._streamFromFile(args, filePath);
+    } finally {
+      await this._docker(["start", containerName]).catch(() => {});
+    }
   }
 
   async _computeSha256(filePath) {
@@ -678,7 +677,8 @@ export class BackupManager {
   }
 
   getRawS3Config() {
-    return this.db.prepare("SELECT * FROM storage_providers WHERE id='default_s3'").get();
+    const row = this.db.prepare("SELECT * FROM storage_providers WHERE id='default_s3'").get();
+    return row ? { ...row, secret_access_key: decryptSecret(row.secret_access_key) } : row;
   }
 
   saveS3Config(cfg) {
@@ -698,7 +698,7 @@ export class BackupManager {
       region: (cfg.region || "us-east-1").trim(),
       bucket: (cfg.bucket || "").trim(),
       access_key_id: (cfg.access_key_id || "").trim(),
-      secret_access_key: secretKey.trim(),
+      secret_access_key: encryptSecret(secretKey.trim()),
       prefix: (cfg.prefix || "hosterax-backups").trim(),
       auto_sync: cfg.auto_sync ? 1 : 0,
       created_at: existing?.created_at || now,

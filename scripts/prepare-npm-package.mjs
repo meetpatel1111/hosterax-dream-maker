@@ -40,19 +40,22 @@ console.log(`[HosteraX Package] Bundled core engine source into ${CLI_ENGINE_DIR
 fs.rmSync(CLI_DIST_DIR, { recursive: true, force: true });
 fs.mkdirSync(CLI_DIST_DIR, { recursive: true });
 
-const outputPublic = path.join(ROOT, ".output", "public");
-const distDir = path.join(ROOT, "dist");
+// The engine serves `<dist>/public` and runs `<dist>/server/index.mjs`; both come from
+// `npm run build:engine` (a Node-server build). A Cloudflare-preset build cannot be served.
+const outputDir = path.join(ROOT, ".output");
+let preset = null;
+try {
+  preset = JSON.parse(fs.readFileSync(path.join(outputDir, "nitro.json"), "utf8")).preset;
+} catch {}
 
-if (fs.existsSync(outputPublic)) {
-  copyDirRecursive(outputPublic, CLI_DIST_DIR);
-  console.log(`[HosteraX Package] Bundled web control plane from ${outputPublic}`);
-} else if (fs.existsSync(distDir)) {
-  copyDirRecursive(distDir, CLI_DIST_DIR);
-  console.log(`[HosteraX Package] Bundled web control plane from ${distDir}`);
+if (preset === "node-server" || preset === "node") {
+  copyDirRecursive(outputDir, CLI_DIST_DIR);
+  console.log(`[HosteraX Package] Bundled web control plane from ${outputDir}`);
 } else {
-  console.warn(
-    `[HosteraX Package Warning] Built web assets (.output/public or dist) not found. Run 'npm run build' first.`,
+  console.error(
+    `[HosteraX Package] No Node-server dashboard build found in ${outputDir} (preset: ${preset ?? "none"}). Run 'npm run build:engine' first.`,
   );
+  process.exit(1);
 }
 
 console.log("[HosteraX Package] ✅ All-in-one package bundle prepared successfully!");

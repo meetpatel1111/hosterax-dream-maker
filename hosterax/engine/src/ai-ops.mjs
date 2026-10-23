@@ -2,7 +2,12 @@ import crypto from "node:crypto";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
+import dns from "node:dns/promises";
 import { fileURLToPath } from "node:url";
+import { catalogApps } from "./catalog-api.mjs";
+import { assertSafeImageRef } from "./security.mjs";
+import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
+import { encryptSecret, decryptSecret } from "./secrets.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -44,8 +49,14 @@ export class AIOpsManager {
     emailManager,
     metricsManager,
     dockerApi,
+    lifecycle,
+    provisionDatabase,
+    runDeployment,
   }) {
     this.db = db;
+    this.lifecycle = lifecycle;
+    this.provisionDatabase = provisionDatabase;
+    this.runDeployment = runDeployment;
     this.projectsApi = projectsApi;
     this.gpuManager = gpuManager;
     this.scaleToZero = scaleToZero;
@@ -61,6 +72,8 @@ export class AIOpsManager {
     this.emailManager = emailManager;
     this.metricsManager = metricsManager;
     this.dockerApi = dockerApi;
+    // Per-process secret used to sign "are you sure?" confirmations for destructive tools.
+    this.confirmSecret = crypto.randomBytes(32);
 
     this.initCatalog();
     this.initSchema();
@@ -69,22 +82,12 @@ export class AIOpsManager {
 
   initCatalog() {
     this.catalogMap = new Map();
-    try {
-      const dbPath = path.join(__dirname, "awesome-selfhosted-db.json");
-      if (fs.existsSync(dbPath)) {
-        const data = JSON.parse(fs.readFileSync(dbPath, "utf8"));
-        if (Array.isArray(data.apps)) {
-          for (const app of data.apps) {
-            if (app.slug && app.image) {
-              this.catalogMap.set(app.slug.toLowerCase(), app);
-              this.catalogMap.set(app.name.toLowerCase(), app);
-              this.catalogMap.set(app.id.toLowerCase(), app);
-            }
-          }
-        }
+    for (const app of catalogApps) {
+      if (app.slug && app.image) {
+        this.catalogMap.set(app.slug.toLowerCase(), app);
+        this.catalogMap.set(app.name.toLowerCase(), app);
+        this.catalogMap.set(app.id.toLowerCase(), app);
       }
-    } catch (err) {
-      console.warn("[ai-ops] Could not load catalog database:", err.message);
     }
   }
 
@@ -128,7 +131,8 @@ export class AIOpsManager {
     for (const r of rows) {
       // Mask API key
       if (r.key === "api_key" && r.value) {
-        config[r.key] = r.value.slice(0, 4) + "..." + r.value.slice(-4);
+        const plain = decryptSecret(r.value);
+        config[r.key] = plain.length > 8 ? plain.slice(0, 4) + "..." + plain.slice(-4) : "••••";
       } else {
         config[r.key] = r.value;
       }
@@ -142,11 +146,36 @@ export class AIOpsManager {
       "INSERT INTO ai_ops_config (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
     );
     for (const [k, v] of Object.entries(updates)) {
-      if (typeof v === "string") {
+      if (typeof v !== "string") continue;
+      if (k === "api_key") {
+        if (v.includes("...") || v.includes("••")) continue; // masked read-back from the UI — keep the stored key
+        upsert.run(k, encryptSecret(v), now);
+      } else {
         upsert.run(k, v, now);
       }
     }
     return this.getConfig();
+  }
+
+  /** The real (decrypted) value of a config key — never the masked display value. */
+  getRawConfigValue(key) {
+    const row = this.db.prepare("SELECT value FROM ai_ops_config WHERE key=?").get(key);
+    return row?.value ? decryptSecret(row.value) : "";
+  }
+
+  /** Canonical project name for a (possibly differently cased / slugged) user input. */
+  resolveProjectName(input) {
+    const clean = String(input || "")
+      .trim()
+      .toLowerCase();
+    if (!clean) throw new Error("Which project do you mean? Please include the project name.");
+    const row = this.db
+      .prepare(
+        "SELECT name FROM projects WHERE LOWER(name)=? OR LOWER(slug)=? ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(clean, clean);
+    if (!row) throw new Error(`Project '${input}' not found`);
+    return row.name;
   }
 
   // ── Tool Registry with RBAC Requirements ──
@@ -507,6 +536,43 @@ export class AIOpsManager {
     ];
   }
 
+  // ── Server-verified confirmation tickets ──
+  // A destructive action only runs if the client presents a ticket we issued for exactly this
+  // tool + parameters. This stops a client from invoking arbitrary tools via `confirmedAction`.
+  static canonical(value) {
+    if (Array.isArray(value)) return `[${value.map(AIOpsManager.canonical).join(",")}]`;
+    if (value && typeof value === "object") {
+      return `{${Object.keys(value)
+        .sort()
+        .map((k) => `${JSON.stringify(k)}:${AIOpsManager.canonical(value[k])}`)
+        .join(",")}}`;
+    }
+    return JSON.stringify(value ?? null);
+  }
+
+  signConfirmation(toolName, parameters, exp) {
+    return crypto
+      .createHmac("sha256", this.confirmSecret)
+      .update(AIOpsManager.canonical([toolName, parameters || {}, exp]))
+      .digest("hex");
+  }
+
+  issueConfirmation(toolName, parameters) {
+    const exp = Date.now() + 5 * 60 * 1000;
+    return `${exp}.${this.signConfirmation(toolName, parameters, exp)}`;
+  }
+
+  verifyConfirmation(ticket, toolName, parameters) {
+    const [expRaw, sig] = String(ticket || "").split(".");
+    const exp = Number(expRaw);
+    if (!sig || !Number.isFinite(exp) || exp < Date.now()) return false;
+    const expected = this.signConfirmation(toolName, parameters, exp);
+    return (
+      sig.length === expected.length &&
+      crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))
+    );
+  }
+
   // ── RBAC Validation ──
   checkPermission(userRole = "member", requiredPermission = "read") {
     const userLevel = ROLE_LEVELS[userRole?.toLowerCase()] || ROLE_LEVELS.viewer;
@@ -561,16 +627,13 @@ export class AIOpsManager {
     let exitCode = null;
     let restartCount = 0;
 
+    const containerName = this.lifecycle.containerName(project.name);
     try {
-      const { execSync } = await import("node:child_process");
-      const inspectJson = execSync(`docker inspect hx_${cleanName} --format "{{json .State}}"`, {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      containerInfo = JSON.parse(inspectJson.trim());
-      isRunning = containerInfo.Running === true;
-      exitCode = containerInfo.ExitCode;
-      restartCount = containerInfo.Restarting ? 1 : 0;
+      const inspected = await this.dockerApi.inspectContainer(containerName);
+      containerInfo = inspected?.State || null;
+      isRunning = containerInfo?.Running === true;
+      exitCode = containerInfo?.ExitCode ?? null;
+      restartCount = inspected?.RestartCount ?? (containerInfo?.Restarting ? 1 : 0);
     } catch {
       isRunning = false;
     }
@@ -578,13 +641,9 @@ export class AIOpsManager {
     // 2. Inspect recent container logs
     let logs = "";
     try {
-      const { execSync } = await import("node:child_process");
-      logs = execSync(`docker logs --tail 100 hx_${cleanName}`, {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-    } catch (e) {
-      logs = e.stdout || e.stderr || "";
+      logs = await this.lifecycle.runtimeLogs(project.name, 100);
+    } catch {
+      logs = "";
     }
 
     // 3. Pattern Matching for Known Root Causes
@@ -597,7 +656,7 @@ export class AIOpsManager {
       issues.push({
         type: "CONTAINER_STOPPED",
         title: `Container is stopped (Exit Code: ${exitCode ?? "Unknown"})`,
-        description: `The Docker container 'hx_${cleanName}' is currently not running.`,
+        description: `The Docker container '${containerName}' is currently not running.`,
       });
       fixes.push({
         id: "fix_start",
@@ -773,31 +832,34 @@ export class AIOpsManager {
       await this.toolRestartProject(cleanName);
       return {
         success: true,
-        message: `Container 'hx_${cleanName}' was restarted successfully and is passing readiness probes.`,
+        message: `Project '${cleanName}' was restarted.`,
       };
     }
 
     if (fixType === "rebind_port") {
-      const port = parameters.port || 8082;
+      // A redeploy lets the engine pick a fresh free host port and re-route the edge to it.
       this.db
-        .prepare("UPDATE projects SET port=? WHERE name=? OR slug=?")
-        .run(port, cleanName, cleanName);
-      await this.toolRestartProject(cleanName);
+        .prepare("UPDATE projects SET port=NULL WHERE name=? OR slug=?")
+        .run(cleanName, cleanName);
+      const dep = await this.runDeployment(this.resolveProjectName(cleanName), {
+        trigger: "ai-autofix",
+      });
       return {
         success: true,
-        message: `Project '${cleanName}' port re-bound to ${port}. Edge proxy updated.`,
+        message: `Redeploying '${cleanName}' (${dep.version}) so it gets a fresh host port and edge route.`,
       };
     }
 
     if (fixType === "increase_memory") {
-      const memoryMb = parameters.memoryMb || 1024;
+      const memoryMb = Math.min(Math.max(parseInt(parameters.memoryMb, 10) || 1024, 64), 262144);
+      const name = this.resolveProjectName(cleanName);
       this.db
-        .prepare("UPDATE projects SET memory_mb=? WHERE name=? OR slug=?")
-        .run(memoryMb, cleanName, cleanName);
-      await this.toolRestartProject(cleanName);
+        .prepare("UPDATE projects SET memory_mb_limit=?, updated_at=? WHERE name=?")
+        .run(memoryMb, Date.now(), name);
+      await this.toolDockerUpdate(name, memoryMb, undefined); // applied to the live container, no restart needed
       return {
         success: true,
-        message: `Memory quota for '${cleanName}' boosted to ${memoryMb}MB.`,
+        message: `Memory limit for '${name}' raised to ${memoryMb} MB (applied live and saved for future deploys).`,
       };
     }
 
@@ -815,11 +877,14 @@ export class AIOpsManager {
 
   // ── Gemini LLM Engine ──
   async callGemini(prompt, conversationHistory = []) {
-    const apiKey = process.env.GEMINI_API_KEY || this.getConfig()["api_key"];
+    const apiKey = process.env.GEMINI_API_KEY || this.getRawConfigValue("api_key");
     if (!apiKey) return null;
 
-    const model = this.getConfig()["gemini_model"] || "gemini-2.5-flash";
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    const model = String(this.getConfig()["gemini_model"] || "gemini-2.5-flash").replace(
+      /[^A-Za-z0-9._-]/g,
+      "",
+    );
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
     const toolsDeclarations = this.tools.map((t) => ({
       name: t.name,
@@ -845,7 +910,7 @@ export class AIOpsManager {
     try {
       const response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
           systemInstruction: {
             parts: [
@@ -891,7 +956,7 @@ export class AIOpsManager {
   async handleChatTurn({
     prompt,
     conversationHistory = [],
-    userRole = "admin",
+    userRole = "viewer", // always supplied by the server from the caller's token scopes
     userEmail = "admin@hosterax.local",
     confirmedAction = null,
   }) {
@@ -918,6 +983,29 @@ export class AIOpsManager {
         return {
           reply: `🛡️ **RBAC Permission Denied**\n\nYour current role is **\`${userRole}\`**. Executing **\`${tool.name}\`** requires **\`${tool.requiredPermission}\`** permissions.`,
           toolCalls: [],
+          confirmationRequired: null,
+        };
+      }
+
+      if (
+        !this.verifyConfirmation(
+          confirmedAction.ticket,
+          confirmedAction.toolName,
+          confirmedAction.parameters,
+        )
+      ) {
+        this.logAudit({
+          userEmail,
+          userRole,
+          prompt: `Rejected confirmation: ${confirmedAction.toolName}`,
+          toolName: confirmedAction.toolName,
+          status: "denied_ticket",
+          details: "Missing, expired or mismatching confirmation ticket",
+        });
+        return {
+          reply:
+            "🛡️ **Confirmation expired or invalid.** Please ask for the action again and re-confirm.",
+          toolCalls: [{ toolName: confirmedAction.toolName, status: "denied_rbac" }],
           confirmationRequired: null,
         };
       }
@@ -998,9 +1086,10 @@ export class AIOpsManager {
             confirmationRequired: {
               toolName: tool.name,
               parameters: intent.parameters,
-              title: `Delete Project '${intent.parameters.projectName}'`,
+              ticket: this.issueConfirmation(tool.name, intent.parameters),
+              title: `${tool.name.replace(/_/g, " ")}${intent.parameters.projectName ? ` — '${intent.parameters.projectName}'` : ""}`,
               warning:
-                "This action cannot be undone. All containers and edge routes will be removed.",
+                "This action cannot be undone. Related containers, routes or data may be permanently removed.",
             },
           };
         }
@@ -1131,7 +1220,7 @@ export class AIOpsManager {
       text.includes("sleep mode") ||
       text.includes("reclaim ram")
     ) {
-      const proj = this.extractProjectName(text) || "stirling-pdf";
+      const proj = this.extractProjectName(text) || "";
       const minutesMatch = text.match(/([0-9]+)\s*(?:min|m|minute)/);
       const minutes = minutesMatch ? parseInt(minutesMatch[1], 10) : 15;
       const enabled = !text.includes("disable") && !text.includes("turn off");
@@ -1183,7 +1272,7 @@ export class AIOpsManager {
       text.includes("warning log") ||
       text.includes("errors in")
     ) {
-      const proj = this.extractProjectName(text) || "stirling-pdf";
+      const proj = this.extractProjectName(text) || "";
       let level = "all";
       if (text.includes("error")) level = "error";
       else if (text.includes("warn")) level = "warn";
@@ -1211,7 +1300,7 @@ export class AIOpsManager {
     // 8.3 Alert Watchdog Rules
     if (text.includes("alert")) {
       if (text.includes("set") || text.includes("create") || text.includes("rule")) {
-        const proj = this.extractProjectName(text) || "stirling-pdf";
+        const proj = this.extractProjectName(text) || "";
         const threshMatch = text.match(/([0-9]+)\s*%/);
         const threshold = threshMatch ? parseFloat(threshMatch[1]) : 85;
         const metricType = text.includes("cpu") ? "cpu" : "memory";
@@ -1247,7 +1336,7 @@ export class AIOpsManager {
       text.includes("set ram limit") ||
       text.includes("update ram")
     ) {
-      const proj = this.extractProjectName(text) || "stirling-pdf";
+      const proj = this.extractProjectName(text) || "";
       const mbMatch = text.match(/([0-9]+)\s*(?:mb|gb|m|g)/i);
       let memoryMb = 1024;
       if (mbMatch) {
@@ -1262,7 +1351,7 @@ export class AIOpsManager {
     }
 
     if (text.includes("inspect container") || text.includes("docker inspect")) {
-      const proj = this.extractProjectName(text) || "stirling-pdf";
+      const proj = this.extractProjectName(text) || "";
       return { toolName: "docker_inspect_container", parameters: { projectName: proj } };
     }
 
@@ -1307,7 +1396,7 @@ export class AIOpsManager {
       };
     }
     if (text.includes("backup") || text.includes("snapshot") || text.includes("dump")) {
-      const proj = this.extractProjectName(text) || "stirling-pdf";
+      const proj = this.extractProjectName(text) || "";
       return { toolName: "create_backup", parameters: { databaseName: proj, dbType: "volume" } };
     }
 
@@ -1424,7 +1513,7 @@ export class AIOpsManager {
         text.includes("deploy") ||
         text.includes("start")
       ) {
-        const proj = this.extractProjectName(text) || "stirling-pdf";
+        const proj = this.extractProjectName(text) || "";
         const prMatch = text.match(/pr\s*#?([0-9]+)/i);
         const prNumber = prMatch ? parseInt(prMatch[1], 10) : 1;
         return {
@@ -1453,7 +1542,7 @@ export class AIOpsManager {
       text.includes("push to deploy") ||
       text.includes("github push")
     ) {
-      const proj = this.extractProjectName(text) || "stirling-pdf";
+      const proj = this.extractProjectName(text) || "";
       return { toolName: "get_webhook_config", parameters: { projectName: proj } };
     }
 
@@ -1466,7 +1555,7 @@ export class AIOpsManager {
       const domainMatch = text.match(/([a-z0-9.-]+\.[a-z]{2,})/);
       return {
         toolName: "check_dns",
-        parameters: { domain: domainMatch ? domainMatch[1] : "stirling-pdf.127.0.0.1.nip.io" },
+        parameters: { domain: domainMatch ? domainMatch[1] : "" },
       };
     }
     if (
@@ -1478,14 +1567,14 @@ export class AIOpsManager {
       const domainMatch = text.match(/([a-z0-9.-]+\.[a-z]{2,})/);
       return {
         toolName: "provision_ssl",
-        parameters: { domain: domainMatch ? domainMatch[1] : "stirling-pdf.127.0.0.1.nip.io" },
+        parameters: { domain: domainMatch ? domainMatch[1] : "" },
       };
     }
 
     // 17. Add Domain
     if (text.includes("domain") || text.includes("hostname") || text.includes("url")) {
       const domainMatch = text.match(/([a-z0-9.-]+\.[a-z]{2,})/);
-      const proj = this.extractProjectName(text) || "stirling-pdf";
+      const proj = this.extractProjectName(text) || "";
       if (domainMatch) {
         return {
           toolName: "add_domain",
@@ -1520,7 +1609,7 @@ export class AIOpsManager {
       if (text.includes("mongo")) engine = "mongodb";
       if (text.includes("redis")) engine = "redis";
       const name = `${engine}-main`;
-      const proj = this.extractProjectName(text) || "stirling-pdf";
+      const proj = this.extractProjectName(text) || "";
       return {
         toolName: "provision_database",
         parameters: { projectName: proj, name, engine, sizeMb: 1024 },
@@ -1619,7 +1708,7 @@ export class AIOpsManager {
       return actionMatch[1];
     }
 
-    // Check 2,502+ app catalog map
+    // Check 2,500+ app catalog map
     if (this.catalogMap) {
       for (const word of text.split(/\s+/)) {
         const clean = word.toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -1759,7 +1848,7 @@ export class AIOpsManager {
     }
 
     if (toolName === "restart_project") {
-      return `⚡ **Container Restarted:** \`hx_${parameters.projectName}\` has been restarted and is passing health checks.`;
+      return `⚡ **Restarted:** \`${parameters.projectName}\` has been restarted.`;
     }
 
     if (toolName === "scale_to_zero") {
@@ -2036,21 +2125,29 @@ export class AIOpsManager {
     const totalMem = os.totalmem();
     const freeMem = os.freemem();
     const usedMem = totalMem - freeMem;
-    const projects = this.db.prepare("SELECT * FROM projects").all();
-    const running = projects.filter((p) => p.status === "running").length;
+    const projects = this.db
+      .prepare("SELECT status FROM projects WHERE COALESCE(status,'') <> 'archived'")
+      .all();
+    let diskPercent = null;
+    try {
+      const st = fs.statfsSync(os.homedir());
+      diskPercent = Math.round((1 - st.bavail / st.blocks) * 100);
+    } catch {}
+    const cores = os.cpus().length || 1;
 
     return {
       platform: os.platform(),
       arch: os.arch(),
       uptime: os.uptime(),
-      cpuLoad: Math.min(100, Math.round((os.loadavg()[0] || 0.1) * 20)),
+      cpuLoad: Math.min(100, Math.round(((os.loadavg()[0] || 0) / cores) * 100)),
       totalMemoryMb: Math.round(totalMem / 1024 / 1024),
       usedMemoryMb: Math.round(usedMem / 1024 / 1024),
       freeMemoryMb: Math.round(freeMem / 1024 / 1024),
       memoryPercent: Math.round((usedMem / totalMem) * 100),
-      diskPercent: 87,
+      diskPercent,
+      dockerDaemon: this.selfHeal?.daemonHealthy ? "online" : "offline",
       projectCount: projects.length,
-      runningCount: running,
+      runningCount: projects.filter((p) => p.status === "running").length,
     };
   }
 
@@ -2076,66 +2173,39 @@ export class AIOpsManager {
   }
 
   async toolGetProjectLogs(projectName, lines = 50) {
-    const cleanName = projectName.trim().toLowerCase();
-    try {
-      const { execSync } = await import("node:child_process");
-      const logs = execSync(`docker logs --tail ${lines} hx_${cleanName}`, {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      return { projectName: cleanName, lines, logs };
-    } catch (e) {
-      return { projectName: cleanName, lines, logs: e.stdout || e.stderr || "No logs available." };
-    }
+    const name = this.resolveProjectName(projectName);
+    const logs = await this.lifecycle.runtimeLogs(name, lines);
+    return { projectName: name, lines, logs: logs || "No logs available." };
   }
 
   async toolRestartProject(projectName) {
-    const cleanName = projectName.trim().toLowerCase();
-    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
-    try {
-      const { execSync } = await import("node:child_process");
-      execSync(`docker restart hx_${containerSlug}`, { stdio: "ignore" });
-    } catch {
-      // fallback
-    }
-    this.db
-      .prepare("UPDATE projects SET status='running', updated_at=? WHERE name=? OR slug=?")
-      .run(Date.now(), cleanName, cleanName);
-    return { projectName: cleanName, status: "running", restartedAt: Date.now() };
+    const name = this.resolveProjectName(projectName);
+    const res = await this.lifecycle.restart(name);
+    if (!res.ok) throw new Error(res.error || "restart failed");
+    return { projectName: name, ...res };
   }
 
   async toolStopProject(projectName) {
-    const cleanName = projectName.trim().toLowerCase();
-    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
-    try {
-      const { execSync } = await import("node:child_process");
-      execSync(`docker stop hx_${containerSlug}`, { stdio: "ignore" });
-    } catch {}
-    this.db
-      .prepare("UPDATE projects SET status='stopped', updated_at=? WHERE name=? OR slug=?")
-      .run(Date.now(), cleanName, cleanName);
-    return { projectName: cleanName, status: "stopped" };
+    const name = this.resolveProjectName(projectName);
+    const res = await this.lifecycle.stop(name);
+    if (!res.ok) throw new Error(res.error || "stop failed");
+    return { projectName: name, ...res };
   }
 
   async toolStartProject(projectName) {
-    const cleanName = projectName.trim().toLowerCase();
-    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
-    try {
-      const { execSync } = await import("node:child_process");
-      execSync(`docker start hx_${containerSlug}`, { stdio: "ignore" });
-    } catch {}
-    this.db
-      .prepare("UPDATE projects SET status='running', updated_at=? WHERE name=? OR slug=?")
-      .run(Date.now(), cleanName, cleanName);
-    return { projectName: cleanName, status: "running" };
+    const name = this.resolveProjectName(projectName);
+    const res = await this.lifecycle.start(name);
+    if (!res.ok) throw new Error(res.error || "start failed");
+    return { projectName: name, ...res };
   }
 
   async toolDeployProject(projectName, environment = "production", image = null) {
-    const cleanName = projectName.trim().toLowerCase();
-    const deploymentId = `d_${crypto.randomBytes(4).toString("hex")}`;
-    const now = Date.now();
+    const requested = String(projectName || "")
+      .trim()
+      .toLowerCase();
+    if (!/^[a-z0-9][a-z0-9_.\-/:]{0,127}$/.test(requested)) throw new Error("Invalid project name");
 
-    // Comprehensive registry of curated self-hosted & cloud apps
+    // Known self-hosted apps resolve to a curated image; a full image reference is used as given.
     const templateImages = {
       "it-tools": "corentinth/it-tools:latest",
       "stirling-pdf": "frooodle/s-pdf:latest",
@@ -2145,108 +2215,58 @@ export class AIOpsManager {
       wordpress: "wordpress:latest",
       ghost: "ghost:latest",
       n8n: "n8nio/n8n:latest",
-      plausible: "plausible/analytics:latest",
       redis: "redis:alpine",
       postgres: "postgres:16-alpine",
       mysql: "mysql:8.0",
       mongo: "mongo:7.0",
       mongodb: "mongo:7.0",
       ollama: "ollama/ollama:latest",
-      libretranslate: "libretranslate/libretranslate:latest",
-      whisper: "onerahmet/openai-whisper-asr-webservice:latest",
       qdrant: "qdrant/qdrant:latest",
-      chromadb: "chromadb/chroma:latest",
       minio: "minio/minio:latest",
-      meilisearch: "getmeili/meilisearch:latest",
       grafana: "grafana/grafana:latest",
       prometheus: "prom/prometheus:latest",
       searxng: "searxng/searxng:latest",
-      nocodb: "nocodb/nocodb:latest",
-      pocketbase: "ghcr.io/muchobien/pocketbase:latest",
-      strapi: "strapi/strapi:latest",
-      directus: "directus/directus:latest",
-      affine: "ghcr.io/toeverything/affine:latest",
-      penpot: "penpotapp/frontend:latest",
-      rustdesk: "rustdesk/rustdesk-server:latest",
-      "paperless-ngx": "ghcr.io/paperless-ngx/paperless-ngx:latest",
-      photoprism: "photoprism/photoprism:latest",
-      immich: "ghcr.io/immich-app/immich-server:latest",
       metabase: "metabase/metabase:latest",
       wikijs: "requarks/wiki:latest",
     };
 
-    // If user passed a full Docker Hub / GHCR image or repo, use directly
-    let targetImage = image;
-    if (!targetImage) {
-      if (cleanName.includes("/") || cleanName.includes(":")) {
-        targetImage = cleanName;
-      } else {
-        targetImage = templateImages[cleanName] || `${cleanName}:latest`;
-      }
-    }
-
-    // Dynamic port allocation to guarantee zero collisions
-    const existingPorts = this.db
-      .prepare("SELECT port FROM projects WHERE port IS NOT NULL")
-      .all()
-      .map((r) => r.port);
-    let port = 8082;
-    while (existingPorts.includes(port)) {
-      port++;
-    }
-
-    const domain = `${cleanName.replace(/[^a-z0-9_-]/g, "-")}.127.0.0.1.nip.io`;
-
-    // Ensure record exists in database
-    const existing = this.db
-      .prepare("SELECT * FROM projects WHERE name=? OR slug=?")
-      .get(cleanName, cleanName);
-    if (!existing) {
-      try {
-        this.db
-          .prepare(
-            "INSERT INTO projects (name, slug, source, target, port, domain, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-          )
-          .run(cleanName, cleanName, targetImage, "docker", port, domain, "running", now, now);
-      } catch {
-        try {
-          this.db
-            .prepare("INSERT INTO projects (name, source, target, created_at) VALUES (?, ?, ?, ?)")
-            .run(cleanName, targetImage, "docker", now);
-        } catch {}
-      }
-    } else {
-      try {
-        this.db
-          .prepare(
-            "UPDATE projects SET status='running', port=?, domain=?, updated_at=? WHERE name=? OR slug=?",
-          )
-          .run(port, domain, now, cleanName, cleanName);
-      } catch {}
-    }
-
-    // Try starting docker container with sanitized container name
-    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
+    let existing = null;
     try {
-      const { execSync } = await import("node:child_process");
-      try {
-        execSync(`docker rm -f hx_${containerSlug}`, { stdio: "ignore" });
-      } catch {}
-      execSync(`docker run -d --name hx_${containerSlug} -p ${port}:80 ${targetImage}`, {
-        stdio: "ignore",
-      });
+      existing = this.resolveProjectName(requested);
     } catch {}
 
+    let name = existing;
+    if (!existing) {
+      const targetImage =
+        image ||
+        (requested.includes("/") || requested.includes(":")
+          ? requested
+          : templateImages[requested] ||
+            this.catalogMap.get(requested)?.image ||
+            `${requested}:latest`);
+      assertSafeImageRef(targetImage);
+      name =
+        requested
+          .split("/")
+          .pop()
+          .split(":")[0]
+          .replace(/[^a-z0-9_-]/g, "-") || "app";
+      this.projectsApi.applyBody(name, { source: targetImage, target: "docker" }, true);
+    } else if (image) {
+      assertSafeImageRef(image);
+      this.projectsApi.applyBody(existing, { source: image }, false);
+    }
+
+    const dep = await this.runDeployment(name, { trigger: "ai-copilot", environment });
+    const row = this.db.prepare("SELECT source FROM projects WHERE name=?").get(name);
     return {
-      projectName: cleanName,
-      deploymentId,
+      projectName: name,
+      deploymentId: dep.id,
+      version: dep.version,
       environment,
-      status: "running",
-      image: targetImage,
-      port,
-      domain,
-      lanUrl: `http://172.28.144.1:${port}`,
-      publicUrl: `http://${domain}`,
+      image: row?.source,
+      status: "queued",
+      message: "Deployment started. Ask for the project's logs to follow its progress.",
     };
   }
 
@@ -2256,33 +2276,62 @@ export class AIOpsManager {
   }
 
   async toolSetProjectEnv(projectName, env) {
-    const cleanName = projectName.trim().toLowerCase();
-    return { projectName: cleanName, updatedKeys: Object.keys(env) };
+    const name = this.resolveProjectName(projectName);
+    this.projectsApi.putEnv(name, env || {});
+    return {
+      projectName: name,
+      updatedKeys: Object.keys(env || {}),
+      note: "Redeploy or restart the project for the new variables to take effect.",
+    };
   }
 
   async toolAddDomain(projectName, hostname) {
-    const cleanName = projectName.trim().toLowerCase();
-    const domainId = `dom_${crypto.randomBytes(4).toString("hex")}`;
-    return { projectName: cleanName, domainId, hostname, sslStatus: "active" };
+    const name = this.resolveProjectName(projectName);
+    const host = normalizeDomain(hostname);
+    assertDomainAvailable(this.db, host, name);
+    const domainId = `dom_${crypto.randomBytes(6).toString("hex")}`;
+    const challenge = "hosterax-verify-" + crypto.randomBytes(12).toString("hex");
+    this.db
+      .prepare(
+        `INSERT INTO domains (id, project, hostname, verified, is_primary, ssl_status, ssl_expires_at, challenge_token, created_at)
+         VALUES (?,?,?,0,0,'none',NULL,?,?) ON CONFLICT(hostname) DO NOTHING`,
+      )
+      .run(domainId, name, host, challenge, Date.now());
+    await this.edgeManager?.syncRoutes?.().catch(() => {});
+    return {
+      projectName: name,
+      domainId,
+      hostname: host,
+      sslStatus: "none",
+      next: `Verify ownership: add a TXT record on _hosterax-challenge.${host} with value ${challenge} (or point the domain at this server), then run verify.`,
+    };
   }
 
   async toolCreateBackup(databaseName, dbType) {
-    return this.backupManager.createBackup(databaseName, dbType);
+    const managed = this.db.prepare("SELECT * FROM managed_dbs WHERE name=?").get(databaseName);
+    return this.backupManager.createBackup({
+      databaseName: managed?.name || databaseName,
+      dbType: managed?.engine || dbType || "volume",
+      projectName: managed?.project,
+      containerName: managed ? `hx_db_${managed.name}` : this.lifecycle.containerName(databaseName),
+    });
   }
 
   async toolProvisionDatabase(projectName, name, engine, sizeMb) {
-    return { projectName, name, engine, sizeMb: sizeMb || 1024, port: 5432, status: "running" };
+    const res = await this.provisionDatabase({
+      project: this.resolveProjectName(projectName),
+      name,
+      engine,
+      sizeMb,
+    });
+    if (!res.ok) throw new Error(res.error);
+    return res;
   }
 
   async toolDeleteProject(projectName) {
-    const cleanName = projectName.trim().toLowerCase();
-    const containerSlug = cleanName.replace(/[^a-z0-9_-]/g, "_");
-    try {
-      const { execSync } = await import("node:child_process");
-      execSync(`docker rm -f hx_${containerSlug}`, { stdio: "ignore" });
-    } catch {}
-    this.db.prepare("DELETE FROM projects WHERE name=? OR slug=?").run(cleanName, cleanName);
-    return { projectName: cleanName, deleted: true };
+    const name = this.resolveProjectName(projectName);
+    const res = await this.projectsApi.removeProject(name, true);
+    return { projectName: name, deleted: true, ...res };
   }
 
   async toolListBackups(databaseName) {
@@ -2293,10 +2342,7 @@ export class AIOpsManager {
   }
 
   async toolRestoreBackup(backupId) {
-    if (this.backupManager?.restoreBackup) {
-      return this.backupManager.restoreBackup(backupId);
-    }
-    return { backupId, status: "restored", restoredAt: Date.now() };
+    return this.backupManager.restoreBackup(backupId);
   }
 
   async toolListCronJobs() {
@@ -2322,33 +2368,32 @@ export class AIOpsManager {
   }
 
   async toolListMailboxes() {
-    return this.db
-      .prepare(
-        "SELECT id, email, domain, quota_mb, used_bytes, status, is_active FROM mailboxes ORDER BY created_at DESC",
-      )
-      .all();
+    return this.emailManager.listMailboxes();
   }
 
   async toolCreateMailbox(email, password, quotaMb = 5120) {
-    const domain = email.split("@")[1] || "hosterax.local";
-    const id = `mb_${crypto.randomBytes(4).toString("hex")}`;
-    const now = Date.now();
-    this.db
-      .prepare(
-        "INSERT INTO mailboxes (id, email, domain, password_hash, quota_mb, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(id, email, domain, "hashed_pw", quotaMb, now, now);
-    return { id, email, domain, quotaMb, status: "active" };
+    const domainName = String(email || "")
+      .split("@")[1]
+      ?.toLowerCase();
+    const domain = this.emailManager.listDomains().find((d) => d.domain === domainName);
+    if (!domain)
+      throw new Error(`No email domain registered for '${domainName}'. Add the domain first.`);
+    return this.emailManager.createMailbox({
+      domain_id: domain.id,
+      email,
+      name: String(email).split("@")[0],
+      password: password || "",
+      quota_mb: quotaMb,
+    });
   }
 
-  async toolVerifyMailDns(domain = "hosterax.local") {
-    return {
-      domain,
-      mx: { status: "valid", target: `mail.${domain}`, priority: 10 },
-      spf: { status: "valid", record: "v=spf1 mx ~all" },
-      dkim: { status: "valid", selector: "default", keySize: 2048 },
-      dmarc: { status: "valid", policy: "quarantine" },
-    };
+  async toolVerifyMailDns(domain) {
+    const domains = this.emailManager.listDomains();
+    const dom = domain
+      ? domains.find((d) => d.domain === String(domain).toLowerCase())
+      : domains[0];
+    if (!dom) throw new Error(`Email domain '${domain}' is not registered`);
+    return this.emailManager.verifyLiveDns(dom.id);
   }
 
   async toolListS3Buckets() {
@@ -2368,109 +2413,109 @@ export class AIOpsManager {
   }
 
   async toolListTeamMembers() {
-    if (this.orgManager?.listMembers) {
-      return this.orgManager.listMembers();
-    }
-    return this.db
-      .prepare("SELECT id, email, name, role, status, created_at FROM org_members")
-      .all();
+    const org = this.orgManager.listOrganizations()[0];
+    return org ? this.orgManager.listMembers(org.id) : [];
   }
 
   async toolInviteTeamMember(email, role = "member") {
-    if (this.orgManager?.inviteMember) {
-      return this.orgManager.inviteMember({ email, role });
-    }
-    const id = `mem_${crypto.randomBytes(4).toString("hex")}`;
-    return { id, email, role, status: "invited" };
+    const org = this.orgManager.listOrganizations()[0];
+    if (!org) throw new Error("No organization exists yet");
+    return this.orgManager.createInvite(org.id, { email, role });
   }
 
   async toolUpdateMemberRole(memberId, role) {
-    if (this.orgManager?.updateMemberRole) {
-      return this.orgManager.updateMemberRole(memberId, role);
-    }
-    this.db.prepare("UPDATE org_members SET role=? WHERE id=?").run(role, memberId);
-    return { memberId, role, updated: true };
+    const org = this.orgManager.listOrganizations()[0];
+    if (!org) throw new Error("No organization exists yet");
+    return this.orgManager.updateMemberRole(org.id, memberId, role);
   }
 
   async toolListAppTemplates(query = "", category = "all") {
-    return [
-      {
-        id: "nextcloud",
-        name: "Nextcloud Hub",
-        category: "productivity",
-        description: "Self-hosted productivity platform",
-      },
-      {
-        id: "wordpress",
-        name: "WordPress",
-        category: "cms",
-        description: "Web publishing platform",
-      },
-      {
-        id: "vaultwarden",
-        name: "Vaultwarden",
-        category: "security",
-        description: "Lightweight Bitwarden password manager",
-      },
-      {
-        id: "ghost",
-        name: "Ghost CMS",
-        category: "cms",
-        description: "Modern publishing platform",
-      },
-      {
-        id: "n8n",
-        name: "n8n Workflow Automation",
-        category: "developer",
-        description: "Fair-code workflow automation",
-      },
-      {
-        id: "uptime-kuma",
-        name: "Uptime Kuma",
-        category: "monitoring",
-        description: "Self-hosted monitoring tool",
-      },
-    ];
+    const q = String(query || "")
+      .toLowerCase()
+      .trim();
+    const cat = String(category || "all").toLowerCase();
+    return catalogApps
+      .filter(
+        (a) =>
+          (cat === "all" ||
+            String(a.category || "")
+              .toLowerCase()
+              .includes(cat)) &&
+          (!q || `${a.name} ${a.desc || ""} ${a.category || ""}`.toLowerCase().includes(q)),
+      )
+      .slice(0, 25)
+      .map((a) => ({
+        id: a.id,
+        name: a.name,
+        category: a.category,
+        description: a.desc,
+        image: a.image,
+        port: a.port,
+      }));
   }
 
   async toolCheckDns(domain) {
+    const host = normalizeDomain(domain);
+    const [a, aaaa, cname] = await Promise.all([
+      dns.resolve4(host).catch(() => []),
+      dns.resolve6(host).catch(() => []),
+      dns.resolveCname(host).catch(() => []),
+    ]);
     return {
-      domain,
-      aRecord: "127.0.0.1",
-      cname: domain.includes("nip.io") ? "nip.io" : null,
-      status: "resolved",
-      propagation: "100%",
+      domain: host,
+      aRecords: a,
+      aaaaRecords: aaaa,
+      cname,
+      status: a.length || aaaa.length || cname.length ? "resolved" : "unresolved",
     };
   }
 
   async toolProvisionSsl(domain) {
-    return {
-      domain,
-      provider: "Let's Encrypt / Caddy ACME",
-      status: "issued",
-      expiresInDays: 90,
-      autoRenew: true,
-    };
+    const host = normalizeDomain(domain);
+    const row = this.db.prepare("SELECT id FROM domains WHERE LOWER(hostname)=?").get(host);
+    if (!row) throw new Error(`Domain '${host}' is not attached to any project. Add it first.`);
+    const dnsRes = await this.tlsManager.verifyDomainDns(row.id);
+    if (!dnsRes.verified) throw new Error(dnsRes.message);
+    const res = await this.tlsManager.provisionAcmeSsl(
+      row.id,
+      this.edgeManager.getSettings().provider,
+    );
+    await this.edgeManager.syncRoutes().catch(() => {});
+    return res;
   }
 
   async toolFlushCaddyConfig() {
-    return { status: "reloaded", edgeProxy: "Caddy 2", timestamp: Date.now() };
+    const res = await this.edgeManager.syncRoutes();
+    return {
+      provider: this.edgeManager.getSettings().provider,
+      synced: true,
+      result: res,
+      timestamp: Date.now(),
+    };
   }
 
   async toolReclaimIdleMemory() {
-    const projects = this.db.prepare("SELECT name, slug FROM projects").all();
+    const projects = this.db
+      .prepare(
+        "SELECT name FROM projects WHERE COALESCE(status,'') NOT IN ('archived') AND COALESCE(enabled,1)=1",
+      )
+      .all();
     for (const p of projects) {
       this.scaleToZero.setConfig(p.name, { enabled: true, idleTimeoutMinutes: 5 });
     }
     return {
-      reclaimedMb: 1420,
+      projectsConfigured: projects.length,
       message:
-        "Scale-to-Zero activated across all projects. Inactive containers put into deep sleep.",
+        "Scale-to-Zero (5 min idle timeout) enabled for all active projects. Memory is released as each project goes idle and is restored on the next request.",
     };
   }
 
   async toolSwitchEdgeProvider(provider) {
-    return this.edgeManager.setProvider(provider);
+    if (!["caddy", "openresty", "external"].includes(provider))
+      throw new Error("provider must be caddy, openresty or external");
+    const settings = this.edgeManager.updateSettings({ provider });
+    await this.edgeManager.syncRoutes().catch(() => {});
+    return settings;
   }
 
   async toolListPrPreviews(projectName) {
@@ -2481,41 +2526,14 @@ export class AIOpsManager {
   }
 
   async toolCreatePrPreview(projectName, prNumber = 1, branch = "staging") {
-    const cleanName = projectName ? projectName.trim().toLowerCase() : "stirling-pdf";
-    const previewDomain = `pr-${prNumber}-${cleanName}.127.0.0.1.nip.io`;
-    const port = 8085;
-    const now = Date.now();
-    try {
-      this.db
-        .prepare(
-          `INSERT INTO pr_previews (id, project_name, pr_number, pr_title, branch, commit_sha, status, port, domain, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at`,
-        )
-        .run(
-          `prev_${prNumber}_${cleanName}`,
-          cleanName,
-          prNumber,
-          `PR #${prNumber} Preview`,
-          branch,
-          "HEAD",
-          port,
-          previewDomain,
-          now,
-          now,
-        );
-    } catch {}
-
-    return {
-      projectName: cleanName,
-      prNumber,
+    const name = this.resolveProjectName(projectName);
+    return this.webhookManager.provisionPreview({
+      project: name,
+      prNumber: Number(prNumber) || 1,
+      prTitle: `PR #${prNumber} Preview`,
       branch,
-      status: "ready",
-      domain: previewDomain,
-      publicUrl: `http://${previewDomain}`,
-      lanUrl: `http://172.28.144.1:${port}`,
-      scaleToZero: "Active (Auto-sleeps after 10m idle)",
-    };
+      commitSha: "HEAD",
+    });
   }
 
   async toolDeletePrPreview(previewId) {
@@ -2529,7 +2547,7 @@ export class AIOpsManager {
   }
 
   async toolGetWebhookConfig(projectName) {
-    const cleanName = projectName?.trim().toLowerCase() || "stirling-pdf";
+    const cleanName = this.resolveProjectName(projectName);
     if (this.webhookManager?.getProjectWebhookConfig) {
       const cfg = this.webhookManager.getProjectWebhookConfig(cleanName);
       return {
@@ -2551,7 +2569,7 @@ export class AIOpsManager {
   }
 
   async toolGetServiceMetrics(projectName) {
-    const clean = projectName ? projectName.trim().toLowerCase() : "stirling-pdf";
+    const clean = this.resolveProjectName(projectName);
     if (this.metricsManager?.getServiceMetrics) {
       return this.metricsManager.getServiceMetrics(clean);
     }
@@ -2564,7 +2582,7 @@ export class AIOpsManager {
   }
 
   async toolSearchServiceLogs(projectName, query = "", level = "all", limit = 50) {
-    const clean = projectName ? projectName.trim().toLowerCase() : "stirling-pdf";
+    const clean = this.resolveProjectName(projectName);
     if (this.metricsManager?.searchLogs) {
       return this.metricsManager.searchLogs(clean, { query, level, limit });
     }
@@ -2585,7 +2603,7 @@ export class AIOpsManager {
   }
 
   async toolSetAlertRule(projectName, metricType = "memory", threshold = 85) {
-    const clean = projectName ? projectName.trim().toLowerCase() : "stirling-pdf";
+    const clean = this.resolveProjectName(projectName);
     if (this.metricsManager?.setAlertRule) {
       return this.metricsManager.setAlertRule(clean, metricType, threshold);
     }
@@ -2600,8 +2618,8 @@ export class AIOpsManager {
   }
 
   async toolDockerExec(projectName, cmd) {
-    const clean = projectName ? projectName.trim().toLowerCase() : "stirling-pdf";
-    const containerName = `hx_${clean.replace(/[^a-z0-9_-]/g, "_")}`;
+    const clean = this.resolveProjectName(projectName);
+    const containerName = this.lifecycle.containerName(clean);
     if (this.dockerApi?.execCommand) {
       try {
         const res = await this.dockerApi.execCommand(containerName, cmd);
@@ -2613,27 +2631,26 @@ export class AIOpsManager {
     return { projectName: clean, cmd, exitCode: 0, output: "Docker API client ready" };
   }
 
-  async toolDockerUpdate(projectName, memoryMb = 1024, cpus = 2) {
-    const clean = projectName ? projectName.trim().toLowerCase() : "stirling-pdf";
-    const containerName = `hx_${clean.replace(/[^a-z0-9_-]/g, "_")}`;
-    const resources = {
-      Memory: Number(memoryMb) * 1048576,
-      NanoCPUs: Math.round(Number(cpus) * 1e9),
-    };
-    if (this.dockerApi?.updateContainer) {
-      try {
-        await this.dockerApi.updateContainer(containerName, resources);
-        return { projectName: clean, memoryMb, cpus, updated: true };
-      } catch (e) {
-        return { projectName: clean, memoryMb, cpus, updated: false, error: e.message };
-      }
+  async toolDockerUpdate(projectName, memoryMb = 1024, cpus) {
+    const clean = this.resolveProjectName(projectName);
+    const containerName = this.lifecycle.containerName(clean);
+    const resources = {};
+    if (memoryMb) {
+      resources.Memory = Math.round(Number(memoryMb) * 1048576);
+      resources.MemorySwap = resources.Memory * 2; // docker rejects Memory > MemorySwap
     }
-    return { projectName: clean, memoryMb, cpus, updated: true };
+    if (cpus) resources.NanoCPUs = Math.round(Number(cpus) * 1e9);
+    try {
+      await this.dockerApi.updateContainer(containerName, resources);
+      return { projectName: clean, memoryMb, cpus: cpus ?? null, updated: true };
+    } catch (e) {
+      throw new Error(`Could not update container resources: ${e.message}`);
+    }
   }
 
   async toolDockerInspect(projectName) {
-    const clean = projectName ? projectName.trim().toLowerCase() : "stirling-pdf";
-    const containerName = `hx_${clean.replace(/[^a-z0-9_-]/g, "_")}`;
+    const clean = this.resolveProjectName(projectName);
+    const containerName = this.lifecycle.containerName(clean);
     if (this.dockerApi?.inspectContainer) {
       try {
         const raw = await this.dockerApi.inspectContainer(containerName);

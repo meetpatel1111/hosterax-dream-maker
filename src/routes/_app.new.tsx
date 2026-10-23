@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState, useId } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
+import { createTarGz } from "@/lib/tar";
 import { useEngine, useEngineHealth } from "@/lib/engine";
 import { STACKS, REGIONS, TARGETS, WORKSPACES, StackDef } from "@/lib/stacks";
 import {
@@ -41,7 +42,7 @@ export const Route = createFileRoute("/_app/new")({
       {
         name: "description",
         content:
-          "Deploy from Git repository, local folder upload, public URL archive, CLI push, starter templates, or 2,550+ one-click Docker apps.",
+          "Deploy from Git repository, local folder upload, public URL archive, CLI push, starter templates, or 2,500+ one-click Docker apps.",
       },
     ],
   }),
@@ -130,7 +131,10 @@ function NewProject() {
   const [repo, setRepo] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [branch, setBranch] = useState("main");
-  const [folderPath, setFolderPath] = useState("./");
+  const [folderPath, setFolderPath] = useState("");
+  // Files chosen in the browser: uploaded to the engine when the project is created.
+  const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
+  const [pendingArchive, setPendingArchive] = useState<File | null>(null);
   const [stack, setStack] = useState("auto");
   const [region, setRegion] = useState("local");
   const [target, setTarget] = useState<"docker" | "process" | "ssh">("process");
@@ -191,11 +195,20 @@ function NewProject() {
 
     let source = overrides?.source;
     if (!source) {
-      if (tab === "git") source = repo || "https://github.com/vercel/next-learn";
-      else if (tab === "url") source = sourceUrl || "https://github.com/org/repo.git";
-      else if (tab === "upload") source = folderPath || "./";
-      else if (tab === "cli") source = "./";
-      else source = "./";
+      if (tab === "git") source = repo.trim();
+      else if (tab === "url") source = sourceUrl.trim();
+      else if (tab === "upload") source = folderPath.trim();
+      else source = "";
+      const needsSource = tab === "git" || tab === "url" || tab === "upload";
+      const hasUpload = tab === "upload" && (pendingFiles?.length || pendingArchive);
+      if (needsSource && !source && !hasUpload) {
+        setBusy(false);
+        return toast.error(
+          tab === "upload"
+            ? "Choose a folder or archive to upload, or enter a path on the engine host"
+            : "Enter the repository / archive URL to deploy from",
+        );
+      }
     }
 
     const envMap: Record<string, string> = {};
@@ -203,31 +216,76 @@ function NewProject() {
       if (row.key.trim()) envMap[row.key.trim()] = row.value;
     }
 
-    try {
-      // 1. Create on Local SQLite Engine
-      await engine.call("POST", "/api/projects", {
-        name: finalName,
-        source,
-        buildCmd: customBuild || stackDef?.build || "",
-        startCmd: customStart || stackDef?.start || "",
-        target: chosenTarget === "ssh" ? "ssh" : chosenTarget === "docker" ? "docker" : "process",
-        port: overrides?.port || effectivePort,
-        env: envMap,
-      });
+    const apiTarget = chosenTarget === "docker" ? "docker" : "process";
+    const buildCmd = customBuild || stackDef?.build || "";
+    const startCmd = customStart || stackDef?.start || "";
 
-      // Trigger immediate build & deploy if source is provided
-      if (source && source !== "./") {
+    try {
+      let deployNow = Boolean(source);
+
+      if (tab === "upload" && !overrides?.source && (pendingFiles?.length || pendingArchive)) {
+        // 1. open an upload session, 2. stream the archive, 3. let the engine unpack + detect the stack
+        const session = await engine.call<{ sessionId: string; upload: { url: string } }>(
+          "POST",
+          "/api/projects/folder/session",
+          { name: finalName },
+        );
+        let blob: Blob;
+        let type = "application/gzip";
+        if (pendingFiles?.length) {
+          const tar = await createTarGz(pendingFiles);
+          if (tar.files === 0) throw new Error("The selected folder has no uploadable files");
+          if (tar.blob.size > 300 * 1024 * 1024) throw new Error("Upload exceeds the 300 MB limit");
+          blob = tar.blob;
+          if (tar.skipped)
+            toast.info(`Skipped ${tar.skipped} files (node_modules, .git, build output)`);
+        } else {
+          blob = pendingArchive as File;
+          if (/\.zip$/i.test((pendingArchive as File).name)) type = "application/zip";
+        }
+        toast.info("Uploading project…");
+        await engine.upload(session.upload.url, blob, type);
+        const scan = await engine.call<{ root: string }>(
+          "POST",
+          `/api/projects/folder/scan/${session.sessionId}`,
+        );
+        await engine.call("POST", "/api/projects/import", {
+          path: scan.root,
+          name: finalName,
+          target: apiTarget,
+          ...(buildCmd ? { buildCmd } : {}),
+          ...(startCmd ? { startCmd } : {}),
+          port: overrides?.port || effectivePort,
+          env: envMap,
+        });
+        deployNow = true;
+      } else {
+        // Create on the engine
+        await engine.call("POST", "/api/projects", {
+          name: finalName,
+          source: source || "",
+          buildCmd,
+          startCmd,
+          target: apiTarget,
+          port: overrides?.port || effectivePort,
+          env: envMap,
+          ...(tab === "git" || tab === "url" ? { gitBranch: branch } : {}),
+        });
+      }
+
+      // Trigger immediate build & deploy if there is something to build
+      if (deployNow) {
         try {
           await engine.call("POST", `/api/projects/${finalName}/deploy`, {
             trigger: tab,
           });
-        } catch {}
+        } catch (e: any) {
+          toast.warning(`Project created, but the deployment could not start: ${e.message}`);
+        }
       }
 
       toast.success(
-        source !== "./"
-          ? "✨ Project created & deployment started!"
-          : "✨ Project created successfully!",
+        deployNow ? "✨ Project created & deployment started!" : "✨ Project created successfully!",
       );
       nav({ to: "/p/$slug", params: { slug } });
     } catch (err: any) {
@@ -243,7 +301,7 @@ function NewProject() {
     { id: "url", label: "From URL", icon: Link2 },
     { id: "cli", label: "CLI Push", icon: TerminalSquare },
     { id: "template", label: "Starter Templates", icon: Layers, badge: "12+" },
-    { id: "one-click", label: "1-Click Apps", icon: Container, badge: "2,550+" },
+    { id: "one-click", label: "1-Click Apps", icon: Container, badge: "2,500+" },
   ];
 
   return (
@@ -482,10 +540,12 @@ function NewProject() {
                             if (e.target.files && e.target.files.length > 0) {
                               const dir =
                                 e.target.files[0].webkitRelativePath?.split("/")[0] || "my-app";
-                              setName(dir);
-                              setFolderPath(`./${dir}`);
+                              setName((n) => n || dir);
+                              setPendingFiles(Array.from(e.target.files));
+                              setPendingArchive(null);
+                              setFolderPath("");
                               toast.success(
-                                `Selected directory: ${dir} (${e.target.files.length} files)`,
+                                `Selected directory: ${dir} (${e.target.files.length} files) — it is uploaded when you create the project`,
                               );
                             }
                           }}
@@ -501,7 +561,10 @@ function NewProject() {
                             if (e.target.files && e.target.files.length > 0) {
                               const f = e.target.files[0];
                               const base = f.name.replace(/\.(zip|tar\.gz|tar|tgz)$/, "");
-                              setName(base);
+                              setName((n) => n || base);
+                              setPendingArchive(f);
+                              setPendingFiles(null);
+                              setFolderPath("");
                               toast.success(`Selected archive: ${f.name}`);
                             }
                           }}
@@ -657,8 +720,9 @@ function NewProject() {
                     className={inputCls}
                   >
                     {TARGETS.map((t) => (
-                      <option key={t.id} value={t.id}>
+                      <option key={t.id} value={t.id} disabled={t.id === "ssh"}>
                         {t.icon} {t.name}
+                        {t.id === "ssh" ? " — coming soon" : ""}
                       </option>
                     ))}
                   </select>

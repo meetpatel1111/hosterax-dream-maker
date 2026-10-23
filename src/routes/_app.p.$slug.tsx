@@ -25,8 +25,6 @@ import {
   ArrowLeft,
   Copy,
   ExternalLink,
-  Eye,
-  EyeOff,
   GitBranch,
   Globe,
   Plus,
@@ -501,9 +499,8 @@ function DeploymentsTab({ projectId, projectName }: { projectId: string; project
     )
       return;
     try {
-      await engine.call("POST", `/api/projects/${projectName}/deploy`, {
-        trigger: "rollback",
-      });
+      // Replays this exact deployment (its working copy + frozen build settings) as a new release.
+      await engine.call("POST", `/api/deployments/${dep.id}/rollback`);
       toast.success("Rollback queued");
       qc.invalidateQueries({ queryKey: ["deployments-merged"] });
     } catch (e: any) {
@@ -760,6 +757,8 @@ function LiveLogs({ projectName }: { projectName: string }) {
   );
 }
 
+type EnvRow = { key: string; value: string; isSecret: boolean };
+
 function EnvVars({ projectId, projectName }: { projectId: string; projectName: string }) {
   const engine = useEngine();
   const qc = useQueryClient();
@@ -767,21 +766,10 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
     queryKey: ["envs", projectName, engine.url],
     queryFn: async () => {
       try {
-        const engEnv = await engine.call<any>("GET", `/api/projects/${projectName}/env`);
-        if (engEnv && typeof engEnv === "object") {
-          return Object.entries(engEnv).map(([k, v]) => ({
-            id: `env-${k}`,
-            key: k,
-            value: String(v),
-            is_secret:
-              k.toLowerCase().includes("secret") ||
-              k.toLowerCase().includes("key") ||
-              k.toLowerCase().includes("token") ||
-              k.toLowerCase().includes("pass"),
-          }));
-        }
-      } catch {}
-      return [];
+        return (await engine.call<EnvRow[]>("GET", `/api/projects/${projectName}/env`)) ?? [];
+      } catch {
+        return [] as EnvRow[];
+      }
     },
     refetchInterval: 5000,
   });
@@ -789,34 +777,26 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
   const [secret, setSecret] = useState(true);
-  const [reveal, setReveal] = useState<Record<string, boolean>>({});
 
-  async function add() {
-    if (!key.trim()) return;
-    const cleanKey = key.trim();
-
+  async function save(body: { upserts?: unknown[]; deletes?: string[] }, okMsg: string) {
     try {
-      await engine.call("POST", `/api/projects/${projectName}/env`, {
-        key: cleanKey,
-        value,
-      });
-      toast.success(`Environment variable ${cleanKey} saved to database`);
-      setKey("");
-      setValue("");
+      await engine.call("PATCH", `/api/projects/${projectName}/env`, body);
+      toast.success(okMsg);
       qc.invalidateQueries({ queryKey: ["envs"] });
     } catch (e: any) {
-      toast.error(e.message || "Failed to add variable");
+      toast.error(e.message || "Failed to update variables");
     }
   }
 
-  async function del(vKey: string) {
-    try {
-      await engine.call("DELETE", `/api/projects/${projectName}/env/${vKey}`);
-      toast.success(`Variable ${vKey} removed from database`);
-      qc.invalidateQueries({ queryKey: ["envs"] });
-    } catch (e: any) {
-      toast.error(e.message || "Failed to delete variable");
-    }
+  async function add() {
+    const cleanKey = key.trim();
+    if (!cleanKey) return;
+    await save(
+      { upserts: [{ key: cleanKey, value, isSecret: secret }] },
+      `${cleanKey} saved — redeploy or restart for it to take effect`,
+    );
+    setKey("");
+    setValue("");
   }
 
   return (
@@ -826,7 +806,7 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
         <div className="flex flex-wrap gap-2">
           <input
             value={key}
-            onChange={(e) => setKey(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, ""))}
+            onChange={(e) => setKey(e.target.value.replace(/[^A-Za-z0-9_.-]/g, ""))}
             placeholder="KEY"
             className="flex-1 min-w-[160px] rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
           />
@@ -847,6 +827,9 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
             <Plus className="h-4 w-4" /> Add
           </button>
         </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Secret values are hidden after saving and can only be overwritten, not read back.
+        </p>
       </div>
       <div className="rounded-lg border border-border bg-card">
         {vars.length === 0 ? (
@@ -855,37 +838,25 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {vars.map((v: any) => (
-              <div key={v.id} className="flex items-center gap-3 p-3 font-mono text-sm">
+            {vars.map((v) => (
+              <div key={v.key} className="flex items-center gap-3 p-3 font-mono text-sm">
                 <span className="w-56 truncate text-primary font-semibold">{v.key}</span>
                 <span className="flex-1 truncate text-muted-foreground">
-                  {v.is_secret && !reveal[v.id]
-                    ? "•".repeat(Math.min(v.value?.length || 8, 16))
-                    : v.value}
+                  {v.isSecret ? "•••••••• (secret)" : v.value}
                 </span>
-                {v.is_secret && (
+                {!v.isSecret && (
                   <button
-                    onClick={() => setReveal({ ...reveal, [v.id]: !reveal[v.id] })}
+                    onClick={() => {
+                      navigator.clipboard.writeText(v.value);
+                      toast.success("Copied");
+                    }}
                     className="text-muted-foreground hover:text-foreground"
                   >
-                    {reveal[v.id] ? (
-                      <EyeOff className="h-3.5 w-3.5" />
-                    ) : (
-                      <Eye className="h-3.5 w-3.5" />
-                    )}
+                    <Copy className="h-3.5 w-3.5" />
                   </button>
                 )}
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(v.value);
-                    toast.success("Copied");
-                  }}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  onClick={() => del(v.key)}
+                  onClick={() => save({ deletes: [v.key] }, `${v.key} removed`)}
                   className="text-muted-foreground hover:text-destructive"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -1396,7 +1367,8 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
     }
   }, [config]);
 
-  const webhookUrl = `${engine.url}/api/projects/${projectName}/webhooks/github`;
+  // Public, HMAC-verified endpoint (GitHub cannot send a bearer token). Must be reachable from the internet.
+  const webhookUrl = `${engine.url}/webhooks/github/${projectName}`;
   const webhookSecret = config?.secret || "Generating...";
 
   async function handleSaveConfig() {

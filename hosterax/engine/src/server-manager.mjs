@@ -2,9 +2,12 @@
 // Multi-Node Compute Infrastructure & Remote VPS Management Subsystem for HosteraX
 // Supports agentless SSH management, automated Docker bootstrap, remote health polling, and local node supervision.
 
+import { encryptSecret, decryptSecret } from "./secrets.mjs";
+import { isSafeHostname } from "./security.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { spawnSync } from "./safe-exec.mjs";
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
@@ -108,10 +111,13 @@ export class ServerManager {
     const osInfo = `${os.type()} ${os.release()} (${os.arch()})`;
     const now = Date.now();
 
-    let dockerVer = "Docker Engine 27.x";
+    let dockerVer = "not detected";
     try {
+      // Runs while the engine boots, so it must be bounded: a hung Docker daemon cannot stall startup.
       const dRes = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
         encoding: "utf8",
+        timeout: 3000,
+        windowsHide: true,
       });
       if (dRes.stdout && dRes.stdout.trim()) {
         dockerVer = `Docker v${dRes.stdout.trim()}`;
@@ -160,9 +166,36 @@ export class ServerManager {
     }));
   }
 
+  /** Raw row including encrypted credentials — internal use only. */
+  _raw(id) {
+    return this.db.prepare("SELECT * FROM servers WHERE id=?").get(id);
+  }
+
+  /** Public view of a server: credentials are never returned. */
   getServer(id) {
     if (id === "local") this.refreshLocalMetrics();
-    return this.db.prepare("SELECT * FROM servers WHERE id=?").get(id);
+    const s = this._raw(id);
+    if (!s) return s;
+    return {
+      ...s,
+      private_key: s.private_key ? "••••••••••••" : "",
+      has_key: Boolean(s.private_key),
+      password: s.password ? "••••••••••••" : "",
+      has_password: Boolean(s.password),
+    };
+  }
+
+  /** Decrypted SSH credentials for the connection layer. */
+  getServerCredentials(id) {
+    const s = this._raw(id);
+    if (!s) return null;
+    return {
+      host: s.host,
+      port: s.port,
+      username: s.username,
+      privateKey: s.private_key ? decryptSecret(s.private_key) : "",
+      password: s.password ? decryptSecret(s.password) : "",
+    };
   }
 
   refreshLocalMetrics() {
@@ -180,11 +213,15 @@ export class ServerManager {
         }
         totalIdle += cpu.times.idle;
       }
-      const cpuUsage = Math.round(((totalTick - totalIdle) / totalTick) * 100) || 5;
+      const cpuUsage = Math.round(((totalTick - totalIdle) / totalTick) * 100) || 0;
 
       let contCount = 0;
       try {
-        const dCount = spawnSync("docker", ["ps", "-q"], { encoding: "utf8" });
+        const dCount = spawnSync("docker", ["ps", "-q"], {
+          encoding: "utf8",
+          timeout: 3000,
+          windowsHide: true,
+        });
         if (dCount.stdout) {
           contCount = dCount.stdout.trim().split("\n").filter(Boolean).length;
         }
@@ -207,6 +244,16 @@ export class ServerManager {
     const now = Date.now();
     const type =
       data.type || (data.host === "127.0.0.1" || data.host === "localhost" ? "local" : "remote");
+    if (!["local", "remote"].includes(type)) throw new Error("type must be 'local' or 'remote'");
+    const host = String(data.host || "").trim();
+    if (type === "remote") {
+      if (!host || !(isSafeHostname(host) || net.isIP(host)))
+        throw new Error("host must be a valid hostname or IP address");
+      const p = data.port ? Number(data.port) : 22;
+      if (!Number.isInteger(p) || p < 1 || p > 65535) throw new Error("port must be 1-65535");
+      if (data.username && !/^[a-z_][a-z0-9_-]{0,31}$/i.test(String(data.username).trim()))
+        throw new Error("username contains invalid characters");
+    }
 
     const record = {
       id,
@@ -216,13 +263,14 @@ export class ServerManager {
       port: data.port ? Number(data.port) : 22,
       username: (data.username || "root").trim(),
       auth_type: data.auth_type || "key",
-      private_key: (data.private_key || "").trim(),
-      password: (data.password || "").trim(),
+      private_key: encryptSecret((data.private_key || "").trim()) || "",
+      password: encryptSecret((data.password || "").trim()) || "",
       status: type === "local" ? "online" : "provisioning",
-      docker_version: type === "local" ? "Docker v27.x" : "Detecting...",
-      os_info: type === "local" ? `${os.type()} ${os.arch()}` : "Linux x86_64",
-      cpu_cores: type === "local" ? os.cpus().length : 2,
-      total_ram_mb: type === "local" ? Math.round(os.totalmem() / 1048576) : 4096,
+      // Remote specs are unknown until the node is reachable — never invent numbers.
+      docker_version: type === "local" ? "not detected" : null,
+      os_info: type === "local" ? `${os.type()} ${os.arch()}` : null,
+      cpu_cores: type === "local" ? os.cpus().length : null,
+      total_ram_mb: type === "local" ? Math.round(os.totalmem() / 1048576) : null,
       cpu_usage_pct: 0,
       ram_usage_pct: 0,
       disk_usage_pct: 0,
@@ -255,13 +303,18 @@ export class ServerManager {
   }
 
   updateServer(id, updates) {
-    const srv = this.getServer(id);
+    const srv = this._raw(id);
     if (!srv) throw new Error(`Server "${id}" not found.`);
 
     const now = Date.now();
+    const clean = { ...updates };
+    // Credentials are only replaced when a new, non-masked value is supplied.
+    const fresh = (v) => (v && !String(v).includes("•") ? encryptSecret(String(v).trim()) : null);
     const merged = {
       ...srv,
-      ...updates,
+      ...clean,
+      private_key: fresh(clean.private_key) ?? srv.private_key,
+      password: fresh(clean.password) ?? srv.password,
       updated_at: now,
     };
 
@@ -362,13 +415,15 @@ export class ServerManager {
    */
   getBootstrapScript(serverId) {
     const srv = this.getServer(serverId);
-    const token =
-      this.db.prepare("SELECT token FROM tokens LIMIT 1").get()?.token || "hosterax_node_token";
+    // The name ends up inside a bash script that an operator will run as root: keep it to a safe charset.
+    const nodeName = String(srv?.name || "Remote Compute Node")
+      .replace(/[^A-Za-z0-9 _.#:-]/g, "")
+      .slice(0, 80);
 
     return `#!/usr/bin/env bash
 # HosteraX Autonomous Node Provisioner
 set -e
-echo "==> [HosteraX] Provisioning node: ${srv?.name || "Remote Compute Node"}..."
+echo "==> [HosteraX] Provisioning node: ${nodeName}..."
 
 if ! command -v docker &> /dev/null; then
     echo "==> [HosteraX] Installing Docker Engine & Compose Plugin..."

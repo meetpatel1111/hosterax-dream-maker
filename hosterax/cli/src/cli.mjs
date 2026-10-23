@@ -3,8 +3,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
-import { WebSocket } from "undici";
+import { spawn, spawnSync } from "node:child_process";
 
 import { fileURLToPath } from "node:url";
 
@@ -78,7 +77,7 @@ async function startEngineAndOpenDashboard(port = 7777, shouldOpen = true) {
       console.log(`\n======================================================`);
       console.log(`  🚀 HosteraX Cloud Control Plane is Live!`);
       console.log(`  🌐 Web Dashboard:  ${url}`);
-      console.log(`  🤖 MCP Endpoint:   ${url}/mcp`);
+      console.log(`  🤖 MCP Endpoint:   ${url}/api/mcp`);
       console.log(`  🛡️ Engine Daemon:  PID ${child.pid}`);
       console.log(`======================================================\n`);
       if (shouldOpen) {
@@ -99,16 +98,38 @@ function loadCfg() {
 }
 function saveCfg(c) {
   fs.mkdirSync(path.dirname(CFG), { recursive: true });
-  fs.writeFileSync(CFG, JSON.stringify(c, null, 2));
+  // The file holds an API token: owner-only permissions.
+  fs.writeFileSync(CFG, JSON.stringify(c, null, 2), { mode: 0o600 });
+  try {
+    fs.chmodSync(CFG, 0o600);
+  } catch {}
 }
 
-const cfg = loadCfg();
-async function api(method, pathname, body) {
-  const r = await fetch(cfg.url + pathname, {
-    method,
-    headers: { "content-type": "application/json", authorization: "Bearer " + cfg.token },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+const cfg = {
+  ...loadCfg(),
+  ...(process.env.HOSTERAX_URL ? { url: process.env.HOSTERAX_URL } : {}),
+};
+if (process.env.HOSTERAX_TOKEN) cfg.token = process.env.HOSTERAX_TOKEN;
+
+/** Low-level request: never exits the process, so long-lived modes (mcp:stdio) can survive errors. */
+async function request(method, pathname, body) {
+  const headers = { "content-type": "application/json" };
+  // Local engines trust loopback callers; only send a token when we have one.
+  if (cfg.token) headers.authorization = "Bearer " + cfg.token;
+  let r;
+  try {
+    r = await fetch(cfg.url + pathname, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    const err = new Error(
+      `Cannot reach the HosteraX engine at ${cfg.url} (${e.cause?.code || e.message}). Start it with: hosterax up`,
+    );
+    err.status = 0;
+    throw err;
+  }
   const txt = await r.text();
   let data;
   try {
@@ -117,10 +138,25 @@ async function api(method, pathname, body) {
     data = txt;
   }
   if (!r.ok) {
-    console.error("error:", data);
-    process.exit(1);
+    const err = new Error(typeof data === "object" && data?.error ? data.error : String(data));
+    err.status = r.status;
+    err.data = data;
+    throw err;
   }
   return data;
+}
+
+async function api(method, pathname, body) {
+  try {
+    return await request(method, pathname, body);
+  } catch (e) {
+    console.error("error:", e.message);
+    if (e.status === 401)
+      console.error(
+        "hint: authenticate with `hosterax login <token>` (the token is printed when the engine first starts).",
+      );
+    process.exit(1);
+  }
 }
 
 const [, , cmd, ...args] = process.argv;
@@ -195,7 +231,7 @@ function help() {
     ai "<prompt>" [--provider <name>] [--model <name>] Universal autonomous AI copilot (Claude, OpenAI, Ollama, Gemini)
     ai:key <apiKey> [--provider <name>]       Save AI provider API key in CLI config
     ai:model <modelName>                      Set default AI model (e.g. gemini-3.5-flash, gpt-4o, claude-3-5-sonnet)
-    catalog:search <query> [--category <cat>] Search 2,502+ open-source template apps
+    catalog:search <query> [--category <cat>] Search 2,500+ open-source template apps
     mcp                                       Run stdio MCP transport for AI IDEs (Cursor, Claude, Devin)
     mcp:tools                                 List all registered MCP tools
     mcp:call <toolName> [jsonArgs]            Execute MCP JSON-RPC tool directly
@@ -315,33 +351,6 @@ try {
       break;
     }
 
-    case "up": {
-      const port = flag("port") || process.env.HOSTERAX_PORT || 7777;
-      console.log(`Launching HosteraX engine on port ${port}...`);
-      try {
-        const health = await (await fetch(`http://localhost:${port}/health`)).json();
-        if (health.ok) {
-          console.log(
-            `✓ Engine already running on http://localhost:${port} (version ${health.version})`,
-          );
-          break;
-        }
-      } catch {}
-
-      const engineScript = path.resolve(__dirname, "../../engine/src/index.mjs");
-      if (fs.existsSync(engineScript)) {
-        spawn(process.execPath, ["--max-old-space-size=256", engineScript], {
-          detached: true,
-          stdio: "ignore",
-          env: { ...process.env, HOSTERAX_PORT: String(port) },
-        }).unref();
-        console.log(`✓ HosteraX daemon started in background on http://localhost:${port}`);
-      } else {
-        console.log(`Starting engine at http://localhost:${port}`);
-      }
-      break;
-    }
-
     case "login": {
       cfg.token = args[0];
       if (flag("url")) cfg.url = flag("url");
@@ -441,7 +450,7 @@ try {
         trigger: flag("trigger") || "cli",
       });
       console.log(`✓ Deployment queued: ${r.id} (version: ${r.version})`);
-      if (has("follow") || !has("no-follow")) await follow(r.id);
+      if (!has("no-follow")) await follow(r.id, false);
       break;
     }
 
@@ -565,7 +574,7 @@ try {
       }
       const r = await api("POST", `/api/deployments/${target}/rollback`);
       console.log(`✓ Rollback initiated: ${r.id}`);
-      await follow(r.id);
+      await follow(r.id, false);
       break;
     }
 
@@ -616,12 +625,14 @@ try {
         console.error("Usage: hosterax diagnose <projectName>");
         process.exit(1);
       }
-      const diag = await api("POST", "/api/diagnostics/crash", { projectName: name });
-      console.log(`\n╭─ AI Crash Diagnostics: ${name.padEnd(28)} ╮`);
-      console.log(`│ Status:      ${diag.status || "analyzed"} │`);
-      console.log(`│ Root Cause:  ${(diag.rootCause || "Unknown").slice(0, 36)} │`);
-      console.log(`│ Suggested:   ${(diag.suggestedFix || "Restart").slice(0, 36)} │`);
-      console.log(`╰───────────────────────────────────────────────────╯`);
+      const diag = await api("GET", `/api/projects/${encodeURIComponent(name)}/diagnostics`);
+      console.log(`\nDiagnostics for ${name}`);
+      console.log(
+        `  Fault type:  ${diag.fault_type || "none"}  (severity: ${diag.severity || "info"})`,
+      );
+      console.log(`  Root cause:  ${diag.root_cause || "Unknown"}`);
+      console.log(`  Suggested:   ${diag.suggested_action || "Nothing to do"}`);
+      if (diag.suggested_command) console.log(`  Command:     ${diag.suggested_command}`);
       break;
     }
 
@@ -702,7 +713,8 @@ try {
       }
       const r = await api("POST", `/api/databases/${target}/backup`);
       console.log(`✓ Snapshot ${r.id} created for ${r.database || target}`);
-      console.log(`  Size: ${r.size_mb || 0} MB | SHA256: ${(r.sha256 || "").slice(0, 16)}…`);
+      console.log(`  Size: ${r.sizeMb ?? 0} MB | SHA256: ${(r.sha256 || "").slice(0, 23)}…`);
+      if (r.s3Synced) console.log("  Replicated to S3");
       break;
     }
 
@@ -715,12 +727,12 @@ try {
       console.table(
         backups.map((b) => ({
           ID: b.id,
-          Database: b.db_name,
-          Engine: b.db_engine,
-          Project: b.project,
-          Size: `${b.size_mb} MB`,
+          Database: b.database_name,
+          Engine: b.db_type,
+          Project: b.project_name,
+          Size: `${b.sizeMb} MB`,
           Status: b.status,
-          Type: b.snapshot_type,
+          Where: b.destination,
           Created: new Date(b.created_at).toISOString(),
         })),
       );
@@ -814,10 +826,13 @@ try {
 
     case "edge:status": {
       const edge = await api("GET", "/api/edge/status");
-      console.log(`\n╭─ Managed Edge Gateway ────────────────────────╮`);
-      console.log(`│ Active Proxy:   ${(edge.provider || "Caddy 2").padEnd(30)} │`);
-      console.log(`│ Dynamic Routes: ${String(edge.routes_count || 0).padEnd(30)} │`);
-      console.log(`╰────────────────────────────────────────────────╯`);
+      console.log(`\nManaged Edge Gateway`);
+      console.log(`  Provider:     ${edge.provider}`);
+      console.log(`  Container:    ${edge.containerName} (${edge.containerStatus})`);
+      console.log(`  Ports:        http ${edge.httpPort} · https ${edge.httpsPort}`);
+      console.log(
+        `  Domains:      ${edge.totalDomains} (${edge.activeSslCertificates} with active SSL)`,
+      );
       break;
     }
 
@@ -832,9 +847,10 @@ try {
         srvs.map((s) => ({
           ID: s.id,
           Name: s.name,
+          Type: s.type,
           Host: s.host,
           Status: s.status,
-          Latency: s.latency_ms ? `${s.latency_ms}ms` : "—",
+          "Last ping": s.last_ping_at ? new Date(s.last_ping_at).toISOString() : "—",
         })),
       );
       break;
@@ -848,13 +864,16 @@ try {
       }
       const r = await api("POST", `/api/servers/${srvId}/test`);
       console.log(
-        r.ok ? `✓ Server reachable (${r.latency_ms}ms)` : `✗ Connection failed: ${r.error}`,
+        r.ok
+          ? `✓ ${r.message || "Server reachable"} (${r.latencyMs}ms)`
+          : `✗ Connection failed: ${r.message}`,
       );
+      if (!r.ok) process.exitCode = 1;
       break;
     }
 
     case "cron:list": {
-      const jobs = await api("GET", "/api/cron/jobs");
+      const jobs = await api("GET", "/api/jobs");
       if (!jobs || jobs.length === 0) {
         console.log("No cron jobs scheduled.");
         break;
@@ -863,8 +882,9 @@ try {
         jobs.map((j) => ({
           ID: j.id,
           Name: j.name,
-          Schedule: j.schedule,
-          Target: j.target_project || "system",
+          Schedule: j.cron_expression,
+          Type: j.job_type,
+          Target: j.project_name || "system",
           Enabled: j.enabled ? "✓" : "✗",
           LastRun: j.last_run_at ? new Date(j.last_run_at).toISOString() : "Never",
         })),
@@ -878,23 +898,47 @@ try {
         console.error("Usage: hosterax cron:run <jobId>");
         process.exit(1);
       }
-      const r = await api("POST", `/api/cron/jobs/${jobId}/run`);
-      console.log(`✓ Cron job execution triggered (exit code: ${r.exit_code ?? 0})`);
+      const r = await api("POST", `/api/jobs/${jobId}/run`);
+      console.log(
+        r.status === "success"
+          ? `✓ Job finished (exit ${r.exit_code ?? 0}, ${r.duration_ms ?? 0} ms)`
+          : `✗ Job ${r.status} (exit ${r.exit_code ?? "?"}): ${r.error_message || r.stderr || ""}`,
+      );
+      if (r.status !== "success") process.exitCode = 1;
       break;
     }
 
     case "s3:status": {
-      const s3 = await api("GET", "/api/storage/s3");
+      const s3 = await api("GET", "/api/backups/s3-config");
       console.log(`S3 Configured: ${s3.configured ? "✓ Yes" : "✗ No"}`);
       if (s3.configured) {
-        console.log(`Bucket: ${s3.bucket} (${s3.provider || "AWS S3"})`);
+        console.log(`Bucket: ${s3.bucket} (${s3.provider_type})  prefix: ${s3.prefix}`);
+        console.log(`Auto-sync new snapshots: ${s3.auto_sync ? "on" : "off"}`);
       }
       break;
     }
 
     case "s3:sync": {
-      const r = await api("POST", "/api/storage/s3/sync");
-      console.log(`✓ S3 Remote Sync: ${r.message || "Completed"}`);
+      const cfgS3 = await api("GET", "/api/backups/s3-config");
+      if (!cfgS3.configured) {
+        console.error("S3 is not configured. Configure it in the dashboard (Backups → Remote S3).");
+        process.exit(1);
+      }
+      const pending = (await api("GET", "/api/backups")).filter(
+        (b) => b.status === "completed" && b.existsOnDisk && b.destination !== "s3_synced",
+      );
+      let ok = 0;
+      for (const b of pending) {
+        try {
+          await request("POST", `/api/backups/${b.id}/sync-s3`);
+          ok++;
+          console.log(`  ✓ ${b.id} → S3`);
+        } catch (e) {
+          console.error(`  ✗ ${b.id}: ${e.message}`);
+          process.exitCode = 1;
+        }
+      }
+      console.log(`✓ S3 sync finished: ${ok}/${pending.length} snapshot(s) uploaded`);
       break;
     }
 
@@ -917,6 +961,26 @@ try {
         })),
       );
       break;
+    }
+
+    case "mcp": {
+      // `htx mcp [tools|call|config|stdio]` — also accepts the colon forms (mcp:tools …)
+      const sub = args.shift();
+      if (!sub || sub === "info") {
+        const info = await api("GET", "/api/mcp");
+        console.log(
+          `MCP endpoint: ${cfg.url}/api/mcp  (${info.toolsCount} tools, protocol ${info.mcp})`,
+        );
+        console.log(
+          "Subcommands: tools | call <tool> [jsonArgs] | config [cursor|claude|devin] | stdio",
+        );
+        break;
+      }
+      // Re-dispatch `htx mcp <sub> …` to the colon form (`htx mcp:<sub> …`), keeping stdio attached.
+      const child = spawnSync(process.execPath, [process.argv[1], `mcp:${sub}`, ...args], {
+        stdio: "inherit",
+      });
+      process.exit(child.status ?? 1);
     }
 
     case "mcp:tools": {
@@ -978,6 +1042,9 @@ try {
             mcpServers: {
               hosterax: {
                 url: httpEndpoint,
+                ...(cfg.token
+                  ? { headers: { Authorization: "Bearer <your HosteraX token>" } }
+                  : {}),
               },
             },
           },
@@ -999,6 +1066,7 @@ try {
             name: "hosterax",
             type: "mcp",
             url: httpEndpoint,
+            ...(cfg.token ? { headers: { Authorization: "Bearer <your HosteraX token>" } } : {}),
           },
         },
       };
@@ -1026,16 +1094,19 @@ try {
       const rl = createInterface({ input: process.stdin, terminal: false });
       rl.on("line", async (line) => {
         if (!line.trim()) return;
+        let payload;
         try {
-          const payload = JSON.parse(line);
-          const res = await api("POST", "/api/mcp", payload);
-          process.stdout.write(JSON.stringify(res) + "\n");
+          payload = JSON.parse(line);
+          const res = await request("POST", "/api/mcp", payload);
+          // JSON-RPC notifications (no id) must not be answered.
+          if (payload.id !== undefined && payload.id !== null)
+            process.stdout.write(JSON.stringify(res) + "\n");
         } catch (err) {
           process.stdout.write(
             JSON.stringify({
               jsonrpc: "2.0",
-              id: null,
-              error: { code: -32700, message: err.message },
+              id: payload?.id ?? null,
+              error: { code: payload ? -32603 : -32700, message: err.message },
             }) + "\n",
           );
         }
@@ -1431,18 +1502,62 @@ try {
     }
 
     case "tokens": {
-      console.table(await api("GET", "/api/tokens"));
+      const list = await api("GET", "/api/tokens");
+      console.table(
+        list.map((t) => ({
+          ID: t.id.slice(0, 12),
+          Name: t.name,
+          Prefix: t.prefix,
+          Scopes: (t.scopes || []).join(","),
+          LastUsed: t.last_used_at ? new Date(t.last_used_at).toISOString() : "never",
+        })),
+      );
       break;
     }
 
     case "token:new": {
-      console.log((await api("POST", "/api/tokens", { name: args[0] })).token);
+      // htx token:new <name> [read|deploy|admin]   (default scope: deploy)
+      const [name, scope = "deploy"] = args;
+      if (!name || !["read", "deploy", "admin"].includes(scope)) {
+        console.error("Usage: htx token:new <name> [read|deploy|admin]");
+        process.exit(1);
+      }
+      const res = await api("POST", "/api/tokens", { name, scopes: [scope] });
+      console.log(res.token);
+      console.error(`(scope: ${scope} — shown once; store it now)`);
+      break;
+    }
+
+    case "token:revoke": {
+      if (!args[0]) {
+        console.error("Usage: htx token:revoke <idPrefix>");
+        process.exit(1);
+      }
+      const all = await api("GET", "/api/tokens");
+      const hit = all.filter((t) => t.id.startsWith(args[0]));
+      if (hit.length !== 1) {
+        console.error(hit.length ? "Prefix is ambiguous — use more characters." : "No such token.");
+        process.exit(1);
+      }
+      await api("DELETE", `/api/tokens/${hit[0].id}`);
+      console.log(`✓ Revoked token "${hit[0].name}"`);
       break;
     }
 
     // ────────── Email Stack & Webmail ──────────
     case "mail:domains": {
-      console.table(await api("GET", "/api/email/domains"));
+      const doms = await api("GET", "/api/email/domains");
+      console.table(
+        doms.map((d) => ({
+          Domain: d.domain,
+          SPF: d.spf_status,
+          DKIM: d.dkim_status,
+          DMARC: d.dmarc_status,
+          MX: d.mx_status,
+          Mailboxes: d.mailbox_count,
+          Aliases: d.alias_count,
+        })),
+      );
       break;
     }
 
@@ -1458,7 +1573,9 @@ try {
 
     case "mail:boxes": {
       const domainId = args[0];
-      const url = domainId ? `/api/email/mailboxes?domain=${domainId}` : "/api/email/mailboxes";
+      const url = domainId
+        ? `/api/email/mailboxes?domain_id=${encodeURIComponent(domainId)}`
+        : "/api/email/mailboxes";
       console.table(await api("GET", url));
       break;
     }
@@ -1469,7 +1586,18 @@ try {
         console.error("Usage: htx mail:box:new <email> <name> <password>");
         process.exit(1);
       }
-      console.log(await api("POST", "/api/email/mailboxes", { email, name, password }));
+      // The API addresses a domain by id: resolve it from the email's domain part.
+      const domains = await api("GET", "/api/email/domains");
+      const dom = domains.find((d) => d.domain === String(email).split("@")[1]?.toLowerCase());
+      if (!dom) {
+        console.error(
+          `No email domain registered for "${String(email).split("@")[1]}". Run: htx mail:domain:add <domain>`,
+        );
+        process.exit(1);
+      }
+      console.log(
+        await api("POST", "/api/email/mailboxes", { domain_id: dom.id, email, name, password }),
+      );
       break;
     }
 
@@ -1484,7 +1612,26 @@ try {
         console.error("Usage: htx mail:alias:new <alias@domain.com> [destination@domain.com]");
         process.exit(1);
       }
-      console.log(await api("POST", "/api/email/aliases", { alias_address, destination_email }));
+      const domains = await api("GET", "/api/email/domains");
+      const dom = domains.find(
+        (d) => d.domain === String(alias_address).split("@")[1]?.toLowerCase(),
+      );
+      if (!dom) {
+        console.error(`No email domain registered for "${String(alias_address).split("@")[1]}".`);
+        process.exit(1);
+      }
+      if (!destination_email) {
+        console.error("A destination (email address or http(s) webhook URL) is required.");
+        process.exit(1);
+      }
+      console.log(
+        await api("POST", "/api/email/aliases", {
+          domain_id: dom.id,
+          source_email: alias_address,
+          destination_type: /^https?:/i.test(destination_email) ? "webhook" : "email",
+          destination_target: destination_email,
+        }),
+      );
       break;
     }
 
@@ -1566,16 +1713,77 @@ try {
   process.exit(1);
 }
 
+const FINISHED_PHASES = new Set(["ready", "success", "failed", "cancelled"]);
+
+/**
+ * Streams a deployment's logs. With keepOpen=false (deploy) it returns as soon as the deployment
+ * reaches a terminal phase and sets a non-zero exit code if it failed.
+ */
 async function follow(id, keepOpen = true) {
-  const wsUrl = cfg.url.replace(/^http/, "ws") + "/ws?deployment=" + id;
-  const ws = new WebSocket(wsUrl);
-  ws.addEventListener("message", (ev) => {
-    try {
-      const m = JSON.parse(ev.data);
+  let ws = null;
+  const seen = new Set();
+  const print = (m) => {
+    const key = `${m.ts}|${m.stream}|${m.text}`;
+    if (m.stream === "replay" || !seen.has(key)) {
+      seen.add(key);
       console.log(`[${m.stream}] ${m.text}`);
-      if (/exit \d+/.test(m.text) && !keepOpen) ws.close();
-    } catch {}
-  });
-  ws.addEventListener("error", (e) => console.error("ws error", e));
-  await new Promise((r) => ws.addEventListener("close", r));
+    }
+  };
+
+  if (typeof WebSocket !== "undefined") {
+    const wsUrl =
+      cfg.url.replace(/^http/, "ws") +
+      "/ws?deployment=" +
+      encodeURIComponent(id) +
+      (cfg.token ? "&token=" + encodeURIComponent(cfg.token) : "");
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.addEventListener("message", (ev) => {
+        try {
+          print(JSON.parse(ev.data));
+        } catch {}
+      });
+      ws.addEventListener("error", () => {});
+    } catch {
+      ws = null;
+    }
+  }
+
+  // Poll the deployment so we also work on Node versions without a WebSocket global and know when to stop.
+  let printed = 0;
+  for (;;) {
+    await new Promise((r) => setTimeout(r, 1500));
+    let dep = null;
+    try {
+      dep = await request("GET", `/api/deployments/${encodeURIComponent(id)}`);
+    } catch (e) {
+      if (e.status === 404) {
+        console.error(`error: deployment ${id} not found`);
+        process.exitCode = 1;
+        break;
+      }
+    }
+    if (!ws || ws.readyState > 1) {
+      // fallback: plain log polling
+      try {
+        const text = await request("GET", `/api/deployments/${encodeURIComponent(id)}/logs`);
+        const lines = String(text).split("\n").filter(Boolean);
+        for (const line of lines.slice(printed)) console.log(line);
+        printed = lines.length;
+      } catch {}
+    }
+    if (dep && FINISHED_PHASES.has(dep.phase) && !keepOpen) {
+      await new Promise((r) => setTimeout(r, 800)); // let the last websocket frames arrive
+      console.log(
+        dep.phase === "failed" || dep.phase === "cancelled"
+          ? `✗ Deployment ${dep.version || id} ${dep.phase}`
+          : `✓ Deployment ${dep.version || id} is ${dep.phase}`,
+      );
+      if (dep.phase === "failed" || dep.phase === "cancelled") process.exitCode = 1;
+      break;
+    }
+  }
+  try {
+    ws?.close();
+  } catch {}
 }
