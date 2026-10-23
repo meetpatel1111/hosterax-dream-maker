@@ -6,7 +6,8 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { spawn, spawnSync, execFile } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { spawnSync } from "./safe-exec.mjs";
 import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
@@ -478,32 +479,35 @@ function publishRuntime(project, line) {
 // running process registry (per project)
 const running = new Map(); // project -> { child, restarts, stopped, startedAt, cmd, workdir, env }
 
-// On engine startup, inspect running docker containers starting with hx_ and track them
-try {
-  const cp = spawnSync("docker", ["ps", "--filter", "name=hx_", "--format", "{{.Names}}"], {
-    shell: true,
-  });
-  if (cp.stdout) {
-    const lines = cp.stdout.toString().trim().split("\n");
-    for (const l of lines) {
-      const name = l.trim();
-      if (!name) continue;
-      const projName = name.replace(/^hx_/, "");
-      const match = db.prepare("SELECT * FROM projects WHERE LOWER(name)=LOWER(?)").get(projName);
-      if (match) {
-        running.set(match.name, {
-          child: { pid: process.pid },
-          stopped: false,
-          startedAt: Date.now(),
-          cmd: `docker container ${name}`,
-          workdir: "",
-          env: {},
-          policy: "always",
-        });
+// On engine startup, inspect running docker containers starting with hx_ and track them.
+// This must never block boot: a missing, stopped or hung Docker daemon only delays the scan.
+execFile(
+  "docker",
+  ["ps", "--filter", "name=hx_", "--format", "{{.Names}}"],
+  { timeout: 5000, windowsHide: true },
+  (err, stdout) => {
+    if (err || !stdout) return;
+    try {
+      for (const l of String(stdout).trim().split("\n")) {
+        const name = l.trim();
+        if (!name) continue;
+        const projName = name.replace(/^hx_/, "");
+        const match = db.prepare("SELECT * FROM projects WHERE LOWER(name)=LOWER(?)").get(projName);
+        if (match) {
+          running.set(match.name, {
+            child: { pid: process.pid },
+            stopped: false,
+            startedAt: Date.now(),
+            cmd: `docker container ${name}`,
+            workdir: "",
+            env: {},
+            policy: "always",
+          });
+        }
       }
-    }
-  }
-} catch {}
+    } catch {}
+  },
+);
 
 // ---------- project config override (hosterax.json) ----------
 function readProjectConfig(workdir) {
@@ -3148,7 +3152,11 @@ const server = http.createServer(async (req, res) => {
 
     let contCount = 0;
     try {
-      const dCount = spawnSync("docker", ["ps", "-q"], { encoding: "utf8" });
+      const dCount = spawnSync("docker", ["ps", "-q"], {
+        encoding: "utf8",
+        timeout: 3000,
+        windowsHide: true,
+      });
       if (dCount.stdout) {
         contCount = dCount.stdout.trim().split("\n").filter(Boolean).length;
       }

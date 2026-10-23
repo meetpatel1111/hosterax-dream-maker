@@ -6,7 +6,8 @@ import { encryptSecret, decryptSecret } from "./secrets.mjs";
 import { isSafeHostname } from "./security.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { spawnSync } from "./safe-exec.mjs";
 import net from "node:net";
 import fs from "node:fs";
 import path from "node:path";
@@ -112,8 +113,11 @@ export class ServerManager {
 
     let dockerVer = "not detected";
     try {
+      // Runs while the engine boots, so it must be bounded: a hung Docker daemon cannot stall startup.
       const dRes = spawnSync("docker", ["version", "--format", "{{.Server.Version}}"], {
         encoding: "utf8",
+        timeout: 3000,
+        windowsHide: true,
       });
       if (dRes.stdout && dRes.stdout.trim()) {
         dockerVer = `Docker v${dRes.stdout.trim()}`;
@@ -209,11 +213,15 @@ export class ServerManager {
         }
         totalIdle += cpu.times.idle;
       }
-      const cpuUsage = Math.round(((totalTick - totalIdle) / totalTick) * 100) || 5;
+      const cpuUsage = Math.round(((totalTick - totalIdle) / totalTick) * 100) || 0;
 
       let contCount = 0;
       try {
-        const dCount = spawnSync("docker", ["ps", "-q"], { encoding: "utf8" });
+        const dCount = spawnSync("docker", ["ps", "-q"], {
+          encoding: "utf8",
+          timeout: 3000,
+          windowsHide: true,
+        });
         if (dCount.stdout) {
           contCount = dCount.stdout.trim().split("\n").filter(Boolean).length;
         }

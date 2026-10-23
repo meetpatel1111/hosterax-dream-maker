@@ -1,7 +1,8 @@
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
-import { spawn, spawnSync, execSync, execFile } from "node:child_process";
+import { spawn, execSync, execFile } from "node:child_process";
+import { spawnSync } from "./safe-exec.mjs";
 import fs from "node:fs";
 import path from "node:path";
 

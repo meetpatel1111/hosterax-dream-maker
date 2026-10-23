@@ -26,6 +26,8 @@ const child = spawn(process.execPath, ["src/index.mjs"], {
 
 const baseUrl = `http://127.0.0.1:${port}`;
 let bearer = "";
+let engineOutput = "";
+child.stdout.on("data", (d) => (engineOutput += d));
 
 async function waitForHealth(timeoutMs = 15000) {
   const deadline = Date.now() + timeoutMs;
@@ -36,7 +38,9 @@ async function waitForHealth(timeoutMs = 15000) {
     } catch {}
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error("engine did not become healthy");
+  throw new Error(
+    `engine did not become healthy (exit code: ${child.exitCode}; output: ${engineOutput.slice(-1500) || "none"})`,
+  );
 }
 
 async function api(method, path, body) {

@@ -3,7 +3,7 @@
 // Handles Push-to-Deploy, cryptographic signature verification (HMAC-SHA256), and ephemeral preview lifecycles.
 
 import crypto from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { spawnSync } from "./safe-exec.mjs";
 
 export class WebhookManager {
   constructor({ db, runDeployment, applyRoute, HOME }) {
