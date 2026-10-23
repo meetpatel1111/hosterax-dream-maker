@@ -11,7 +11,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 │                             USER INTERFACES                                 │
 ├───────────────────────────────┬───────────────────────────────┬─────────────┤
 │   Web Dashboard (React 19)    │    Native Desktop (Electron)  │ CLI ('htx') │
-│   TanStack Start on :8080     │    Embedded Supervisor & Tray │ npx hosterax│
+│   Served by the engine on :7777│    Embedded Supervisor & Tray │ npx hosterax│
 └───────────────┬───────────────┴───────────────┬───────────────┴──────┬──────┘
                 │                               │                      │
                 │ HTTP REST / Server-Sent Events│                      │
@@ -22,11 +22,11 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌───────────────────────┐  ┌───────────────────────┐  ┌──────────────────┐ │
 │  │ Model Context Protocol│  │ Autonomous Self-Heal  │  │ Deployment Engine│ │
-│  │ 34 Tools (JSON-RPC 2) │  │ Watchdog & AI Rollback│  │ Zero-Downtime B/G│ │
+│  │ 46 Tools (JSON-RPC 2) │  │ Watchdog & AI Rollback│  │ Blue/Green Deploys│ │
 │  └───────────────────────┘  └───────────────────────┘  └──────────────────┘ │
 │  ┌───────────────────────┐  ┌───────────────────────┐  ┌──────────────────┐ │
-│  │ Multi-Node Remote Fleet│ │ Database & S3 Manager │  │ Edge TLS Proxy   │ │
-│  │ SSH Agent Manager     │  │ Snapshots & SHA-256   │  │ Magic DNS (nip)  │ │
+│  │ Server Registry       │ │ Database & S3 Manager │  │ Edge TLS Proxy   │ │
+│  │ Reachability + script │  │ Snapshots & SHA-256   │  │ Magic DNS (nip)  │ │
 │  └───────────────────────┘  └───────────────────────┘  └──────────────────┘ │
 └──────────────────────────────────────┬──────────────────────────────────────┘
                                        │
@@ -35,7 +35,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
       ┌───────────────────────────┐         ┌───────────────────────────┐
       │   LOCAL WORKLOADS (Host)  │         │   REMOTE SERVERS (Fleet)  │
       │ 🐳 Docker Engine / Compose │         │ 💻 Ubuntu / Debian / RHEL │
-      │ ⚡ Native Node/Go/Python  │         │ 🔒 SSH Agent & Key Auth   │
+      │ ⚡ Native Node/Go/Python  │         │ 📝 Registered only (no deploy yet) │
       └───────────────────────────┘         └───────────────────────────┘
 ```
 
@@ -55,11 +55,12 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 ### 2. Universal MCP Server (`hosterax/engine/src/mcp-server.mjs`)
 
 - Implements the **Model Context Protocol (JSON-RPC 2.0)** for direct AI agent integration.
-- Exposes **34 registered tools** across:
+- Exposes **46 registered tools**, each gated by the calling token's scope (`read`/`deploy`/`admin`), across:
   - Project provisioning, zero-downtime deployment, logs, rollback, and restart.
   - Managed database provisioning (Postgres, MySQL, MongoDB, Redis) and point-in-time snapshot restore.
   - Edge routing, custom domain verification, and Let's Encrypt SSL certificates.
-  - Multi-node remote server SSH connection testing.
+  - Server registry reachability tests.
+  - Email domains/mailboxes/aliases, GitHub webhooks and PR previews, and organization directory.
   - Cron job scheduling, S3 sync, and AI container crash diagnostics.
 - Supports Stdio (`htx mcp:stdio`) and HTTP transport (`/api/mcp`) for **Cursor IDE, Claude Desktop, Devin, Windsurf, and OpenAI Codex**.
 
@@ -88,11 +89,12 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 
 ---
 
-### 5. Multi-Node Remote Fleet Management (`hosterax/engine/src/server-manager.mjs`)
+### 5. Server Registry (`hosterax/engine/src/server-manager.mjs`)
 
-- Connects to remote Linux servers via encrypted SSH.
-- Gathers hardware metrics (CPU load, memory usage, disk headroom, Docker status).
-- Deploys container workloads to remote nodes with zero remote agent installation required.
+- Stores remote Linux hosts (SSH key encrypted at rest) and checks that their SSH port is reachable.
+- Generates a Docker bootstrap script to run on a new host.
+- The local node reports real CPU/RAM figures; remote nodes show unknown specs until a probe is implemented.
+- **Not implemented:** running deployments on remote nodes. Projects currently run on the machine hosting the engine (see [ROADMAP.md](ROADMAP.md)).
 
 ---
 
@@ -104,7 +106,8 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 
 ---
 
-### 7. App Store & 2,502+ Template Catalog (`public/catalog.json`)
+### 7. App Store & 2,500+ Template Catalog (`public/catalog.json`)
 
-- Offline-first database compiling templates from **Awesome-Selfhosted**, **selfh.st**, and **Awesome-Sysadmin**.
-- Pre-mapped container images with high-resolution vector SVGs from **Homarr** and **Simple Icons**.
+- Bundled database (no network needed to browse) compiling templates from **Awesome-Selfhosted**, **selfh.st**, and **Awesome-Sysadmin**.
+- Container images are mapped per entry. Entries with `imageVerified: true` were confirmed against a registry; the rest are best guesses that the image resolver tries (and reports on) at deploy time.
+- Logos are loaded from public icon CDNs and can be switched off in Settings → Privacy.

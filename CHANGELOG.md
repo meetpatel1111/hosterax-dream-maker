@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### 🔒 Security
+
+- **Authentication is no longer implicit.** Only genuine same-machine, same-origin requests skip the token; everything else needs `Authorization: Bearer`. `GET /api/auth/me` tells the dashboard who it is. New `HOSTERAX_REQUIRE_AUTH`, `HOSTERAX_TRUSTED_ORIGINS` and `HOSTERAX_DEV` switches.
+- **Tokens are stored hashed (SHA-256) and carry scopes** (`read` < `deploy` < `admin`), enforced globally, per MCP tool and for the AI copilot. The unauthenticated `/api/token` endpoint is removed; the first token is printed on first start.
+- **Injection and traversal fixes:** Docker calls use argument vectors, image references/hostnames/env keys are validated, git URLs follow `--`, WebSocket log paths are confined, the server bootstrap script no longer interpolates user input.
+- **Domain takeover fixed:** hostnames must be unique and ownership is proven with a DNS TXT challenge.
+- **At-rest encryption (AES-256-GCM)** for SSH keys, S3 credentials, DKIM/TLS private keys, SMTP relay passwords and AI keys; salted scrypt hashes for mailbox passwords; real DKIM key pairs.
+- **Signed confirmation tickets** for destructive AI/MCP actions; public GitHub webhooks verified by HMAC.
+- Fuzzy Docker Hub image substitution is now opt-in (`HOSTERAX_IMAGE_DISCOVERY=1`).
+
+### 🐛 Fixed
+
+- Engine failed to boot (`catalogAppsList is not defined`) and `npm ci` failed against a private registry lockfile.
+- Backups, rollbacks, database provisioning, start/stop/restart and the 9-stage audit now perform the real operation and report failure honestly instead of returning fake success.
+- Environment variables have a single source of truth (`project_env`); webhook handling consolidated; duplicated self-heal methods and an un-awaited Docker probe removed.
+- CLI commands called routes and fields that do not exist (`projects`, `rollback`, `env`, `db:create`, `backup:*`, `domain:*`, `tokens`…); they now match the engine API.
+- Dashboard: honest sign-in (no fake accounts or local-storage "auth"), folder/zip uploads, removed hardcoded metrics and counts, corrected stack/app/tool counts, Servers page no longer invents CPU/RAM figures.
+- **The engine could not serve the dashboard.** The production build targeted a Cloudflare-style SSR worker and produced no `index.html`, so the Docker image, the npm package and the desktop app answered `404` at `/`. The engine now serves the build's assets itself and runs its Node SSR entry as a loopback-only child (new `dashboard-server.mjs`); build it with `npm run build:engine`. `npm run build` still produces the Lovable/Cloudflare build.
+- Dockerfile exposed a dashboard port that did not exist and used `npm install`; release workflow could never create a release (`needs.gate` was not a dependency) and swallowed packaging errors.
+
+### Changed
+
+- Machine translation of the whole page is now opt-in (Settings → Language & translation) because it sends on-screen text to third parties; third-party favicon lookup services were removed and app logos can be disabled (Settings → Privacy).
+- App catalog entries carry an `imageVerified` flag (608 verified, the rest best-guess).
+- MCP now exposes 46 tools. Documentation (README, SECURITY, ARCHITECTURE, CLI README) rewritten to match actual behavior, including known limitations.
+
+---
+
 ## [1.1.0] — 2026-08-19 (Autonomous Live Translation & 100% MCP Subsystem Suite)
 
 ### 🚀 Highlights

@@ -52,15 +52,22 @@ console.log(`[HosteraX Desktop] Bundled engine into ${DESKTOP_ENGINE_DIR}`);
 fs.rmSync(DESKTOP_DIST_DIR, { recursive: true, force: true });
 fs.mkdirSync(DESKTOP_DIST_DIR, { recursive: true });
 
-const outputPublic = path.join(ROOT, ".output", "public");
-const distDir = path.join(ROOT, "dist");
+// The engine serves `<dist>/public` and runs `<dist>/server/index.mjs`; both come from
+// `npm run build:engine` (a Node-server build). A Cloudflare-preset build cannot be served.
+const outputDir = path.join(ROOT, ".output");
+let preset = null;
+try {
+  preset = JSON.parse(fs.readFileSync(path.join(outputDir, "nitro.json"), "utf8")).preset;
+} catch {}
 
-if (fs.existsSync(outputPublic)) {
-  copyDirRecursive(outputPublic, DESKTOP_DIST_DIR);
-  console.log(`[HosteraX Desktop] Bundled web dashboard from ${outputPublic}`);
-} else if (fs.existsSync(distDir)) {
-  copyDirRecursive(distDir, DESKTOP_DIST_DIR);
-  console.log(`[HosteraX Desktop] Bundled web dashboard from ${distDir}`);
+if (preset === "node-server" || preset === "node") {
+  copyDirRecursive(outputDir, DESKTOP_DIST_DIR);
+  console.log(`[HosteraX Desktop] Bundled web dashboard from ${outputDir}`);
+} else {
+  console.error(
+    `[HosteraX Desktop] No Node-server dashboard build found in ${outputDir} (preset: ${preset ?? "none"}). Run 'npm run build:engine' first.`,
+  );
+  process.exit(1);
 }
 
 console.log("[HosteraX Desktop] ✅ Desktop bundle assets prepared successfully!");
