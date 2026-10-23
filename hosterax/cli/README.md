@@ -14,10 +14,11 @@
 npx hosterax
 
 # Or start with a custom port
-npx hosterax start --port 8888
+npx hosterax up --port 8888
 ```
 
 ### Global Install:
+
 ```bash
 npm install -g hosterax
 
@@ -30,6 +31,7 @@ htx status
 ## 🔌 Use as MCP Server for AI IDEs
 
 ### 1. Cursor IDE (`.cursor/mcp.json`):
+
 ```json
 {
   "mcpServers": {
@@ -41,6 +43,7 @@ htx status
 ```
 
 ### 2. Claude Desktop (`claude_desktop_config.json`):
+
 ```json
 {
   "mcpServers": {
@@ -53,6 +56,7 @@ htx status
 ```
 
 ### 3. Windsurf / Devin / VS Code (Cline):
+
 ```json
 {
   "mcpServers": {
@@ -89,31 +93,45 @@ htx db:create postgres my-db
 ```bash
 # General & Deploys
 htx status                            # Inspect host CPU/RAM, uptime, and engine status
-htx list                              # List all deployed projects
-htx deploy                            # Trigger blue/green deployment from current directory
-htx rollback <projectId>              # Rollback container to previous snapshot
-htx logs <projectId>                  # Tail live logs
+htx projects                          # List all deployed projects
+htx deploy <name|path>                # Trigger a blue/green deployment
+htx rollback <deploymentId>           # Re-deploy a previous release
+htx logs <deploymentId|name>          # Stream logs (add --follow)
 
 # Databases & Backups
-htx dbs                               # List managed database containers
-htx db:create <name> --engine pg      # Provision postgres, mysql, mongo, redis
-htx backup:create <dbId>              # Create SHA-256 snapshot
+htx databases                         # List managed database containers
+htx db:create <project> <name> <engine> # Provision postgres, mysql, mongodb, redis
+htx backup:create <databaseId|name>   # Create a checksummed backup
 htx s3:sync                           # Trigger remote AWS S3 / Cloudflare R2 backup sync
 
 # App Store
-htx catalog:search <query>            # Search 2,502+ open-source application templates
+htx catalog:search <query>            # Search 2,500+ open-source application templates
 
 # Autonomous AI Copilot
 htx ai "<prompt>"                     # Autonomous AI infrastructure assistant
-htx ask "Why is my database slow?"    # Diagnostic helper
+htx diagnose <name>                   # Diagnose a crashing project
 htx ai:model <modelName>              # Set default AI model (default: gemini-3.5-flash)
 htx ai:key <apiKey>                   # Save provider API key locally
 
 # MCP Utilities
-htx mcp:tools                         # List all 34 registered MCP tools
-htx mcp:config [cursor|claude|devin]  # Print instant IDE MCP configuration JSON
+htx mcp:tools                         # List all 46 registered MCP tools
+htx mcp:config [cursor|claude|devin|windsurf] # Print IDE MCP configuration JSON
 htx mcp                               # Run stdio MCP transport
 ```
+
+---
+
+## 🔑 Authentication
+
+The engine prints a first admin API token the first time it starts. On the same machine the CLI works without one; for a remote engine save the URL and token once:
+
+```bash
+htx login <token> --url http://your-server:7777
+# or per command / for MCP clients
+HOSTERAX_URL=http://your-server:7777 HOSTERAX_TOKEN=<token> htx projects
+```
+
+Create further tokens with `htx token:new <label>` (or Dashboard → API tokens). Tokens carry a scope — `read`, `deploy` or `admin` — and are stored by the engine only as hashes, so copy them when they are created.
 
 ---
 
