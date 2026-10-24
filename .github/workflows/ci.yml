@@ -39,7 +39,13 @@ jobs:
       - name: Check Prettier Formatting
         run: npx prettier --check "src/**/*.{ts,tsx}" "hosterax/**/*.{mjs,js,json}" "*.{md,json}"
 
-      - name: Run Engine Test Suite (18 Suites)
+      - name: Check Generated Reference Docs and Licences
+        run: |
+          npm run api:check
+          npm run docs:check
+          npm run licenses:check
+
+      - name: Run Engine Test Suite
         run: npm run test:engine
 
       - name: Build Frontend Production Bundle

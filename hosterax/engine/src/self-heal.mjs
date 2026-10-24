@@ -237,7 +237,7 @@ export class SelfHealEngine {
         this.logEvent(
           "system",
           "daemon_unresponsive",
-          "Docker daemon socket is unresponsive or offline. Suspending container probes.",
+          `Docker daemon is unresponsive or offline (looking at ${this.dockerApi?.description ?? "the default socket"}${this.dockerApi?.source ? `, found via ${this.dockerApi.source}` : ""}). Suspending container probes.`,
           "error",
         );
       } else {

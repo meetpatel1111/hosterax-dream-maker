@@ -14,7 +14,9 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export function sshToolsAvailable() {
-  if (process.platform === "win32") return false;
+  // The "server" in these tests is the machine running them, and remote servers must be Linux (the engine
+  // refuses anything else), so only a Linux machine can stand in for one.
+  if (process.platform !== "linux") return false;
   const sshd = ["/usr/sbin/sshd", "/usr/bin/sshd", "/usr/local/sbin/sshd"].find((p) =>
     fs.existsSync(p),
   );

@@ -168,6 +168,7 @@ function help() {
   Workflow & Initialization:
     init                                      Auto-detect project stack & create .hosterax.json
     up [--port 7777]                          Launch engine daemon & open dashboard
+    engine:start [--port 7777]                Run the engine in this terminal, without opening the dashboard
     login <token> [--url http://host:7777]    Save engine URL & authorization token
     status                                    Engine & host machine health
 
@@ -287,6 +288,7 @@ function help() {
     user:rm <email|id>                        Delete a user
     tokens                                    List personal access tokens
     token:new <label>                         Mint personal access token
+    token:revoke <id>                         Revoke a token (anything using it stops working)
 `);
 }
 

@@ -6,41 +6,103 @@
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
+import fs from "node:fs";
+import { spawnSync } from "node:child_process";
+
+/** Where unix-socket Docker daemons live on the setups people actually use. */
+function candidateSockets({ env, home, uid }) {
+  const run = env.XDG_RUNTIME_DIR || (uid != null ? `/run/user/${uid}` : "");
+  return [
+    "/var/run/docker.sock", // Docker Engine, and Docker Desktop's compatibility link
+    `${home}/.docker/run/docker.sock`, // Docker Desktop (macOS)
+    `${home}/.colima/default/docker.sock`, // Colima
+    `${home}/.colima/docker.sock`,
+    `${home}/.rd/docker.sock`, // Rancher Desktop
+    `${home}/.orbstack/run/docker.sock`, // OrbStack
+    run && `${run}/docker.sock`, // rootless Docker
+    run && `${run}/podman/podman.sock`, // rootless Podman (Docker-compatible API)
+    "/run/podman/podman.sock",
+  ].filter(Boolean);
+}
+
+function parseHost(host) {
+  if (host.startsWith("unix://")) return { socketPath: host.slice("unix://".length) };
+  if (host.startsWith("npipe://")) return { socketPath: host.slice("npipe://".length) };
+  if (host.startsWith("tcp://") || host.startsWith("http://")) {
+    const u = new URL(host.replace("tcp://", "http://"));
+    return { host: u.hostname, port: Number(u.port || 2375) };
+  }
+  return null; // ssh:// and anything else cannot be spoken to directly
+}
+
+/**
+ * Work out which Docker daemon the Docker CLI is using, so the native client talks to the same one.
+ * Order: DOCKER_HOST, the CLI's current context (Colima, Rancher Desktop, OrbStack, Docker Desktop and
+ * remote contexts are selected that way), then the usual socket locations that exist, then the default.
+ * `run` and `exists` are injectable for tests.
+ */
+export function detectDockerHost({
+  env = process.env,
+  platform = os.platform(),
+  home = os.homedir(),
+  uid = typeof process.getuid === "function" ? process.getuid() : null,
+  exists = (p) => fs.existsSync(p),
+  run = (cmd, args) => spawnSync(cmd, args, { encoding: "utf8", timeout: 1500, windowsHide: true }),
+} = {}) {
+  if (env.DOCKER_HOST) {
+    const parsed = parseHost(env.DOCKER_HOST);
+    if (parsed) return { ...parsed, source: "DOCKER_HOST", description: env.DOCKER_HOST };
+  }
+  if (platform === "win32")
+    return {
+      socketPath: "\\\\.\\pipe\\docker_engine",
+      source: "default",
+      description: "npipe:////./pipe/docker_engine",
+    };
+
+  try {
+    const r = run("docker", ["context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]);
+    const host = String(r.stdout || "").trim();
+    const parsed = host && r.status === 0 ? parseHost(host) : null;
+    if (parsed && (!parsed.socketPath || exists(parsed.socketPath)))
+      return { ...parsed, source: "docker context", description: host };
+  } catch {}
+
+  for (const socketPath of candidateSockets({ env, home, uid })) {
+    if (exists(socketPath))
+      return { socketPath, source: "known socket", description: `unix://${socketPath}` };
+  }
+  return {
+    socketPath: "/var/run/docker.sock",
+    source: "default",
+    description: "unix:///var/run/docker.sock",
+  };
+}
 
 export class DockerApiClient {
   constructor({ socketPath, host, port } = {}) {
     this.isWindows = os.platform() === "win32";
 
-    // Auto-detect default Docker daemon connection
     if (socketPath) {
       this.socketPath = socketPath;
       this.host = null;
       this.port = null;
-    } else if (process.env.DOCKER_HOST) {
-      const dh = process.env.DOCKER_HOST;
-      if (dh.startsWith("unix://")) {
-        this.socketPath = dh.replace("unix://", "");
-        this.host = null;
-        this.port = null;
-      } else if (dh.startsWith("npipe://")) {
-        this.socketPath = dh.replace("npipe://", "");
-        this.host = null;
-        this.port = null;
-      } else if (dh.startsWith("tcp://") || dh.startsWith("http://")) {
-        const u = new URL(dh.replace("tcp://", "http://"));
-        this.host = u.hostname;
-        this.port = Number(u.port || 2375);
-        this.socketPath = null;
-      }
-    } else if (this.isWindows) {
-      this.socketPath = "\\\\.\\pipe\\docker_engine";
-      this.host = null;
-      this.port = null;
+      this.source = "explicit";
+    } else if (host) {
+      this.socketPath = null;
+      this.host = host;
+      this.port = port || 2375;
+      this.source = "explicit";
     } else {
-      this.socketPath = "/var/run/docker.sock";
-      this.host = null;
-      this.port = null;
+      const d = detectDockerHost();
+      this.socketPath = d.socketPath || null;
+      this.host = d.host || null;
+      this.port = d.port || null;
+      this.source = d.source;
+      this.description = d.description;
     }
+    this.description ||=
+      this.socketPath != null ? `unix://${this.socketPath}` : `tcp://${this.host}:${this.port}`;
 
     this.apiVersion = "v1.45";
   }
