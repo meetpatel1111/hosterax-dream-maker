@@ -28,6 +28,7 @@ import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppTeamRouteImport } from './routes/_app.team'
 import { Route as AppTokensRouteImport } from './routes/_app.tokens'
+import { Route as AppUsersRouteImport } from './routes/_app.users'
 import { Route as AppPSlugRouteImport } from './routes/_app.p.$slug'
 
 const IndexRoute = IndexRouteImport.update({
@@ -124,6 +125,11 @@ const AppTokensRoute = AppTokensRouteImport.update({
   path: '/tokens',
   getParentRoute: () => AppRoute,
 } as any)
+const AppUsersRoute = AppUsersRouteImport.update({
+  id: '/users',
+  path: '/users',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPSlugRoute = AppPSlugRouteImport.update({
   id: '/p/$slug',
   path: '/p/$slug',
@@ -149,6 +155,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AppSettingsRoute
   '/team': typeof AppTeamRoute
   '/tokens': typeof AppTokensRoute
+  '/users': typeof AppUsersRoute
   '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesByTo {
@@ -170,6 +177,7 @@ export interface FileRoutesByTo {
   '/settings': typeof AppSettingsRoute
   '/team': typeof AppTeamRoute
   '/tokens': typeof AppTokensRoute
+  '/users': typeof AppUsersRoute
   '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesById {
@@ -193,6 +201,7 @@ export interface FileRoutesById {
   '/_app/settings': typeof AppSettingsRoute
   '/_app/team': typeof AppTeamRoute
   '/_app/tokens': typeof AppTokensRoute
+  '/_app/users': typeof AppUsersRoute
   '/_app/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRouteTypes {
@@ -216,6 +225,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/team'
     | '/tokens'
+    | '/users'
     | '/p/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -237,6 +247,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/team'
     | '/tokens'
+    | '/users'
     | '/p/$slug'
   id:
     | '__root__'
@@ -259,6 +270,7 @@ export interface FileRouteTypes {
     | '/_app/settings'
     | '/_app/team'
     | '/_app/tokens'
+    | '/_app/users'
     | '/_app/p/$slug'
   fileRoutesById: FileRoutesById
 }
@@ -403,6 +415,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTokensRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/users': {
+      id: '/_app/users'
+      path: '/users'
+      fullPath: '/users'
+      preLoaderRoute: typeof AppUsersRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/p/$slug': {
       id: '/_app/p/$slug'
       path: '/p/$slug'
@@ -430,6 +449,7 @@ interface AppRouteChildren {
   AppSettingsRoute: typeof AppSettingsRoute
   AppTeamRoute: typeof AppTeamRoute
   AppTokensRoute: typeof AppTokensRoute
+  AppUsersRoute: typeof AppUsersRoute
   AppPSlugRoute: typeof AppPSlugRoute
 }
 
@@ -450,6 +470,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppSettingsRoute: AppSettingsRoute,
   AppTeamRoute: AppTeamRoute,
   AppTokensRoute: AppTokensRoute,
+  AppUsersRoute: AppUsersRoute,
   AppPSlugRoute: AppPSlugRoute,
 }
 

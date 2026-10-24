@@ -296,6 +296,47 @@ htx mcp                               # Start stdio MCP protocol transport
 
 ---
 
+## 👥 Users, roles, two-factor and SSO
+
+Accounts are optional and additive: API tokens and access from the engine's own machine keep working exactly as before. To use accounts, open **Users & access** in the dashboard (on the engine machine, or with the engine token) and create the owner account; the owner then adds everyone else.
+
+| Role        | May                                                                                 |
+| :---------- | :---------------------------------------------------------------------------------- |
+| `owner`     | Everything, including managing admins and other owners (there is always one active) |
+| `admin`     | Manage developers and viewers, API tokens, servers, settings                        |
+| `developer` | Deploy and change projects, domains, databases, backups                             |
+| `viewer`    | Read-only                                                                           |
+
+- Roles are checked on **every request**, so changing a role, disabling a user or deleting one takes effect immediately and ends their sessions. They apply to the REST API, the MCP server and the AI copilot alike.
+- A user signs in with email and password and receives a session (`hxs_…`, valid 7 days idle / 30 days at most) that is sent as `Authorization: Bearer`, so CLI, MCP and scripts can use it too. For automation, prefer an API token.
+- **Two-factor (TOTP):** each user can turn it on in Settings (Google Authenticator, 1Password, Authy…). Recovery codes are shown once; a code cannot be used twice; an admin can reset a locked-out user (`htx user:2fa-reset`).
+- **Lockout:** 8 wrong passwords or codes lock that email for 15 minutes. The log (Users & access → Recent sign-in activity, `GET /api/auth/events`) records sign-ins, failures, locks and account changes.
+- **Passwords** are at least 10 characters, stored as salted scrypt hashes.
+
+```bash
+htx users
+htx user:add jane@example.com --role developer      # prints a temporary password once
+htx user:role jane@example.com viewer
+htx user:disable jane@example.com
+```
+
+### Single sign-on (OpenID Connect)
+
+Works with any OIDC provider (Google, Microsoft Entra, Okta, Keycloak, Authentik, …) using the authorization-code flow with PKCE. Set these on the engine and a "Sign in with …" button appears:
+
+| Variable                                      | Purpose                                                                                        |
+| :-------------------------------------------- | :--------------------------------------------------------------------------------------------- |
+| `HOSTERAX_OIDC_ISSUER`                        | The provider's issuer URL, exactly as in its discovery document (https)                        |
+| `HOSTERAX_OIDC_CLIENT_ID` / `…_CLIENT_SECRET` | Credentials of the application you registered with the provider                                |
+| `HOSTERAX_PUBLIC_URL`                         | Where users reach the engine. Register `<it>/api/auth/oidc/callback` as the redirect URI       |
+| `HOSTERAX_OIDC_ALLOWED_DOMAINS`               | Comma-separated email domains allowed in (or `HOSTERAX_OIDC_ALLOW_ANY_EMAIL=1`)                |
+| `HOSTERAX_OIDC_DEFAULT_ROLE`                  | `viewer` (default) or `developer` for first-time SSO users. SSO never creates admins or owners |
+| `HOSTERAX_OIDC_NAME`                          | Button label (default "SSO")                                                                   |
+
+The ID token's signature (RS256/ES256), issuer, audience, expiry and nonce are verified, and the email must be verified by the provider. A new SSO user starts with the default role; an owner promotes them in Users & access. If a local account already has the same (provider-verified) email, the SSO identity is linked to it and it keeps its role, so an owner who configures SSO can sign in with it. Anyone who can make your provider assert a verified address in an allowed domain can therefore sign in as that account — keep the allowed domains tight. If SSO is misconfigured the engine says why in its log and leaves it off. Two-factor for SSO users is the provider's job. **The SSO flow is tested against a simulated provider, not yet against a real one** — try it with a non-critical account first.
+
+---
+
 ## 🔐 Security & Configuration
 
 - API tokens are stored only as SHA-256 hashes and are shown once, when created. Scopes: `read` < `deploy` < `admin`.

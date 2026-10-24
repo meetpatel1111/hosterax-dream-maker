@@ -5,10 +5,11 @@ marked **(gap)** are things the product already implies but does not do yet.
 
 ## P0 — Trust and safety
 
-1. **Real user accounts with enforced roles.** Today permissions come only from API token scopes;
-   the Team/Organization pages are a directory **(gap)**. Add users with scrypt passwords, sessions,
-   TOTP 2FA and OIDC/SSO sign-in, then make `Owner/Admin/Developer/Viewer` actually gate routes and
-   MCP tools per organization.
+1. **Per-organization and per-project permissions.** User accounts, four enforced roles, TOTP 2FA and
+   OIDC SSO exist now, but roles are instance-wide and the Team/Organization pages are still a
+   directory **(gap)**. Still missing: scoping roles to organizations/projects, SCIM or group-to-role
+   mapping from the identity provider, "sign out everywhere" and session lists, WebAuthn/passkeys,
+   and requiring 2FA by policy.
 2. **Encrypt project environment variables at rest.** The `secrets.mjs` machinery already protects
    SSH/S3/DKIM/TLS keys; env values still sit in SQLite in clear text. Encrypt them, add a "secret"
    flag, and write an audit entry whenever a value is revealed.

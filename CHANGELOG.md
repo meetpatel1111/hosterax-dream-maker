@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **User accounts with enforced roles** (`owner`, `admin`, `developer`, `viewer`): sessions are bearer tokens (`hxs_…`) resolved into the same scope levels the engine already enforces, so every REST route, MCP tool and AI action respects the role, and role changes, disabling and deletion apply to live sessions immediately. First-run setup (`POST /api/auth/setup`) needs an admin credential; there is always at least one active owner; admins cannot create or change admins/owners.
+- **Two-factor authentication (TOTP, RFC 6238)** with single-use recovery codes, replay protection and admin reset; secrets are encrypted at rest.
+- **Single sign-on (OpenID Connect)** with authorization code + PKCE, full ID-token verification and least-privilege provisioning (never admin/owner).
+- Sign-in lockout (8 failures → 15 minutes, per email, uniform for unknown emails), a sign-in audit log (`GET /api/auth/events`), dashboard pages (sign-in, Users & access, Settings → Your account) and CLI commands (`htx users`, `user:add|role|disable|enable|2fa-reset|rm`).
+
 ### 🔒 Security
 
 - **Authentication is no longer implicit.** Only genuine same-machine, same-origin requests skip the token; everything else needs `Authorization: Bearer`. `GET /api/auth/me` tells the dashboard who it is. New `HOSTERAX_REQUIRE_AUTH`, `HOSTERAX_TRUSTED_ORIGINS` and `HOSTERAX_DEV` switches.

@@ -19,11 +19,23 @@ export type AuthUser = {
   user_metadata?: Record<string, any>;
 };
 
+/** A person's account on the engine (as opposed to an API token or the local machine). */
+export type Account = {
+  id: string;
+  email: string;
+  name: string;
+  role: "owner" | "admin" | "developer" | "viewer";
+  twoFactorEnabled: boolean;
+  authSource: "password" | "oidc";
+};
+
 export type AuthSession = {
   user: AuthUser;
   scopes: string[];
   /** true when the engine accepted us as a trusted local (same machine / same origin) client */
   local: boolean;
+  /** set when signed in with a user account (password or SSO) rather than a token */
+  account: Account | null;
 };
 
 type WhoAmI = {
@@ -32,6 +44,7 @@ type WhoAmI = {
   scopes: string[];
   local: boolean;
   tokenName: string | null;
+  user?: Account | null;
 };
 
 const DEFAULT_URL = "http://localhost:7777";
@@ -50,15 +63,19 @@ async function whoAmI(url: string, token: string): Promise<AuthSession | null> {
     });
     if (!r.ok) return null;
     const me = (await r.json()) as WhoAmI;
-    const name = me.local ? "This device" : (me.tokenName ?? "API token");
+    const account = me.user ?? null;
+    const name =
+      account?.name || account?.email || (me.local ? "This device" : (me.tokenName ?? "API token"));
     return {
       local: me.local,
       scopes: me.scopes,
+      account,
       user: {
-        id: me.local ? "local" : `token:${me.tokenName ?? "unknown"}`,
-        email: me.local ? "local@hosterax" : `${me.tokenName ?? "token"}@engine`,
+        id: account?.id ?? (me.local ? "local" : `token:${me.tokenName ?? "unknown"}`),
+        email:
+          account?.email ?? (me.local ? "local@hosterax" : `${me.tokenName ?? "token"}@engine`),
         name,
-        role: me.role,
+        role: account?.role ?? me.role,
       },
     };
   } catch {
@@ -72,9 +89,18 @@ type AuthCtx = {
   loading: boolean;
   /** Signs in with an engine API token; resolves to an error message, or null on success. */
   signIn: (token: string, url?: string) => Promise<string | null>;
+  /** Signs in with an email and password (and a two-factor code when the account has one). */
+  signInWithPassword: (
+    email: string,
+    password: string,
+    code?: string,
+    url?: string,
+  ) => Promise<{ error: string | null; twoFactorRequired?: boolean }>;
   /** Continue without a token — works only when the engine trusts this device (same machine). */
   continueLocal: () => Promise<string | null>;
   signOut: () => Promise<void>;
+  /** Re-reads who the engine thinks we are (after enabling two-factor, a role change, …). */
+  refreshSession: () => Promise<void>;
 };
 
 const Ctx = createContext<AuthCtx>({
@@ -82,8 +108,10 @@ const Ctx = createContext<AuthCtx>({
   user: null,
   loading: true,
   signIn: async () => "not ready",
+  signInWithPassword: async () => ({ error: "not ready" }),
   continueLocal: async () => "not ready",
   signOut: async () => {},
+  refreshSession: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -127,6 +155,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return null;
   }, []);
 
+  const signInWithPassword = useCallback(
+    async (email: string, password: string, code?: string, url?: string) => {
+      const target = (url || readUrl()).trim().replace(/\/$/, "");
+      try {
+        const r = await fetch(`${target}/api/auth/login`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email, password, ...(code ? { code } : {}) }),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok || !body.token) {
+          return {
+            error: body.error || `Sign-in failed (${r.status})`,
+            twoFactorRequired: Boolean(body.twoFactorRequired),
+          };
+        }
+        const err = await signIn(body.token, target);
+        return { error: err };
+      } catch {
+        return { error: "Could not reach the engine." };
+      }
+    },
+    [signIn],
+  );
+
   const continueLocal = useCallback(async () => {
     const s = await whoAmI(readUrl(), "");
     if (!s) {
@@ -139,14 +192,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    // end the engine-side session too when this is a user account (best effort)
+    const token = readToken();
+    if (token.startsWith("hxs_")) {
+      fetch(`${readUrl().replace(/\/$/, "")}/api/auth/logout`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
     localStorage.setItem("hx.signed_out", "1");
     setEngineConfig(readUrl(), ""); // forget the token
     setSession(null);
   }, []);
 
+  const refreshSession = useCallback(async () => {
+    const s = await whoAmI(readUrl(), readToken());
+    if (s) setSession(s);
+  }, []);
+
   return (
     <Ctx.Provider
-      value={{ session, user: session?.user ?? null, loading, signIn, continueLocal, signOut }}
+      value={{
+        session,
+        user: session?.user ?? null,
+        loading,
+        signIn,
+        signInWithPassword,
+        continueLocal,
+        signOut,
+        refreshSession,
+      }}
     >
       {children}
     </Ctx.Provider>

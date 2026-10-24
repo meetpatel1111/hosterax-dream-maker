@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // hosterax CLI — talks to the engine over HTTP/WS with full platform feature parity.
 import fs from "node:fs";
+import crypto from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -237,6 +238,15 @@ function help() {
     mcp:call <toolName> [jsonArgs]            Execute MCP JSON-RPC tool directly
     mcp:config [cursor|claude|devin|windsurf] Output ready-to-use IDE MCP configuration JSON
     mcp:stdio                                 Run stdio MCP transport for IDEs
+    users                                     List user accounts and their roles
+    user:add <email> [--role developer] [--name "…"] [--password …]
+                                              Create a user (a password is generated and shown once if omitted)
+    user:role <email|id> <owner|admin|developer|viewer>
+                                              Change a user's role
+    user:disable <email|id> / user:enable <email|id>
+                                              Block or allow a user (also signs them out)
+    user:2fa-reset <email|id>                 Remove a user's two-factor authentication
+    user:rm <email|id>                        Delete a user
     tokens                                    List personal access tokens
     token:new <label>                         Mint personal access token
 `);
@@ -1497,6 +1507,91 @@ try {
           console.log(`\n💡 \x1b[1mAnswer:\x1b[0m\n${text}\n`);
         }
         break;
+      }
+      break;
+    }
+
+    case "users": {
+      const list = await api("GET", "/api/users");
+      if (list.length === 0) {
+        console.log(
+          "No user accounts yet. Create the owner in the dashboard (Users & access) or with: curl -X POST <engine>/api/auth/setup",
+        );
+        break;
+      }
+      console.table(
+        list.map((u) => ({
+          ID: u.id,
+          Email: u.email,
+          Name: u.name,
+          Role: u.role,
+          "2FA": u.twoFactorEnabled ? "on" : "off",
+          Source: u.authSource,
+          Status: u.disabled ? "disabled" : "active",
+          "Last sign-in": u.lastLoginAt ? new Date(u.lastLoginAt).toISOString() : "never",
+        })),
+      );
+      break;
+    }
+
+    case "user:add": {
+      const email = args[0];
+      if (!email) {
+        console.error(
+          'Usage: hosterax user:add <email> [--role developer] [--name "…"] [--password …]',
+        );
+        process.exit(1);
+      }
+      const generated = !flag("password");
+      const password = flag("password") || crypto.randomBytes(12).toString("base64url");
+      const u = await api("POST", "/api/users", {
+        email,
+        name: flag("name") || "",
+        role: flag("role") || "developer",
+        password,
+      });
+      console.log(`✓ ${u.email} created as ${u.role} (${u.id})`);
+      if (generated) {
+        console.log(`  Temporary password (shown once): ${password}`);
+        console.log("  Share it safely; they can change it and add two-factor in Settings.");
+      }
+      break;
+    }
+
+    case "user:role":
+    case "user:disable":
+    case "user:enable":
+    case "user:2fa-reset":
+    case "user:rm": {
+      const target = args[0];
+      if (!target || (cmd === "user:role" && !args[1])) {
+        console.error(
+          cmd === "user:role"
+            ? "Usage: hosterax user:role <email|id> <owner|admin|developer|viewer>"
+            : `Usage: hosterax ${cmd} <email|id>`,
+        );
+        process.exit(1);
+      }
+      const all = await api("GET", "/api/users");
+      const user = all.find((u) => u.id === target || u.email === target.toLowerCase());
+      if (!user) {
+        console.error(`No user "${target}". List them with: hosterax users`);
+        process.exit(1);
+      }
+      if (cmd === "user:role") {
+        await api("PATCH", `/api/users/${user.id}`, { role: args[1] });
+        console.log(`✓ ${user.email} is now ${args[1]}`);
+      } else if (cmd === "user:disable" || cmd === "user:enable") {
+        await api("PATCH", `/api/users/${user.id}`, { disabled: cmd === "user:disable" });
+        console.log(
+          `✓ ${user.email} ${cmd === "user:disable" ? "disabled and signed out" : "enabled"}`,
+        );
+      } else if (cmd === "user:2fa-reset") {
+        await api("POST", `/api/users/${user.id}/2fa-reset`);
+        console.log(`✓ Two-factor removed for ${user.email}; they were signed out`);
+      } else {
+        await api("DELETE", `/api/users/${user.id}`);
+        console.log(`✓ ${user.email} deleted`);
       }
       break;
     }

@@ -224,6 +224,7 @@ export function createProjectsApi(ctx) {
 
   function tokenScopes(req) {
     const t = bearerFrom(req);
+    if (t.startsWith("hxs_")) return ctx.sessionScopes?.(t) ?? [];
     const row = t
       ? db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hashToken(t))
       : null;

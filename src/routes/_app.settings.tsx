@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useEngine, useEngineHealth } from "@/lib/engine";
 import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
 import { EdgeProviderSelector } from "@/components/hx/edge-provider-selector";
+import { AccountSecurity } from "@/components/hx/account-security";
 import { isLiveTranslateEnabled, setLiveTranslateEnabled } from "@/lib/live-translator";
 import { remoteLogosEnabled, setRemoteLogosEnabled } from "@/lib/privacy";
 
@@ -55,6 +56,9 @@ function SettingsPage() {
 
       {/* Magic Wildcard DNS Provider Setting */}
       <MagicDnsSelector />
+
+      {/* Password and two-factor for the signed-in user account (hidden when using a token) */}
+      <AccountSecurity />
 
       <div className="rounded-lg border border-border bg-card p-6">
         <div className="text-sm font-medium">Language &amp; translation</div>
@@ -156,8 +160,9 @@ function SettingsPage() {
       <div className="rounded-lg border border-border bg-card p-6">
         <div className="text-sm font-medium">Your access</div>
         <p className="mt-1 text-xs text-muted-foreground">
-          HosteraX has no separate user accounts: what you can do is decided by the engine from your
-          API token (or from being on the engine's own machine). Manage tokens under API tokens.
+          What you can do is decided by the engine: by your role when you sign in with an account,
+          or by your API token's scope (or by being on the engine's own machine). Manage people
+          under Users &amp; access and tokens under API tokens.
         </p>
         <div className="mt-3 grid gap-3 text-sm">
           <Row k="Signed in as" v={user?.name ?? "—"} />
