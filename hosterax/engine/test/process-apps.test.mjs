@@ -7,7 +7,8 @@
 //    ending only the shell left the app running, still holding its port, while the engine believed it had
 //    stopped.
 //
-// One file, so these tests run one after another: they share the machine's free ports with each other.
+// One file, so these tests run one after another. They ask for ports of their own (not the 3000 range every
+// other test's apps start from), so they neither take a port another test is about to use nor lose one.
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -22,6 +23,7 @@ const h = createHarness("hosterax-procs-");
 let engine;
 let admin;
 let squatter;
+let squattedPort;
 let appDir;
 const api = (method, path, body) => h.call(engine, admin, method, path, body);
 const PROJECTS = ["portapp", "procapp", "procgone"];
@@ -33,13 +35,10 @@ before(async () => {
     join(appDir, "server.js"),
     `require("http").createServer((q, r) => r.end(String(process.pid))).listen(Number(process.env.PORT), "127.0.0.1");\n`,
   );
-  // Something is already on the port the engine would pick first. (If another process already holds it,
-  // that is the same situation.)
+  // Something is already on the port the project would be given first.
   squatter = net.createServer();
-  await new Promise((resolve) => {
-    squatter.once("error", resolve);
-    squatter.listen(3000, "127.0.0.1", resolve);
-  });
+  await new Promise((resolve) => squatter.listen(0, "127.0.0.1", resolve));
+  squattedPort = squatter.address().port;
   engine = await h.startEngine();
   admin = engine.bootstrap;
 });
@@ -66,12 +65,22 @@ async function deployAndWait(name) {
   const log = (await api("GET", `/api/deployments/${r.data.id}/logs`)).text;
   assert.equal(dep.phase, "ready", String(log).slice(-1500));
 }
-const create = (name) =>
+/** A port nothing is listening on, to ask for as the project's preferred port. */
+const aFreePort = () =>
+  new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+const create = async (name, port) =>
   api("POST", "/api/projects", {
     name,
     source: appDir,
     target: "process",
     startCmd: "node server.js",
+    port: port ?? (await aFreePort()),
   });
 const alive = (pid) => {
   try {
@@ -95,10 +104,10 @@ const portOf = async (name) => (await api("GET", `/api/projects/${name}`)).data.
 const gone = (pid) => h.until(() => !alive(pid), 10000, `process ${pid} to be gone`);
 
 test("a first deploy skips a port something else is listening on", async () => {
-  assert.equal((await create("portapp")).status, 201);
+  assert.equal((await create("portapp", squattedPort)).status, 201);
   await deployAndWait("portapp");
   const port = await portOf("portapp");
-  assert.notEqual(port, 3000, "port 3000 was already taken");
+  assert.notEqual(port, squattedPort, "that port was already taken");
   assert.ok((await pidOf(port)) > 0, "the app answers on the port it was given");
 });
 
