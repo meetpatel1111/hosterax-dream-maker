@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { spawnSync } from "./safe-exec.mjs";
+import { killTree } from "./process-tree.mjs";
 import { splitArgs, isSafeHostname, isSafeImageRef } from "./security.mjs";
 import { encryptJson, decryptJson } from "./secrets.mjs";
 
@@ -1230,27 +1231,6 @@ function processNameOf(pid) {
     return path.basename(out.trim()) || null;
   } catch {
     return null;
-  }
-}
-
-/** Ends a process and everything it started (npx and ssh both leave children). */
-function killTree(pid, child) {
-  if (!pid) return;
-  try {
-    if (process.platform === "win32") {
-      execFile("taskkill", ["/pid", String(pid), "/T", "/F"], { windowsHide: true }, () => {});
-      return;
-    }
-    process.kill(-pid, "SIGTERM");
-    setTimeout(() => {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {}
-    }, 3000).unref();
-  } catch {
-    try {
-      child?.kill("SIGKILL");
-    } catch {}
   }
 }
 

@@ -1,0 +1,139 @@
+// Apps that run as plain processes: the port they get, and really stopping them.
+//
+// 1. A first deploy must not be given a port something else on the machine is already listening on (a dev
+//    server on 3000, another engine, another app): the app would fail to start with "address already in use".
+// 2. A project run as a process must really stop when it is stopped, redeployed or deleted. The engine starts
+//    it as `sh -c "<command>"`; on Debian and Ubuntu that shell does not replace itself with the command, so
+//    ending only the shell left the app running, still holding its port, while the engine believed it had
+//    stopped.
+//
+// One file, so these tests run one after another: they share the machine's free ports with each other.
+
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import http from "node:http";
+import net from "node:net";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createHarness } from "./helpers/engine-harness.mjs";
+
+const h = createHarness("hosterax-procs-");
+let engine;
+let admin;
+let squatter;
+let appDir;
+const api = (method, path, body) => h.call(engine, admin, method, path, body);
+const PROJECTS = ["portapp", "procapp", "procgone"];
+
+before(async () => {
+  appDir = mkdtempSync(join(tmpdir(), "hx-proc-app-"));
+  // the app answers with its own process id, so a test can tell one running copy from another
+  writeFileSync(
+    join(appDir, "server.js"),
+    `require("http").createServer((q, r) => r.end(String(process.pid))).listen(Number(process.env.PORT), "127.0.0.1");\n`,
+  );
+  // Something is already on the port the engine would pick first. (If another process already holds it,
+  // that is the same situation.)
+  squatter = net.createServer();
+  await new Promise((resolve) => {
+    squatter.once("error", resolve);
+    squatter.listen(3000, "127.0.0.1", resolve);
+  });
+  engine = await h.startEngine();
+  admin = engine.bootstrap;
+});
+after(async () => {
+  // a project that is still around keeps its app running after the engine is gone
+  if (engine && admin)
+    for (const name of PROJECTS)
+      await api("DELETE", `/api/projects/${name}?permanent=true`).catch(() => {});
+  await h.cleanup();
+  await new Promise((r) => (squatter.listening ? squatter.close(r) : r()));
+});
+
+async function deployAndWait(name) {
+  const r = await api("POST", `/api/projects/${name}/deploy`, {});
+  assert.equal(r.status, 200, r.text);
+  const dep = await h.until(
+    async () => {
+      const d = (await api("GET", `/api/deployments/${r.data.id}`)).data;
+      return d && ["ready", "failed", "cancelled"].includes(d.phase) ? d : null;
+    },
+    60000,
+    "the deployment to finish",
+  );
+  const log = (await api("GET", `/api/deployments/${r.data.id}/logs`)).text;
+  assert.equal(dep.phase, "ready", String(log).slice(-1500));
+}
+const create = (name) =>
+  api("POST", "/api/projects", {
+    name,
+    source: appDir,
+    target: "process",
+    startCmd: "node server.js",
+  });
+const alive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === "EPERM";
+  }
+};
+const pidOf = (port) =>
+  new Promise((resolve, reject) =>
+    http
+      .get({ host: "127.0.0.1", port, path: "/" }, (res) => {
+        let text = "";
+        res.on("data", (d) => (text += d));
+        res.on("end", () => resolve(Number(text)));
+      })
+      .on("error", reject),
+  );
+const portOf = async (name) => (await api("GET", `/api/projects/${name}`)).data.port;
+const gone = (pid) => h.until(() => !alive(pid), 10000, `process ${pid} to be gone`);
+
+test("a first deploy skips a port something else is listening on", async () => {
+  assert.equal((await create("portapp")).status, 201);
+  await deployAndWait("portapp");
+  const port = await portOf("portapp");
+  assert.notEqual(port, 3000, "port 3000 was already taken");
+  assert.ok((await pidOf(port)) > 0, "the app answers on the port it was given");
+});
+
+test("a project that has already deployed keeps its port when it is deployed again", async () => {
+  const port = await portOf("portapp");
+  await deployAndWait("portapp");
+  assert.equal(await portOf("portapp"), port);
+  assert.ok((await pidOf(port)) > 0);
+});
+
+test("redeploying replaces the running app: the old process is gone, not left beside the new one", async () => {
+  assert.equal((await create("procapp")).status, 201);
+  await deployAndWait("procapp");
+  const port = await portOf("procapp");
+  const first = await pidOf(port);
+  assert.ok(alive(first));
+
+  await deployAndWait("procapp");
+  assert.equal(await portOf("procapp"), port, "the address does not change");
+  const second = await pidOf(port);
+  assert.notEqual(second, first, "the new version is the one answering");
+  await gone(first);
+});
+
+test("stopping a project ends its app", async () => {
+  const pid = await pidOf(await portOf("procapp"));
+  const r = await api("POST", "/api/projects/procapp/stop");
+  assert.equal(r.status, 200, r.text);
+  await gone(pid);
+});
+
+test("deleting a project ends its app", async () => {
+  assert.equal((await create("procgone")).status, 201);
+  await deployAndWait("procgone");
+  const pid = await pidOf(await portOf("procgone"));
+  assert.equal((await api("DELETE", "/api/projects/procgone")).status, 200);
+  await gone(pid);
+});

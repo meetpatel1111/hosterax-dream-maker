@@ -41,6 +41,7 @@ import {
 } from "./stack-registry.mjs";
 import { SelfHealEngine } from "./self-heal.mjs";
 import { pullWithUniversalHealing, normalizeImageSource } from "./image-resolver.mjs";
+import { killTree, waitForTreeExit } from "./process-tree.mjs";
 import { TLSManager } from "./tls-manager.mjs";
 import { EdgeManager } from "./edge-manager.mjs";
 import { BackupManager } from "./backup-manager.mjs";
@@ -1417,11 +1418,7 @@ function stopProjectHere(project, reason) {
       rec.server.close();
     } catch {}
   }
-  if (rec.child?.pid && rec.child.pid !== process.pid) {
-    try {
-      process.kill(rec.child.pid);
-    } catch {}
-  }
+  if (rec.child?.pid && rec.child.pid !== process.pid) killTree(rec.child.pid, rec.child);
   publishRuntime(project, { ts: Date.now(), stream: "system", text: `stopped (${reason})` });
   running.delete(project);
   return true;
@@ -1686,7 +1683,10 @@ function pickPrimaryHttpPort(exposedPorts) {
 }
 
 async function startService(deploymentId, project, workdir, cmd, env, target, port) {
+  // The old version has to be gone, not just signalled, before the new one can bind the same port.
+  const previousPid = running.get(project)?.child?.pid;
   stopProject(project, "superseded by new deploy");
+  if (previousPid && previousPid !== process.pid) await waitForTreeExit(previousPid);
   const remoteServerId = currentServerId();
   if (remoteServerId) {
     // Projects on another server run as a single Docker container; nothing else is placed there.
@@ -3975,13 +3975,7 @@ const server = http.createServer(async (req, res) => {
       } catch {}
       if (removedServer) serverManager.unforward(removedServer, projName).catch(() => {});
       gateManager.disable(projName).catch(() => {});
-      const r = running.get(projName);
-      if (r) {
-        try {
-          process.kill(r.pid);
-        } catch {}
-        running.delete(projName);
-      }
+      stopProject(projName, "project deleted");
       return json(res, 200, { ok: true });
     }
 
