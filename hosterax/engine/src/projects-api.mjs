@@ -195,6 +195,7 @@ export function createProjectsApi(ctx) {
     stopProject,
     purgeDatabases,
     serverManager,
+    gateManager,
   } = ctx;
   const UPLOADS = path.join(HOME, "uploads");
   fs.mkdirSync(UPLOADS, { recursive: true });
@@ -807,6 +808,8 @@ export function createProjectsApi(ctx) {
     }
 
     if (isPermanent) {
+      // a gate left behind would keep a listener and a password for a project that no longer exists
+      await gateManager?.disable(targetName).catch(() => {});
       // database containers/volumes would otherwise be orphaned with their data
       try {
         await purgeDatabases?.(targetName);

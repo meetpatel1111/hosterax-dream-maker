@@ -2847,6 +2847,7 @@ const projectsApi = createProjectsApi({
   readBody,
   stopProject,
   serverManager,
+  gateManager,
   purgeDatabases: async (projectName) => {
     for (const row of db.prepare("SELECT * FROM managed_dbs WHERE project=?").all(projectName))
       await removeManagedDatabase(row);
@@ -3987,6 +3988,7 @@ const server = http.createServer(async (req, res) => {
         );
       } catch {}
       if (removedServer) serverManager.unforward(removedServer, projName).catch(() => {});
+      gateManager.disable(projName).catch(() => {});
       const r = running.get(projName);
       if (r) {
         try {

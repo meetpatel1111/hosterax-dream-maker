@@ -89,12 +89,21 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 
 ---
 
-### 5. Server Registry (`hosterax/engine/src/server-manager.mjs`)
+### 5. Remote Servers (`server-manager.mjs`, `ssh-transport.mjs`, `ssh-bridge-worker.mjs`, `docker-scope.mjs`)
 
-- Stores remote Linux hosts (SSH key encrypted at rest) and checks that their SSH port is reachable.
-- Generates a Docker bootstrap script to run on a new host.
-- The local node reports real CPU/RAM figures; remote nodes show unknown specs until a probe is implemented.
-- **Not implemented:** running deployments on remote nodes. Projects currently run on the machine hosting the engine (see [ROADMAP.md](ROADMAP.md)).
+- **Servers**: Linux hosts reached with the system `ssh` using key authentication. The key is stored encrypted; the host key must be confirmed by an admin and is pinned (a changed key is refused). A monitor re-checks each connected server every minute and records status changes as events.
+- **One way to reach Docker**: a bridge process per server listens on a private unix socket and turns each connection into `ssh … docker system dial-stdio`. `DOCKER_HOST=unix://<that socket>` therefore works for the Docker CLI and the engine's HTTP Docker client alike. It is a separate process because the engine calls `spawnSync("docker", …)` in many places, which blocks its own event loop.
+- **Placement**: `projects.server_id`. The work for a project runs inside `runOnServer(serverId, …)` (`docker-scope.mjs`, an `AsyncLocalStorage` scope): while it is active, `docker` processes started through the scoped `spawn` / `execFile` / `spawnSync` get that server's `DOCKER_HOST`. Deploy, stop, restart, rollback, logs, delete, self-heal and prune all use it; a server that is down makes the call fail instead of falling back to this machine.
+- **Reaching the app**: the container publishes on the server's loopback (`projects.remote_port`); the bridge forwards it with `ssh -W` over the same connection to `projects.port` on this machine, so routes, health checks, domains and tunnels are unchanged.
+- **Failure behaviour**: an unreachable server shows its projects as unreachable; self-heal does nothing for them until it answers.
+- **Not implemented:** compose or process targets on a server, an edge on each server, an agent for servers behind NAT, remote managed databases and backups, remote metrics charts. See [ROADMAP.md](ROADMAP.md).
+
+---
+
+### 5b. Password Gate (`gate-manager.mjs`) and Notifications (`notification-manager.mjs`)
+
+- **Gate**: a per-project listener that shows a password page, then proxies (HTTP and WebSocket) to the app. Routes and tunnels point at the gate's port instead of the app's.
+- **Notifications**: subscribes to the engine's event log (self-heal, tunnels, servers, scheduled backups) and to deployment outcomes, and delivers to webhook, Slack, Discord, ntfy or email channels with de-duplication and per-channel status.
 
 ---
 

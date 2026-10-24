@@ -17,127 +17,106 @@ TypeScript monorepo of about 7,300 files). None of them was run.
   authentication, passkeys and what looks like OAuth for MCP clients, but no user SSO was found), free public tunnels that need no
   account or domain, a broad app catalog, and a much smaller footprint: one Node process and SQLite
   where Openship's server mode runs Postgres and Redis.
-- **Behind:** deploying to other machines (Coolify, Dokploy and Openship all can; HosteraX runs
-  everything on the engine host), clustering, mail that receives mail, notifications and monitoring,
-  a GitHub App, a CDN, and awareness (Coolify has about 63.6k GitHub stars, Openship about 14.9k).
-  Openship also manages Cloudflare Tunnels through the Cloudflare API with Cloudflare Access login
-  policies, and has a password gate at the edge for any route.
+- **Closed since that comparison:** deploying to other machines over SSH (single-container Docker
+  projects, host key pinned, no agent), notifications (webhook, Slack, Discord, ntfy, email), a
+  password gate for any app, pinned tunnel images, Docker context detection, generated CLI and API
+  references, and a licence inventory with a policy check.
+- **Still behind:** a per-server edge and orchestration across servers, clustering, mail that
+  receives mail, metrics and dashboards (Prometheus, charts), a GitHub App, a CDN, and awareness
+  (Coolify has about 63.6k GitHub stars, Openship about 14.9k). Openship also manages Cloudflare
+  Tunnels through the Cloudflare API with Cloudflare Access login policies; HosteraX asks you to
+  paste a tunnel token.
 - **Engineering discipline:** Openship has about 1,850 test files, end-to-end and release-gate
   workflows, release advisories, structured error reporting and a `TODO.md` checked against the
-  tree. HosteraX has 11 test files (about 120 tests).
+  tree. HosteraX has 24 test files (224 tests, including end-to-end tests against a real OpenSSH server).
 - **Unproven:** the newest features were tested against simulated systems only (an identity
-  provider, Docker for restore drills, the tunnel services, the Docker image build).
+  provider, Docker for restore drills, the tunnel services, the Docker image build). Remote servers
+  were tested with the real engine, the real `docker` CLI and a real OpenSSH server, but the Docker
+  daemon behind the SSH connection was a stand-in, and no real second machine was used.
 
 ## Priority order
 
-| Order | Item                                   | Why                                                                                              | Size |
-| :---- | :------------------------------------- | :----------------------------------------------------------------------------------------------- | :--- |
-| 1     | Remote servers over SSH                | The largest gap: Coolify, Dokploy and Openship all deploy to other machines                      | L    |
-| 2     | Prove the new features on real systems | Trust is the differentiator, and SSO, restore drills, tunnels and the image build are unverified | S–M  |
-| 3     | Notifications and observability        | Backup, deploy, tunnel and self-heal failures only show in the UI; competitors notify and chart  | M    |
-| 4     | Decide what "mail" is                  | Openship bundles a mail server; HosteraX only sends through a relay                              | M–L  |
-| 5     | GitHub App and pull-request previews   | Replaces per-repo webhook secrets and puts the preview link on the pull request                  | M    |
-| 6     | Make it easy to adopt                  | One-line installer, a docs site, a demo, release notes: the gap to Coolify is mostly awareness   | S–M  |
-| 7     | Multi-node orchestration               | Scheduling and failover across servers; only after item 1                                        | L    |
-| 8     | Edge extras (CDN and cache rules)      | Openship has a CDN, but most people put Cloudflare in front, so this goes last                   | S–M  |
+| Order | Item                                   | Why                                                                                                              | Size |
+| :---- | :------------------------------------- | :--------------------------------------------------------------------------------------------------------------- | :--- |
+| 1     | Remote servers: the rest of the plan   | Built for Docker projects; still missing a per-server edge, compose, remote databases and a real-machine run     | M–L  |
+| 2     | Prove the new features on real systems | Trust is the differentiator, and SSO, restore drills, tunnels, remote servers and the image build are unverified | S–M  |
+| 3     | Observability                          | Notifications exist now; Prometheus metrics, charts and alert rules (disk, certificate expiry) do not            | M    |
+| 4     | Decide what "mail" is                  | Openship bundles a mail server; HosteraX only sends through a relay                                              | M–L  |
+| 5     | GitHub App and pull-request previews   | Replaces per-repo webhook secrets and puts the preview link on the pull request                                  | M    |
+| 6     | Make it easy to adopt                  | One-line installer, a docs site, a demo, release notes: the gap to Coolify is mostly awareness                   | S–M  |
+| 7     | Multi-node orchestration               | Scheduling and failover across servers; only after item 1                                                        | L    |
+| 8     | Edge extras (CDN and cache rules)      | Openship has a CDN, but most people put Cloudflare in front, so this goes last                                   | S–M  |
 
 Details of the older, finer-grained backlog follow below; the items there that overlap with this
 table (remote deploys, mail, notifications, GitHub App) are the same work.
 
-### Plan: remote servers over SSH
+### Remote servers over SSH: what was built and what is left
 
-**Where it stands.** The server registry stores SSH credentials encrypted, generates a Docker
-bootstrap script and polls metrics, but "test connection" only opens a TCP connection to the SSH
-port: it never logs in and never checks Docker. Projects have no placement field, so nothing can run
-anywhere but the engine host. Roughly 40 places run the `docker` CLI and a separate HTTP client talks
-to the daemon; the client understands unix sockets, named pipes and TCP, but not `ssh://`. The edge
-proxy forwards to `host.docker.internal`, which only works for the engine's own host.
+**Built.** Servers are logged into for real (`ssh`, key only), their host key is confirmed by an admin
+and pinned, a changed key is refused, and the connection test reports the machine and Docker with a
+plain-words reason for each failure. Docker on a server is reached through a bridge process that runs
+`ssh … docker system dial-stdio`, behind a unix socket, so the CLI and the HTTP client share one path
+(`DOCKER_HOST=unix://…`). Projects have a `server_id`; the work for a project runs inside
+`runOnServer(serverId, …)`, an async scope that points every `docker` process at that server, so
+deploy, rollback, stop, restart, logs, delete, self-heal and prune act on it, and a server that is
+down fails the call instead of falling back to this machine. The container publishes on the server's
+loopback and is forwarded over the same SSH connection to a port here, which routes, health checks,
+domains and tunnels already use. An unreachable server shows its projects as unreachable and nothing
+is restarted. Tested end to end against a real `sshd` (as root and as an ordinary user), the real
+`docker` CLI and a stand-in Docker daemon, with mutation checks on host-key pinning, strict checking,
+key permissions, input validation, the scope and the unreachable guard.
 
-**Approach: Docker over SSH, with no agent on the server.** Run the same Docker commands against the
-remote daemon with `DOCKER_HOST=ssh://user@host`, using a private `HOME` per server that holds an
-`.ssh/config`, the server's key and a pinned `known_hosts`, so none of the operator's own ssh setup
-is involved. Builds happen on the remote daemon. Alternatives considered: a custom agent (more
-control and works behind NAT, but a new program to secure and ship; kept for a later phase), Docker
-Swarm (clustering, not placement; item 7), and shell scripts over ssh (fragile).
+**Where it differs from the plan above.** Docker is reached through a bridge rather than
+`DOCKER_HOST=ssh://`: the engine calls `spawnSync("docker", …)` in many places, which blocks its own
+event loop, and a bridge living in the engine could not answer the very command waiting for it, so
+it is a separate process. There is no per-server `HOME` with an ssh config: HosteraX runs `ssh -F` with a
+config it generates, which also works without touching `HOME`. Apps are reached through a forward
+from this machine instead of an edge on each server.
 
-**What Openship does (from its source).** Everything goes through a command-executor interface with a
-local implementation and two ssh ones (the `ssh2` library, and the OS `ssh` binary for agent auth).
-Docker is driven through its Engine API over a transport object (local socket, ssh, mutual TLS) with
-a reachability preflight and an actionable hint for each failure. The ssh transport runs
-`docker system dial-stdio` over an ssh channel, falling back from socket forwarding to it because some
-`sshd` setups open channels that never carry data. It runs an OpenResty edge and certbot on each
-target server. As far as the code shows, it pins host keys only for customer-owned connections;
-ordinary servers are connected with `StrictHostKeyChecking=accept-new` or with no verifier, and a changed key in `known_hosts` is
-removed rather than refused, although its own security guide says strict checking is always used.
-This plan keeps the same shape but does the host-key part properly.
+**Left to do.**
 
-- **Phase 0, honest connection test (S).** Log in with the stored key, run `docker version`,
-  `docker info` and a disk and memory probe, and report what is wrong in plain words. Show the host
-  key fingerprint at registration, store it, and refuse to connect if it ever changes (the
-  competitor reviewed does not do this for ordinary servers). Key authentication only; no password
-  login.
-- **Phase 1, one way to reach Docker (M).** A `dockerFor(server)` function that returns the
-  environment, arguments and API client for a server, and route all roughly 40 CLI call sites and the API
-  client through it. The local engine host stays the default and must behave exactly as today.
-  Model each server's connection as a transport with a preflight check and a plain-words hint for
-  each failure. Prefer `docker system dial-stdio` (what `DOCKER_HOST=ssh://` uses) over socket
-  forwarding. Find the remote socket instead of assuming `/var/run/docker.sock` (rootless Docker),
-  never cache a failed probe as "no Docker here", and send ssh keepalives often enough that a heavy
-  build cannot starve `sshd` and drop the session.
-- **Phase 2, placement (M).** A `server_id` on each project, a choice in the dashboard, CLI and API,
-  and make deploy, rollback, health checks, logs, metrics, stop and delete run on that server.
-  Managed databases, backups, verification and restore drills run through the same function.
-- **Phase 3, routing (M).** Run an edge on each server (preferred), managed through the same
-  transport: DNS points at the server, TLS ends there, nothing crosses between hosts in plain
-  text, and traffic keeps flowing if the engine is down. Forwarding from one central edge to a
-  remote address stays available for private networks; tunnels point at the server's address
-  either way. Document binding app ports to a private interface and firewalling them.
-- **Phase 4, failure behaviour (M).** A server that cannot be reached shows its projects as
-  unreachable, not crashed, and self-heal does not move them elsewhere unasked. Reuse ssh
-  connections (`ControlMaster`), limit concurrent commands per server, serialise changes to one
-  server with a lock, make long operations cancellable, and journal remote commands so a dropped
-  connection during a long build does not lose the result.
-- **Later:** an agent for servers that cannot accept inbound ssh, and scheduling across servers
-  (item 7).
-
-**Security.** Credentials are already encrypted at rest. Write the key to a `0600` file only for the
-duration of a command, disable agent forwarding, verify host keys strictly, and keep server
-management admin-only. Say plainly in the docs that access to a server's Docker group is root on
-that server.
-
-**Testing.** The sandbox has no sshd or Docker, so CI uses a fake `ssh` and a fake Docker (as the
-existing tests already do for Docker) to check the generated environment, arguments and failure
-paths, with mutation checks on host-key pinning. An opt-in test against a real sshd container runs
-where Docker exists.
-
-**Done when** a project can be deployed, routed, logged, rolled back, backed up and restore-drilled
-on a real remote server, and the limits are written down.
+- **A per-server edge (M).** DNS pointing at the server, TLS ending there, traffic flowing if the
+  engine is down. Today traffic enters through this machine's edge or tunnel and crosses to the server
+  inside SSH.
+- **Compose and process projects on a server, and remote managed databases, backups and restore drills (M).** Today a
+  server runs single-container Docker projects, and databases, backups, scale-to-zero and the metrics
+  charts are local only.
+- **Per-server serialisation and cancellation (S–M).** Changes to one server are not yet queued behind
+  a lock, long builds cannot be cancelled, and a dropped connection during a long build is not journalled.
+- **Move a project between servers (S–M).** Deployed projects cannot be moved.
+- **Find the remote Docker socket (S).** `docker system dial-stdio` uses the remote CLI's own endpoint,
+  which covers most setups; rootless Docker whose CLI is not configured for it is not handled.
+- **An agent** for servers that cannot accept inbound SSH, and scheduling across servers (item 7).
+- **Run it against a real machine (S).** The first real server is the first real check of the Docker
+  parts.
 
 ### Smaller follow-ups from reading Openship's code
 
-- **Pin the tunnel programs (S, soon).** HosteraX's Docker fallback runs `cloudflared`, `ngrok` and
-  `bore` as `:latest`. Openship pins `cloudflared` by image digest and by a SHA-256 per
-  architecture. Pin version and digest, and say how to update them.
+- **Pin the tunnel programs: done.** The Docker fallback runs `cloudflared`, `ngrok` and `bore` pinned
+  by version and digest (`IMAGES` in `tunnel-manager.mjs`; `HOSTERAX_<TOOL>_IMAGE` overrides one).
+  To update, pull the new tag, read its digest with `docker buildx imagetools inspect`, and change
+  both. The edge images (`openresty/openresty:alpine`, `caddy`, `certbot/certbot`) still use floating
+  tags.
 - **API-driven Cloudflare tunnels with login policies (M).** Given a Cloudflare API token, create
   the tunnel, DNS records and ingress rules, and optionally a Cloudflare Access policy, instead of
   asking the user to copy a token from the dashboard.
-- **A password gate at the edge for any route (S–M).** A salted PBKDF2 hash and a signed session
-  cookie checked by the proxy, so an exposed app can have a login without changing the app.
+- **A password gate for any app: done, but not at the edge.** A per-project listener (PBKDF2 hash,
+  signed session cookie, rate limit, WebSockets) in front of the app; routes and tunnels point at it.
+  It is one shared password, so Cloudflare Access style per-person policies remain open.
 - **Edge-side metrics (M).** Count requests in the proxy's log phase and flush aggregates on a
   schedule: no per-request I/O and no database write per request.
-- **Find the Docker daemon through the CLI's active context (S).** Colima, Rancher Desktop, Podman
-  and rootless Docker advertise themselves that way, not through `DOCKER_HOST`.
+- **Find the Docker daemon through the CLI's active context: done** (`detectDockerHost`).
 - **Consent and an audit trail for MCP clients (M).** Openship appears to issue OAuth tokens to MCP
   clients with a consent step and an audit log, judging by its MCP consent, token and audit modules
   (not read in full); this is the same work as the OAuth item in the backlog below.
-- **Generate and check reference docs (S).** Generate the CLI, API and MCP references from code and
-  fail CI when they drift, as the API contract already does for routes.
+- **Generate and check reference docs: done for the CLI and the API** (`docs/CLI.md`, `docs/API.md`,
+  `npm run docs:check`). The MCP tool reference is still written by hand.
 - **Write the deploy sequence down as code (M).** One pipeline (preflight, start the new release,
   health gate, route, retire the old one) with retain-and-revert and cancellation, shared by every
   deploy target.
-- **Keep a component licence inventory.** Openship ships a vendored GPL v3 mail engine inside its API
-  image and has an open issue about the provenance of its webmail code. Record every bundled
-  component's licence, and run mail as a separate managed app if it is added.
+- **Keep a component licence inventory: done** (`docs/THIRD_PARTY.md`, `npm run licenses:check` fails
+  on strong copyleft or a missing licence). Run mail as a separate managed app if it is added; Openship
+  ships a vendored GPL v3 mail engine inside its API image.
 
 ### Decisions for the owner
 
@@ -171,17 +150,17 @@ on a real remote server, and the limits are written down.
 
 6. **Public access: prove it against the live services and harden it.** Free tunnels (Cloudflare,
    localhost.run, Pinggy, Serveo, localtunnel, ngrok, Tailscale Funnel, bore, custom) exist but were
-   only tested against programs that print each service's documented output. Still missing: a CI
-   job or manual checklist that runs each against the real service, pinned relay host keys for the
-   ssh providers, an optional login (basic auth or Cloudflare Access) in front of an exposed app,
+   only tested against programs that print each service's documented output. A password gate can now
+   sit in front of an exposed app. Still missing: a CI job or manual checklist that runs each against
+   the real service, pinned relay host keys for the ssh providers, per-person login (Cloudflare Access),
    automatic UPnP/NAT-PMP port mapping and an external reachability test for direct exposure, and
    stable custom domains on top of quick tunnels.
-7. **Deploy to remote servers (gap).** See _Plan: remote servers over SSH_ above.
+7. **Deploy to remote servers.** Built for Docker projects; see _Remote servers over SSH_ above for what is left.
 8. **Email that actually receives mail (gap).** Either integrate a proper MTA (Stalwart or Mailu as
    a managed app) or narrow the feature to "DNS records + relay sending" and say so in the UI.
-9. **Backup notifications and verification depth.** Scheduled backups, retention, archive
-   verification, restore drills and opt-in encrypted archives now exist. Still missing: pushing
-   failures to email/Slack/webhooks, running a restore drill against a real Docker daemon in CI,
+9. **Verification depth for backups.** Scheduled backups, retention, archive verification, restore
+   drills, opt-in encrypted archives and failure notifications (webhook, Slack, Discord, ntfy, email)
+   now exist. Still missing: running a restore drill against a real Docker daemon in CI,
    deeper verification of mongodump archives, per-backup key rotation, and MCP tools for schedules.
 10. **Verified catalog images.** A CI job that pulls every catalog image, records its digest and
     architectures, and flips `imageVerified` (currently 608 of ~2,500). Pin digests, and verify
@@ -191,8 +170,9 @@ on a real remote server, and the limits are written down.
 
 ## P2 — Product features
 
-12. **Observability.** A Prometheus `/metrics` endpoint, OpenTelemetry export, alert rules (crash
-    loop, disk, cert expiry, failed backup) with Slack/email/webhook notifications.
+12. **Observability.** Failure notifications exist (deploys, crash loops, servers, backups, tunnels,
+    Docker). Still missing: a Prometheus `/metrics` endpoint, OpenTelemetry export, and alert rules on
+    levels rather than failures (disk, certificate expiry, memory) feeding the same channels.
 13. **GitHub App integration.** Replace per-repo webhook secrets with an app: deploy status checks,
     PR comments with preview URLs, and GitLab/Gitea equivalents.
 14. **Environments and promotion.** Staging → production promotion, deploy approvals, per-PR

@@ -109,7 +109,9 @@ Download the official standalone application packages from the **[GitHub Release
 - 🌍 **Free Public Access**: Give any app a public https address from any computer, with no public IP or router setup, through free tunnels (Cloudflare, localhost.run, Pinggy, ngrok, Tailscale Funnel and more). Reconnects by itself and survives restarts. See [Public access](#-public-access-free-tunnels).
 - 🌐 **Edge Proxy & Automated SSL**: Dynamic routing with OpenResty Lua & Caddy 2, custom domains, wildcard SSL, and Magic DNS integration (`nip.io`, `sslip.io`).
 - ✉️ **Email Configuration Manager**: Manages email domains with real DKIM keys plus SPF/DMARC records, mailboxes, aliases and sending through an external SMTP relay. HosteraX is **not** a mail server: it does not receive mail itself.
-- 🖥️ **Server Registry**: Register remote VPS hosts, check that they are reachable, and generate a Docker bootstrap script. Deploying to remote nodes over SSH is **not implemented yet** — projects run on the machine hosting the engine.
+- 🖥️ **Remote Servers over SSH**: Add a Linux VPS, confirm its host key, and place Docker projects on it. HosteraX builds and runs the container there with the system `ssh` (the server only needs Docker), and reaches the app over the same connection, so the app is never published on the server's public address. See [Remote servers](#-remote-servers-deploy-over-ssh).
+- 🔒 **Password Protection**: Put a password in front of any app, whether it is reached through a domain, the edge proxy or a public tunnel. See [Password protection](#-password-protection).
+- 🔔 **Notifications**: Be told by webhook, Slack, Discord, ntfy or email when a deploy fails, an app crashes, a server goes away or a backup fails. See [Notifications](#-notifications).
 - ⏱️ **Distributed Cron Engine**: Schedule recurring tasks with human-readable crontab schedules, audit execution logs, and manual triggers.
 
 ---
@@ -281,6 +283,14 @@ htx db:create <project> <name> <engine> # Provision postgres, mysql, mongodb or 
 htx backup:create <databaseId|name>   # Create a checksummed backup
 htx s3:sync                           # Trigger remote AWS S3 / Cloudflare R2 sync
 
+# 🖥️ Remote servers, password protection, notifications
+htx server:add <name> --host <ip>     # Add a server (HosteraX makes its SSH key and prints the public half)
+htx server:trust <serverId>           # Confirm the server's host key fingerprint
+htx server:test <serverId>            # Log in and check Docker on it
+htx create <name> --server <serverId> --source <image>   # Place a Docker project on it
+htx gate <project> --password-stdin   # Ask visitors for a password (--off removes it)
+htx notify:add <name> --type slack --url <webhook url>   # Be told when something fails
+
 # 🌍 Public access (free tunnels)
 htx expose <project|edge>             # Give an app a public https address
 htx expose:list                       # Public addresses and their status
@@ -402,11 +412,56 @@ The same thing is in the dashboard under **Public access**. Only an `admin` can 
 - **Direct exposure instead of a tunnel:** `htx expose:ip` tells you this machine's public IP and whether it is assigned to this machine (a VPS: open ports 80/443 and point a DNS record at it) or sits behind a router/NAT (use a tunnel, or forward 80/443). Nothing here opens router ports for you.
 - **Not verified against the live services.** The tunnel commands and the way each address is recognised follow each provider's documentation and are tested against stand-in programs that print the documented output; they were not run against the real services. If one does not connect, `htx expose:logs` shows what it printed, and the `custom` provider lets you adapt the command and pattern.
 
+## 🖥️ Remote servers (deploy over SSH)
+
+Run a project on another machine instead of the one hosting the engine. The server needs Linux, Docker, and an SSH user that may use Docker (`docker` group). Nothing else is installed on it.
+
+```bash
+htx server:add "Frankfurt VPS" --host 203.0.113.50 --user deploy   # prints a public key
+# on the server (as root):  htx server:bootstrap <id> | bash       # installs Docker and authorises that key
+htx server:trust <id>                 # shows the host key fingerprint; confirm it matches your provider's console
+htx server:test <id>                  # logs in, checks Docker, reads CPU / RAM / disk
+htx create shop --server <id> --source nginx:alpine --port 80
+htx deploy shop
+```
+
+The same steps are in the dashboard: **Servers** → Add Server Node → Confirm host key, then choose **Run on** when you create a project.
+
+- **The host key is confirmed by you, once, and a changed key is refused.** HosteraX connects to a server only after you have confirmed its fingerprint, with strict host-key checking, key login only (no passwords, no agent, no terminal) and its own generated ssh config, so your personal `~/.ssh/config` plays no part. If the key later changes (a reinstall, or someone intercepting the connection) nothing is sent until you confirm the new one.
+- **How it runs.** Docker commands go to the server's daemon through a small bridge process that runs `ssh … docker system dial-stdio` (the mechanism Docker's own `ssh://` support uses), so builds happen on the server and the same code that deploys locally deploys remotely. The container publishes only on the **server's loopback**; HosteraX forwards that port over the same SSH connection to a port on this machine, and routes, health checks, domains and public tunnels use that local port. The app is never reachable on the server's own public address.
+- **When the server is unreachable**, its projects show as unreachable, not crashed: nothing is restarted, rolled back or redeployed until it answers again. A deploy to it fails at once with the reason (login rejected, host key changed, Docker not running, no permission to use Docker…).
+- **Requirements and limits.** The engine must run on Linux or macOS (not Windows) with OpenSSH installed, and the server's `sshd` must allow TCP forwarding (the default). Only single-container Docker projects can be placed on a server (no compose or process targets). A deployed project cannot be moved: create it again. Managed databases, backups, scale-to-zero and the metrics charts still work on this machine only; self-heal and the start, stop, restart and log commands work remotely. Traffic from the internet still enters through this machine's edge or tunnel: there is no edge on the server yet. Anyone who can use the server's Docker group is root on it.
+- **Not tested on a real remote machine.** The tests run the real engine, the real `docker` CLI and a real OpenSSH server on loopback, but the Docker daemon behind it is a stand-in. Your first real server is the first real check.
+
+## 🔒 Password protection
+
+```bash
+echo 'a long password' | htx gate shop --password-stdin    # on
+htx gate shop                                              # status
+htx gate shop --off
+```
+
+Also under the project's **Settings**. Visitors see a password page; after the right password they get a 12-hour session cookie and everything (WebSockets included) is passed through to the app. The gate sits in front of the app and routes and public addresses are pointed at it, so it works with domains, the edge proxy and tunnels alike. The password is stored as a PBKDF2 hash, five wrong attempts lock a visitor out for 15 minutes, a new password signs everyone out, and the app never sees the gate's cookie. Redeploy the app after switching it on, so its own port is published on loopback only; before that, anyone on your network who knows the app's port can still reach it directly. It is one shared password, not user accounts.
+
+## 🔔 Notifications
+
+```bash
+htx notify:add "Team Slack" --type slack --url https://hooks.slack.com/services/…
+htx notify:add ops --type webhook --url https://example.com/hook --secret s3cret     # JSON, HMAC-signed
+htx notify:add me --type email --to you@example.com                                # uses your Mail SMTP relay
+htx notify:add phone --type ntfy --url https://ntfy.sh/my-topic
+htx notify:list ; htx notify:test <id>
+```
+
+Channels (also on the dashboard's **Notifications** page) can subscribe to: `deploy.failed`, `deploy.succeeded`, `project.unhealthy` (crash loop, out of memory, auto-rollback), `server.down`, `server.up`, `backup.failed` (including a failed restore drill), `tunnel.failed` and `system.docker`. With nothing ticked a channel gets everything except the quiet ones (`deploy.succeeded`, `server.up`). The same problem for the same project is reported once per ten minutes. URLs are stored encrypted, shown masked, must be http(s), and are never followed through redirects; a failing channel shows its last error instead of failing silently. Webhook bodies carry `X-Hosterax-Signature: sha256=<hmac>` when you set a secret.
+
 ## 📚 API
 
 The engine serves an OpenAPI 3.1 description of its routes at `GET /api/openapi.json` (paths and
 methods; response schemas are not modelled yet). It is generated from the engine source, and CI fails
 if the CLI or the dashboard call a route that is not in it.
+
+Reference pages generated from the code (CI fails if they drift): [docs/CLI.md](docs/CLI.md) (every command), [docs/API.md](docs/API.md) (every route and the token scope it needs) and [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md) (what HosteraX is built from, under which licences, and the programs it starts or pulls).
 
 ---
 
@@ -418,26 +473,29 @@ if the CLI or the dashboard call a route that is not in it.
 - Environment variable values are masked in build/runtime logs. They are never part of a project's JSON, and `read`-scoped tokens cannot read them; variables flagged secret are also masked for `deploy` tokens in `GET /api/projects/:name/env`. They are decrypted only when an app is deployed or when a `deploy`-level MCP/AI tool reads them.
 - Public endpoints: `/api/health` and the GitHub webhook receiver (`/webhooks/github`, HMAC-verified).
 
-| Variable                          | Default       | Purpose                                                                                                                                                  |
-| :-------------------------------- | :------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `HOSTERAX_PORT`                   | `7777`        | Port the engine listens on                                                                                                                               |
-| `HOSTERAX_HOME`                   | `~/.hosterax` | State directory (database, key, backups)                                                                                                                 |
-| `HOSTERAX_REQUIRE_AUTH`           | off           | Set to `1` to require a token even for local requests                                                                                                    |
-| `HOSTERAX_TRUSTED_ORIGINS`        | –             | Comma-separated extra browser origins allowed to call the API                                                                                            |
-| `HOSTERAX_BIND_HOST`              | `0.0.0.0`     | Interface deployed apps publish on (`127.0.0.1` forces traffic through the edge proxy)                                                                   |
-| `HOSTERAX_PUBLIC_URL`             | –             | Where people reach the engine (SSO redirect address, invite links). Not detected automatically                                                           |
-| `HOSTERAX_PUBLIC_IP`              | `127.0.0.1`   | Public IPv4 used for Magic DNS names such as `app.203-0-113-9.sslip.io`. **Not detected automatically**: `htx expose:ip --save` looks it up and saves it |
-| `HOSTERAX_TUNNEL_HOST`            | auto          | Address tunnels send traffic to for apps on this machine: `127.0.0.1`, or the Docker host's gateway when the engine runs in a container                  |
-| `HOSTERAX_ALLOW_CUSTOM_TUNNELS`   | off           | Set to `1` to allow the `custom` tunnel provider, which runs a command you give it                                                                       |
-| `HOSTERAX_TUNNEL_PROBE`           | on            | Set to `0` to stop the engine checking, from this machine, that a new tunnel's public address answers                                                    |
-| `HOSTERAX_IP_LOOKUP_URLS`         | built-in      | Comma-separated URLs that return this machine's public IP as plain text (replaces the built-in public services)                                          |
-| `HOSTERAX_<TOOL>_PATH`            | –             | Where a tunnel program lives if it is not on `PATH`, e.g. `HOSTERAX_CLOUDFLARED_PATH`, `HOSTERAX_SSH_PATH`, `HOSTERAX_NGROK_PATH`                        |
-| `HOSTERAX_SECRET_KEY`             | generated     | Passphrase used to derive the at-rest encryption key (overrides `secret.key`)                                                                            |
-| `HOSTERAX_IMAGE_DISCOVERY`        | off           | Set to `1` to let the engine search Docker Hub and substitute a different publisher's image when a catalog image can't be pulled — a typosquatting risk  |
-| `HOSTERAX_DEV`                    | off           | Set to `1` to also trust the Vite dev-server origins (8080, 5173, 3000)                                                                                  |
-| `HOSTERAX_URL` / `HOSTERAX_TOKEN` | –             | Where the CLI and `htx mcp` connect                                                                                                                      |
+| Variable                                                | Default       | Purpose                                                                                                                                                              |
+| :------------------------------------------------------ | :------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HOSTERAX_PORT`                                         | `7777`        | Port the engine listens on                                                                                                                                           |
+| `HOSTERAX_HOME`                                         | `~/.hosterax` | State directory (database, key, backups)                                                                                                                             |
+| `HOSTERAX_REQUIRE_AUTH`                                 | off           | Set to `1` to require a token even for local requests                                                                                                                |
+| `HOSTERAX_TRUSTED_ORIGINS`                              | –             | Comma-separated extra browser origins allowed to call the API                                                                                                        |
+| `HOSTERAX_BIND_HOST`                                    | `0.0.0.0`     | Interface deployed apps publish on (`127.0.0.1` forces traffic through the edge proxy)                                                                               |
+| `HOSTERAX_PUBLIC_URL`                                   | –             | Where people reach the engine (SSO redirect address, invite links). Not detected automatically                                                                       |
+| `HOSTERAX_PUBLIC_IP`                                    | `127.0.0.1`   | Public IPv4 used for Magic DNS names such as `app.203-0-113-9.sslip.io`. **Not detected automatically**: `htx expose:ip --save` looks it up and saves it             |
+| `HOSTERAX_TUNNEL_HOST`                                  | auto          | Address tunnels send traffic to for apps on this machine: `127.0.0.1`, or the Docker host's gateway when the engine runs in a container                              |
+| `HOSTERAX_ALLOW_CUSTOM_TUNNELS`                         | off           | Set to `1` to allow the `custom` tunnel provider, which runs a command you give it                                                                                   |
+| `HOSTERAX_TUNNEL_PROBE`                                 | on            | Set to `0` to stop the engine checking, from this machine, that a new tunnel's public address answers                                                                |
+| `HOSTERAX_IP_LOOKUP_URLS`                               | built-in      | Comma-separated URLs that return this machine's public IP as plain text (replaces the built-in public services)                                                      |
+| `HOSTERAX_<TOOL>_PATH`                                  | –             | Where a tunnel program lives if it is not on `PATH`, e.g. `HOSTERAX_CLOUDFLARED_PATH`, `HOSTERAX_SSH_PATH`, `HOSTERAX_NGROK_PATH`                                    |
+| `HOSTERAX_<TOOL>_IMAGE`                                 | pinned        | Docker image used for `CLOUDFLARED`, `NGROK` or `BORE` when the program is not installed. Defaults are pinned by version and digest; set this to move to a newer one |
+| `HOSTERAX_SSH_KEYSCAN_PATH`, `HOSTERAX_SSH_KEYGEN_PATH` | on `PATH`     | Where `ssh-keyscan` and `ssh-keygen` live, for remote servers                                                                                                        |
+| `HOSTERAX_SERVER_POLL_MS`                               | `60000`       | How often connected remote servers are checked                                                                                                                       |
+| `HOSTERAX_SECRET_KEY`                                   | generated     | Passphrase used to derive the at-rest encryption key (overrides `secret.key`)                                                                                        |
+| `HOSTERAX_IMAGE_DISCOVERY`                              | off           | Set to `1` to let the engine search Docker Hub and substitute a different publisher's image when a catalog image can't be pulled — a typosquatting risk              |
+| `HOSTERAX_DEV`                                          | off           | Set to `1` to also trust the Vite dev-server origins (8080, 5173, 3000)                                                                                              |
+| `HOSTERAX_URL` / `HOSTERAX_TOKEN`                       | –             | Where the CLI and `htx mcp` connect                                                                                                                                  |
 
-Known limitations: free tunnels depend on third-party relays, remote SSH deployment and an inbound mail server are not implemented, team roles are a directory only (permissions come from API token scopes), and the edge proxy's Caddy admin API is reachable inside its container network. See [SECURITY.md](SECURITY.md) and [ROADMAP.md](ROADMAP.md).
+Known limitations: free tunnels depend on third-party relays, remote servers run single-container Docker projects only and have no edge of their own (see [Remote servers](#-remote-servers-deploy-over-ssh)), an inbound mail server is not implemented, team roles are a directory only (permissions come from API token scopes), and the edge proxy's Caddy admin API is reachable inside its container network. See [SECURITY.md](SECURITY.md) and [ROADMAP.md](ROADMAP.md).
 
 ---
 

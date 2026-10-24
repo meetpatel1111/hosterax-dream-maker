@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Remote servers over SSH:** place Docker projects on another Linux machine. Add a server, confirm its host key (pinned; a changed key is refused), and choose it under **Run on** or with `htx create --server`. Builds and containers run on the server through the system `ssh` (key login only, strict host checking, a generated ssh config); the app is published on the server's loopback and reached through a port forward over the same connection, so routes, health checks, domains and tunnels work unchanged. Deploy, stop, restart, rollback, logs, delete, self-heal and auto-prune act on the server; an unreachable server shows its projects as unreachable and nothing is restarted. Real connection tests (login, Docker, CPU/RAM/disk), a monitor, key generation, a bootstrap script that authorises the key, `htx server:add|trust|test|bootstrap|rm`, and a dashboard flow. Docker projects only; no edge on the server; tested against a real OpenSSH server and the real Docker CLI with a stand-in Docker daemon.
+- **Password protection (`htx gate`, project Settings):** a password page in front of any app, for domains, the edge and public tunnels alike (PBKDF2, signed 12-hour cookie, rate limit, WebSockets).
+- **Notifications:** webhook (HMAC-signed), Slack, Discord, ntfy and email channels for failed deploys, crashing or rolled-back apps, servers going down or recovering, failed backups and restore drills, failed tunnels and Docker stopping; de-duplicated; `htx notify:*` and a dashboard page.
+- **Docker context detection:** the native Docker client finds the daemon the CLI uses (Colima, Rancher Desktop, OrbStack, Docker Desktop, rootless Docker, Podman).
+- **Generated reference docs:** `docs/CLI.md` and `docs/API.md` come from `hosterax help` and the API contract (`npm run docs:write`; CI fails if they drift). `docs/THIRD_PARTY.md` and `npm run licenses:check` inventory every shipped component and fail on strong copyleft or missing licences.
+- The tunnel Docker images (cloudflared, ngrok, bore) are pinned by version and digest and can be overridden with `HOSTERAX_<TOOL>_IMAGE`.
+
 - **Free public access (tunnels):** `htx expose <project|edge>` and a dashboard **Public access** page give an app a public https address from any computer, with no public IP or router setup. Providers: Cloudflare Quick Tunnel and named tunnel, localhost.run, Pinggy, Serveo, localtunnel, ngrok, Tailscale Funnel, bore (raw TCP) and an opt-in custom command. `auto` picks the first that works, falling through failures and saying what it tried; tunnels reconnect with backoff, resume after an engine restart, follow a redeployed project's new port and are removed with their project. Admin-only; can only target a deployed project or the edge, never the engine or dashboard; tokens are stored encrypted and kept out of command lines and logs. Optional automatic exposure of every deployed project (off by default). Works from the official Docker image (apps are reached on the Docker host; override with `HOSTERAX_TUNNEL_HOST`).
 - `htx expose:ip` / `GET /api/expose/public-ip` looks up the machine's public IP, says whether it is assigned to this machine or behind NAT, and can save it for Magic DNS names.
 - **Scheduled backups:** per-database cron schedules with retention (`keepLast`, `keepDays`), run serially, catch-up after downtime, failure events, and REST/CLI/dashboard management (`/api/backups/schedules`, `htx backup:schedule*`, Backups → Schedules).
@@ -22,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two-factor authentication (TOTP, RFC 6238)** with single-use recovery codes, replay protection and admin reset; secrets are encrypted at rest.
 - **Single sign-on (OpenID Connect)** with authorization code + PKCE, full ID-token verification and least-privilege provisioning (never admin/owner).
 - Sign-in lockout (8 failures → 15 minutes, per email, uniform for unknown emails), a sign-in audit log (`GET /api/auth/events`), dashboard pages (sign-in, Users & access, Settings → Your account) and CLI commands (`htx users`, `user:add|role|disable|enable|2fa-reset|rm`).
+
+### Changed
+
+- `PATCH /api/servers/:id` now edits only name, address, user and key (it used to accept any column, including status and metrics) and validates everything that reaches an ssh config; changing the address drops the pinned host key. Password login for servers is refused.
 
 ### Fixed
 

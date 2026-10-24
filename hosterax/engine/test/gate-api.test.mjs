@@ -178,3 +178,34 @@ test("the command line sets, shows and removes the password without it appearing
   assert.equal(cli(["gate", "vault", "--password-stdin"], "short\n").status, 1);
   assert.match(cli(["gate", "vault", "--off"]).stdout, /no longer asks/);
 });
+
+test("archiving keeps the gate (fail closed); deleting for good removes it", async () => {
+  await api("PUT", "/api/projects/vault/gate", { password: "to be deleted soon" });
+  const port = (await api("GET", "/api/projects/vault/gate")).data.port;
+  assert.equal((await get(port, "/", { headers: { accept: "text/html" } })).status, 401);
+
+  assert.equal((await api("DELETE", "/api/projects/vault")).status, 200, "archived, restorable");
+  assert.equal(
+    (await get(port, "/", { headers: { accept: "text/html" } })).status,
+    401,
+    "a restored project is still protected: archiving never opens it up",
+  );
+
+  assert.equal((await api("DELETE", "/api/projects/vault?permanent=true")).status, 200);
+  await h.until(
+    async () => (await get(port).catch(() => null)) === null,
+    10000,
+    "the gate to close",
+  );
+  await api("POST", "/api/projects", {
+    name: "vault",
+    source: "x",
+    target: "process",
+    port: appPort,
+  });
+  assert.equal(
+    (await api("GET", "/api/projects/vault/gate")).data.enabled,
+    false,
+    "a new project of the same name starts without a password",
+  );
+});
