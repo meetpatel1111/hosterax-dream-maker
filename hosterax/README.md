@@ -9,7 +9,7 @@ Self-hosted deployment engine. Runs on your PC / server / VPS. Includes:
 
 ## Quick start
 
-Requires Node 20+ (Bun works too). Git and Docker optional but recommended.
+Requires Node 22+ (Bun works too). Git and Docker optional but recommended.
 
 ```bash
 cd hosterax/engine && npm install && npm start

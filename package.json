@@ -7,7 +7,7 @@
   "sideEffects": false,
   "type": "module",
   "engines": {
-    "node": ">=20.18.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "dev": "vite dev",
@@ -106,7 +106,7 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.56.1",
     "vite": "^8.0.16",
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^13.0.3",
     "nodemailer": "^9.0.5",
     "ws": "^8.18.0"
   }
