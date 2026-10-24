@@ -308,8 +308,8 @@ if the CLI or the dashboard call a route that is not in it.
 
 - API tokens are stored only as SHA-256 hashes and are shown once, when created. Scopes: `read` < `deploy` < `admin`.
 - Only requests from the engine's own machine (loopback, same origin) are trusted without a token. Everything else needs `Authorization: Bearer <token>`.
-- SSH keys, S3 credentials, DKIM private keys, SMTP relay passwords, TLS private keys and AI provider keys are encrypted at rest (AES-256-GCM); mailbox passwords are stored as salted scrypt hashes. The key lives in `$HOSTERAX_HOME/secret.key` (mode 0600) unless you set `HOSTERAX_SECRET_KEY`; back it up with your data.
-- Project environment variable values are **not** encrypted in the database. They are protected only by file permissions on `$HOSTERAX_HOME` and whatever disk encryption you use, they are masked in build/runtime logs, and `read`-scoped tokens cannot read them back.
+- Project environment variables, SSH keys, S3 credentials, DKIM private keys, SMTP relay passwords, TLS private keys and AI provider keys are encrypted at rest (AES-256-GCM); mailbox passwords are stored as salted scrypt hashes. Values written by older versions are encrypted automatically on the next start. The key lives in `$HOSTERAX_HOME/secret.key` (mode 0600) unless you set `HOSTERAX_SECRET_KEY`; back it up with your data.
+- Environment variable values are masked in build/runtime logs. They are never part of a project's JSON, and `read`-scoped tokens cannot read them; variables flagged secret are also masked for `deploy` tokens in `GET /api/projects/:name/env`. They are decrypted only when an app is deployed or when a `deploy`-level MCP/AI tool reads them.
 - Public endpoints: `/api/health` and the GitHub webhook receiver (`/webhooks/github`, HMAC-verified).
 
 | Variable                                     | Default       | Purpose                                                                                                                                                 |
