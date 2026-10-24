@@ -296,6 +296,14 @@ htx mcp                               # Start stdio MCP protocol transport
 
 ---
 
+## 📚 API
+
+The engine serves an OpenAPI 3.1 description of its routes at `GET /api/openapi.json` (paths and
+methods; response schemas are not modelled yet). It is generated from the engine source, and CI fails
+if the CLI or the dashboard call a route that is not in it.
+
+---
+
 ## 🔐 Security & Configuration
 
 - API tokens are stored only as SHA-256 hashes and are shown once, when created. Scopes: `read` < `deploy` < `admin`.

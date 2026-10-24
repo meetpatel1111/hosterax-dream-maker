@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **API contract:** `scripts/api-contract.mjs` extracts the engine's routes, generates `hosterax/engine/src/openapi.json` (served at `GET /api/openapi.json`) and fails the test suite when the CLI or dashboard call a route the engine does not serve or use the wrong method (`npm run api:check` / `api:write`).
+
 ### 🔒 Security
 
 - **Environment variables are encrypted at rest** (AES-256-GCM) in `project_env`, the derived `projects.env_json` cache and compose `services.env_json`. Plaintext written by older versions is encrypted on the next start; env that only lived in `env_json` is imported into `project_env` first. A wrong key now fails loudly instead of deploying without configuration.

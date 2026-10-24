@@ -3114,6 +3114,16 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (url.pathname === "/api/openapi.json" && req.method === "GET") {
+    try {
+      const spec = fs.readFileSync(path.join(__dirname, "openapi.json"), "utf8");
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+      return res.end(spec);
+    } catch {
+      return json(res, 404, { error: "openapi.json is not bundled with this build" });
+    }
+  }
+
   if (await catalogApi(req, res, url.pathname)) return;
 
   if ((url.pathname === "/api/system" || url.pathname === "/api/stats") && req.method === "GET") {
