@@ -227,6 +227,11 @@ function help() {
     server:rm <serverId>                      Remove a server (it must not run any project)
     create <name> --server <serverId>         Place a Docker project on a server (also: deploy <path> --server)
 
+  Password protection:
+    gate <project>                            Show whether the app asks visitors for a password
+    gate <project> --password-stdin           Turn it on / change it (password read from stdin, not shown)
+    gate <project> --off                      Remove the password
+
   Notifications:
     notify:list                               Channels, what they listen to, and whether the last send worked
     notify:add <name> --type webhook|slack|discord|ntfy|email --url <url> | --to a@b.com
@@ -1315,6 +1320,33 @@ try {
       }
       await api("DELETE", `/api/servers/${srvId}`);
       console.log(`✓ Removed ${srvId}`);
+      break;
+    }
+
+    case "gate": {
+      const name = args[0];
+      if (!name || name.startsWith("--")) {
+        console.error("Usage: hosterax gate <project> [--password-stdin | --off]");
+        process.exit(1);
+      }
+      if (has("off")) {
+        await api("DELETE", `/api/projects/${name}/gate`);
+        console.log(`✓ ${name} no longer asks for a password.`);
+        break;
+      }
+      if (has("password-stdin")) {
+        const password = fs.readFileSync(0, "utf8").replace(/\r?\n$/, "");
+        const r = await api("PUT", `/api/projects/${name}/gate`, { password });
+        console.log(`✓ ${name} now asks visitors for a password (gate on port ${r.port}).`);
+        if (r.note) console.log(`  ${r.note}`);
+        break;
+      }
+      const st = await api("GET", `/api/projects/${name}/gate`);
+      console.log(
+        st.enabled
+          ? `${name}: password protection is ON (gate port ${st.port}).`
+          : `${name}: no password. Turn it on with: echo 'a long password' | hosterax gate ${name} --password-stdin`,
+      );
       break;
     }
 

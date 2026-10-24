@@ -20,6 +20,7 @@ import { ServiceTopologyGraph } from "@/components/hx/service-topology-graph";
 import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
 import { DeleteProjectModal } from "@/components/hx/delete-project-modal";
 import { AiTroubleshootModal } from "@/components/hx/ai-troubleshoot-modal";
+import { ProjectGateCard } from "@/components/hx/project-gate-card";
 import { ContainerTerminal } from "@/components/hx/container-terminal";
 import {
   ArrowLeft,
@@ -1329,6 +1330,7 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
           </button>
         </div>
       </div>
+      <ProjectGateCard projectName={project.name} />
       <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-6">
         <div className="text-sm font-medium text-destructive">Danger zone</div>
         <p className="mt-1 text-xs text-muted-foreground">

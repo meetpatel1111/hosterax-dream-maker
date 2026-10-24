@@ -47,6 +47,7 @@ import { BackupManager } from "./backup-manager.mjs";
 import { CronManager } from "./cron-manager.mjs";
 import { MCPServer } from "./mcp-server.mjs";
 import { ServerManager } from "./server-manager.mjs";
+import { GateManager } from "./gate-manager.mjs";
 import { NotificationManager, EVENT_KINDS, CHANNEL_TYPES } from "./notification-manager.mjs";
 import { createDashboard } from "./dashboard-server.mjs";
 import { BackupScheduler } from "./backup-scheduler.mjs";
@@ -813,7 +814,8 @@ function resolveTunnelTarget(target) {
     const p = db.prepare("SELECT port FROM projects WHERE name=?").get(target);
     if (!p) return { missing: true };
     if (!p.port) return { waiting: "the project has not been deployed yet" };
-    port = p.port;
+    // a project with a password is exposed through its gate, never around it
+    port = gateManager.portFor(target) ?? p.port;
   }
   if (port === PORT || port === dashboard.ssrPort())
     throw new Error(`port ${port} belongs to the HosteraX engine and is never made public`);
@@ -875,6 +877,18 @@ function serverOf(project) {
   const row = db.prepare("SELECT server_id FROM projects WHERE name=?").get(project);
   return row?.server_id && row.server_id !== "local" ? row.server_id : null;
 }
+const gateManager = new GateManager({
+  db,
+  bindHost: BIND_HOST,
+  upstream: (project) =>
+    db.prepare("SELECT port FROM projects WHERE name=?").get(project)?.port ?? null,
+  onPortChange: (project) => {
+    const p = db.prepare("SELECT port FROM projects WHERE name=?").get(project);
+    if (!p?.port) return;
+    const route = db.prepare("SELECT hostname FROM routes WHERE project=?").get(project);
+    applyRoute(project, p.port, route?.hostname ?? null, null);
+  },
+});
 const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
 const orgManager = new OrgManager({ db });
 const emailManager = new EmailManager({ db, HOME });
@@ -920,8 +934,10 @@ setInterval(
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
 
-function applyRoute(project, port, hostname, id) {
+function applyRoute(project, appPort, hostname, id) {
   const now = Date.now();
+  // The edge talks to the gate when the project has a password; the gate talks to the app.
+  const port = appPort ? (gateManager.portFor(project) ?? appPort) : appPort;
   const upsert = (status, detail, configPath) =>
     db
       .prepare(
@@ -2018,7 +2034,11 @@ pages:
 
     const portArgs = remoteServerId
       ? ["-p", `127.0.0.1:${remotePort}:${containerInternalPort}`]
-      : ["-p", `${BIND_HOST}:${hostPort}:${containerInternalPort}`];
+      : [
+          "-p",
+          // a gated app is only reachable through its gate, so keep its own port off the network
+          `${gateManager.isEnabled(project) ? "127.0.0.1" : BIND_HOST}:${hostPort}:${containerInternalPort}`,
+        ];
     // Extra ports (admin consoles, …) stay on the loopback of whichever machine runs the container.
     const secondaryPort = async (key, containerPort) =>
       remoteServerId ? allocateRemote(key) : allocateProjectPort(key, containerPort);
@@ -4227,6 +4247,30 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/tunnels/providers" && req.method === "GET") {
       return json(res, 200, tunnelManager.providers());
     }
+    // ────────── Password gate ──────────
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/gate$/))) {
+      const gateProject = decodeURIComponent(m[1]);
+      if (!db.prepare("SELECT 1 FROM projects WHERE name=?").get(gateProject))
+        return json(res, 404, { error: "project not found" });
+      if (req.method === "GET") return json(res, 200, gateManager.status(gateProject));
+      if (req.method === "PUT") {
+        const b = await readBody(req);
+        try {
+          await gateManager.enable(gateProject, b.password);
+        } catch (err) {
+          return json(res, 400, { error: err.message });
+        }
+        return json(res, 200, {
+          ...gateManager.status(gateProject),
+          note: "Routes and public addresses now go through the password page. If the app is already running, redeploy it so its own port stops being reachable from the network.",
+        });
+      }
+      if (req.method === "DELETE") {
+        await gateManager.disable(gateProject);
+        return json(res, 200, { enabled: false });
+      }
+    }
+
     // ────────── Notifications ──────────
     if (url.pathname === "/api/notifications" && req.method === "GET") {
       return json(res, 200, {
@@ -5789,6 +5833,7 @@ server.listen(PORT, () => {
   backupScheduler.start();
   tunnelManager.start();
   serverManager.start();
+  gateManager.start().catch(() => {});
 });
 
 // ── Global Process Resilience & Crash Traps ──
@@ -5809,6 +5854,7 @@ function handleGracefulShutdown(signal) {
     backupScheduler.stop();
     tunnelManager.stop();
     serverManager.stop().catch(() => {});
+    gateManager.stop().catch(() => {});
     dashboard.close();
     server.close(() => {
       console.log("[hosterax-engine] HTTP server closed.");

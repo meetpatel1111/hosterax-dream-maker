@@ -3458,6 +3458,65 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/projects/{param3}/gate": {
+      "delete": {
+        "summary": "DELETE /api/projects/{param}/gate",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "get": {
+        "summary": "GET /api/projects/{param}/gate",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "put": {
+        "summary": "PUT /api/projects/{param}/gate",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/projects/{param3}/heal": {
       "post": {
         "summary": "POST /api/projects/{param}/heal",
