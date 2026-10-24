@@ -665,8 +665,10 @@ export class ServerManager {
   async allocateRemotePort(serverId, { seed = "", taken = [] } = {}) {
     const target = this.getTarget(serverId);
     if (!target) throw new Error(`Server "${serverId}" not found.`);
+    // Listening ports come from the kernel's own table (no ss or netstat needed, so a minimal server works),
+    // plus the ports Docker publishes.
     const script = `
-(ss -Hltn 2>/dev/null || netstat -ltn 2>/dev/null) | awk '{print $4}' | sed 's/.*://'
+awk 'NR > 1 && $4 == "0A" { print $2 }' /proc/net/tcp /proc/net/tcp6 2>/dev/null | while read -r a; do printf '%d\\n' "0x\${a##*:}"; done
 docker ps --format '{{.Ports}}' 2>/dev/null | grep -o ':[0-9]*->' | tr -d ':>-'
 `;
     const res = await this.transport.exec(target, "sh -s", { input: script, timeoutMs: 15000 });

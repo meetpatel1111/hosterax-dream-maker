@@ -59,7 +59,10 @@ export function createHarness(prefix = "hosterax-e2e-") {
           if (child.exitCode !== null) return resolve();
           child.once("exit", resolve);
           child.kill();
-          setTimeout(resolve, 5000);
+          // A graceful shutdown that is still tearing things down (ssh workers, containers) is not left
+          // writing into a directory the test is about to delete.
+          setTimeout(() => child.kill("SIGKILL"), 5000).unref();
+          setTimeout(resolve, 8000).unref();
         }),
     };
     engines.push(engine);
@@ -95,7 +98,7 @@ export function createHarness(prefix = "hosterax-e2e-") {
 
   async function cleanup() {
     for (const e of engines) await e.stop();
-    rmSync(scratch, { recursive: true, force: true });
+    rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 
   return { scratch, startEngine, call, until, cleanup };

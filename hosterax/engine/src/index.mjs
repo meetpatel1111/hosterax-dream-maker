@@ -40,7 +40,7 @@ import {
   detectWorkspace,
 } from "./stack-registry.mjs";
 import { SelfHealEngine } from "./self-heal.mjs";
-import { pullWithUniversalHealing } from "./image-resolver.mjs";
+import { pullWithUniversalHealing, normalizeImageSource } from "./image-resolver.mjs";
 import { TLSManager } from "./tls-manager.mjs";
 import { EdgeManager } from "./edge-manager.mjs";
 import { BackupManager } from "./backup-manager.mjs";
@@ -1040,7 +1040,16 @@ function runStep(deploymentId, cwd, cmd, env) {
 }
 
 /** Runs `bin args...` WITHOUT a shell, so no argument can be interpreted as shell syntax. */
-function runStepArgv(deploymentId, cwd, bin, args, env = {}) {
+/**
+ * `opts.capture`, if given, is an array that receives the tail of what the command printed (stdout and
+ * stderr, bounded), so a caller can tell why it failed instead of only that it did.
+ */
+function runStepArgv(deploymentId, cwd, bin, args, env = {}, opts = {}) {
+  const keep = (b) => {
+    if (!opts.capture) return;
+    opts.capture.push(b.toString());
+    while (opts.capture.join("").length > 8192) opts.capture.shift();
+  };
   return new Promise((resolve) => {
     publish(deploymentId, {
       ts: Date.now(),
@@ -1048,17 +1057,20 @@ function runStepArgv(deploymentId, cwd, bin, args, env = {}) {
       text: `$ ${displayArgv(bin, args)}`,
     });
     const child = spawn(bin, args, { cwd, env: { ...process.env, ...env } });
-    child.stdout.on("data", (b) =>
-      publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() }),
-    );
-    child.stderr.on("data", (b) =>
-      publish(deploymentId, { ts: Date.now(), stream: "stderr", text: b.toString().trimEnd() }),
-    );
+    child.stdout.on("data", (b) => {
+      keep(b);
+      publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() });
+    });
+    child.stderr.on("data", (b) => {
+      keep(b);
+      publish(deploymentId, { ts: Date.now(), stream: "stderr", text: b.toString().trimEnd() });
+    });
     child.on("close", (code) => {
       publish(deploymentId, { ts: Date.now(), stream: "system", text: `exit ${code}` });
       resolve(code ?? 0);
     });
     child.on("error", (e) => {
+      keep(String(e));
       publish(deploymentId, { ts: Date.now(), stream: "stderr", text: String(e) });
       resolve(1);
     });
@@ -1695,59 +1707,11 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
     const projRow = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
     const isDirectImage =
       projRow?.source && !fs.existsSync(projRow.source) && !isGitSource(projRow.source);
-    const WELL_KNOWN_IMAGES = {
-      ollama: "ollama/ollama:latest",
-      "ollama/ollama": "ollama/ollama:latest",
-      vaultwarden: "vaultwarden/server:latest",
-      bitwarden: "vaultwarden/server:latest",
-      nginx: "nginx:alpine",
-      caddy: "caddy:latest",
-      redis: "redis:alpine",
-      postgres: "postgres:alpine",
-      postgresql: "postgres:alpine",
-      mariadb: "mariadb:latest",
-      mysql: "mysql:8.4",
-      grafana: "grafana/grafana:latest",
-      prometheus: "prom/prometheus:latest",
-      uptimekuma: "louislam/uptime-kuma:latest",
-      "uptime-kuma": "louislam/uptime-kuma:latest",
-      n8n: "n8nio/n8n:latest",
-      portainer: "portainer/portainer-ce:latest",
-      dockge: "louislam/dockge:latest",
-      traefik: "traefik:v3.1",
-      jellyfin: "jellyfin/jellyfin:latest",
-      immich: "ghcr.io/immich-app/immich-server:latest",
-      paperless: "ghcr.io/paperless-ngx/paperless-ngx:latest",
-      "paperless-ngx": "ghcr.io/paperless-ngx/paperless-ngx:latest",
-      plausible: "plausible/analytics:latest",
-      umami: "ghcr.io/umami-software/umami:postgresql-latest",
-      ghost: "ghost:alpine",
-      searxng: "searxng/searxng:latest",
-      calibre: "linuxserver/calibre-web:latest",
-      audiobookshelf: "ghcr.io/advplyr/audiobookshelf:latest",
-      "it-tools": "corentinth/it-tools:latest",
-      ittools: "corentinth/it-tools:latest",
-    };
 
     let tag = isDirectImage ? projRow.source : `hosterax/${cleanName}:latest`;
 
-    // Smart image tag normalization
-    if (isDirectImage) {
-      const rawTrimmed = tag.trim();
-      const cleanKey = rawTrimmed.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-      const baseName = rawTrimmed.split(":")[0];
-      const baseKey = baseName.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-
-      if (WELL_KNOWN_IMAGES[cleanKey]) {
-        tag = WELL_KNOWN_IMAGES[cleanKey];
-      } else if (WELL_KNOWN_IMAGES[baseKey]) {
-        tag = WELL_KNOWN_IMAGES[baseKey];
-      } else if (tag.endsWith(`:${cleanName}`) || tag.endsWith(`:${project.toLowerCase()}`)) {
-        tag = `${tag.split(":")[0]}:latest`;
-      } else if (!tag.includes(":")) {
-        tag = `${tag}:latest`;
-      }
-    }
+    // A bare name ("nginx", "uptime-kuma") becomes its usual image; a tag the user chose is kept as given.
+    if (isDirectImage) tag = normalizeImageSource(tag, project);
 
     let imageInspect = { exposedPorts: [], volumes: [], env: [] };
 

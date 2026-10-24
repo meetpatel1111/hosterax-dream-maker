@@ -1,9 +1,10 @@
 // A real sshd on a loopback port, for tests of the remote-server code.
 //
 // What is real: the OpenSSH server, its host key, public-key authentication, the ssh client and
-// ssh-keyscan the engine runs, and (when installed) the Docker CLI. What is a stand-in: the "remote"
-// Docker. `docker` on the server's PATH is a small script, and `docker system dial-stdio` bridges to a
-// fake Docker daemon (a node HTTP server on a unix socket), so no container is ever started.
+// ssh-keyscan the engine runs, and (when installed) the Docker CLI. By default the "remote" Docker is a
+// stand-in: `docker` on the server's PATH is a small script, and `docker system dial-stdio` bridges to a
+// fake Docker daemon (a node HTTP server on a unix socket), so no container is ever started. Pass
+// `{ remoteDockerHost }` to use a real Docker daemon instead and fake nothing.
 
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
@@ -54,21 +55,8 @@ function keygen(file, type = "ed25519", extra = []) {
   if (r.status !== 0) throw new Error(`ssh-keygen failed: ${r.stderr}`);
 }
 
-/**
- * @returns {Promise<{ host: string, port: number, username: string, clientKey: string,
- *   clientKeyPub: string, hostKeyFile: string, dockerMode: (m: string) => void, daemonRequests: string[],
- *   regenerateHostKey: () => void, stop: () => Promise<void>, dir: string }>}
- */
-export async function startSshFixture() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hx-sshd-"));
-  fs.chmodSync(dir, 0o700);
-  const hostKey = path.join(dir, "host_ed25519");
-  keygen(hostKey);
-  const clientKey = path.join(dir, "client");
-  keygen(clientKey);
-  fs.copyFileSync(`${clientKey}.pub`, path.join(dir, "authorized_keys"));
-  fs.chmodSync(path.join(dir, "authorized_keys"), 0o600);
-
+/** The stand-in "remote Docker": a `docker` script on the server's PATH and a fake daemon behind it. */
+async function startFakeDocker(dir) {
   // The fake Docker daemon, reached through `docker system dial-stdio`. It is its own process: the tests
   // call the Docker CLI with spawnSync, which would block a daemon living in the test process.
   const daemonSock = path.join(dir, "dockerd.sock");
@@ -141,6 +129,34 @@ esac
 `,
     { mode: 0o755 },
   );
+  return { daemon, daemonRequests, fakeBin, modeFile };
+}
+
+/**
+ * @returns {Promise<{ host: string, port: number, username: string, clientKey: string,
+ *   clientKeyPub: string, hostKeyFile: string, dockerMode: (m: string) => void, daemonRequests: string[],
+ *   regenerateHostKey: () => void, stop: () => Promise<void>, dir: string }>}
+ */
+export async function startSshFixture({ remoteDockerHost } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hx-sshd-"));
+  fs.chmodSync(dir, 0o700);
+  const hostKey = path.join(dir, "host_ed25519");
+  keygen(hostKey);
+  const clientKey = path.join(dir, "client");
+  keygen(clientKey);
+  fs.copyFileSync(`${clientKey}.pub`, path.join(dir, "authorized_keys"));
+  fs.chmodSync(path.join(dir, "authorized_keys"), 0o600);
+
+  // Two ways to be a server. By default Docker on it is a stand-in (fast, and it can simulate Docker
+  // being down). With `remoteDockerHost` the server uses a REAL Docker daemon: nothing is faked, the
+  // server's sessions simply talk to that daemon (a separate dockerd gives a genuinely separate machine's
+  // worth of Docker; the machine's own daemon makes "remote" and "local" the same Docker).
+  const real = remoteDockerHost !== undefined;
+  const fake = real ? null : await startFakeDocker(dir);
+  const daemon = fake?.daemon;
+  const daemonRequests = fake?.daemonRequests ?? null;
+  const modeFile = fake?.modeFile;
+  const fakeBin = fake?.fakeBin;
 
   const port = await freePort();
   const pidFile = path.join(dir, "sshd.pid");
@@ -161,7 +177,11 @@ esac
       "StrictModes no",
       "PrintMotd no",
       "LogLevel ERROR",
-      `SetEnv PATH=${fakeBin}:${process.env.PATH}`,
+      ...(real
+        ? remoteDockerHost
+          ? [`SetEnv DOCKER_HOST=${remoteDockerHost}`]
+          : []
+        : [`SetEnv PATH=${fakeBin}:${process.env.PATH}`]),
     ].join("\n") + "\n",
   );
   try {
@@ -195,7 +215,11 @@ esac
     authorizeKey(publicKeyLine) {
       fs.appendFileSync(path.join(dir, "authorized_keys"), `${publicKeyLine}\n`);
     },
-    dockerMode: (m) => fs.writeFileSync(modeFile, m),
+    realDocker: real,
+    dockerMode: (m) => {
+      if (real) throw new Error("dockerMode only exists for the stand-in Docker");
+      fs.writeFileSync(modeFile, m);
+    },
     /**
      * A new host key, as after a reinstall: existing sessions die with the old machine, new connections
      * see the new key. (A session that was authenticated against the old key legitimately stays valid.)
@@ -215,7 +239,7 @@ esac
     async stop() {
       sshd.kill("SIGKILL");
       await new Promise((r) => (sshd.exitCode !== null ? r() : sshd.once("exit", r)));
-      daemon.kill("SIGKILL");
+      daemon?.kill("SIGKILL");
       fs.rmSync(dir, { recursive: true, force: true });
     },
   };

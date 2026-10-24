@@ -205,6 +205,71 @@ async function searchDockerHub(query) {
   }
 }
 
+/** Images for the bare names people type for popular self-hosted apps. */
+export const WELL_KNOWN_IMAGES = {
+  ollama: "ollama/ollama:latest",
+  "ollama/ollama": "ollama/ollama:latest",
+  vaultwarden: "vaultwarden/server:latest",
+  bitwarden: "vaultwarden/server:latest",
+  nginx: "nginx:alpine",
+  caddy: "caddy:latest",
+  redis: "redis:alpine",
+  postgres: "postgres:alpine",
+  postgresql: "postgres:alpine",
+  mariadb: "mariadb:latest",
+  mysql: "mysql:8.4",
+  grafana: "grafana/grafana:latest",
+  prometheus: "prom/prometheus:latest",
+  uptimekuma: "louislam/uptime-kuma:latest",
+  "uptime-kuma": "louislam/uptime-kuma:latest",
+  n8n: "n8nio/n8n:latest",
+  portainer: "portainer/portainer-ce:latest",
+  dockge: "louislam/dockge:latest",
+  traefik: "traefik:v3.1",
+  jellyfin: "jellyfin/jellyfin:latest",
+  immich: "ghcr.io/immich-app/immich-server:latest",
+  paperless: "ghcr.io/paperless-ngx/paperless-ngx:latest",
+  "paperless-ngx": "ghcr.io/paperless-ngx/paperless-ngx:latest",
+  plausible: "plausible/analytics:latest",
+  umami: "ghcr.io/umami-software/umami:postgresql-latest",
+  ghost: "ghost:alpine",
+  searxng: "searxng/searxng:latest",
+  calibre: "linuxserver/calibre-web:latest",
+  audiobookshelf: "ghcr.io/advplyr/audiobookshelf:latest",
+  "it-tools": "corentinth/it-tools:latest",
+  ittools: "corentinth/it-tools:latest",
+};
+
+/**
+ * The image reference to deploy for a project whose source is an image name.
+ *
+ *   - a bare name ("nginx", "vaultwarden") becomes the image usually meant by it;
+ *   - a reference with a tag or digest the user chose ("postgres:16-alpine", "redis:7.2", "ghcr.io/org/app:2")
+ *     is kept exactly as given: rewriting "postgres:16-alpine" to "postgres:alpine" changes the major version
+ *     under a database's existing data;
+ *   - "name:latest" counts as no choice, and a tag equal to the project's own name is how the dashboard
+ *     marks "no tag chosen".
+ */
+export function normalizeImageSource(source, projectName = "") {
+  const raw = String(source || "").trim();
+  const project = String(projectName).toLowerCase();
+  const cleanName = project.replace(/[^a-z0-9]/g, "_");
+  const last = raw.split("/").pop();
+  const colon = last.lastIndexOf(":");
+  const tag = colon > 0 ? last.slice(colon + 1) : "";
+  const hasDigest = raw.includes("@");
+  const tagIsProjectName = Boolean(tag) && (tag === cleanName || tag === project);
+  const chosen = (Boolean(tag) && tag !== "latest" && !tagIsProjectName) || hasDigest;
+  if (chosen) return raw;
+
+  const bare = tag ? raw.slice(0, raw.length - tag.length - 1) : raw;
+  const key = (v) => v.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+  const baseKey = key(bare.split(":")[0]);
+  if (WELL_KNOWN_IMAGES[key(raw)]) return WELL_KNOWN_IMAGES[key(raw)];
+  if (WELL_KNOWN_IMAGES[baseKey]) return WELL_KNOWN_IMAGES[baseKey];
+  return `${bare}:latest`;
+}
+
 /**
  * Generates an ordered, comprehensive list of candidate Docker image tags for any given target/project name.
  */
@@ -219,6 +284,9 @@ export function generateCandidateImageTags(rawTarget, projectName = "") {
   if (parts.length === 2 && parts[0] === parts[1]) {
     cleaned = parts[0];
   }
+
+  // What was asked for is tried first, as written. The lookups below are for names that were only a guess.
+  if (/[:@/]/.test(cleaned) && isSafeImageRef(cleaned)) candidates.add(cleaned);
 
   const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const normKey = norm(cleaned);
@@ -300,6 +368,49 @@ export function generateCandidateImageTags(rawTarget, projectName = "") {
   return Array.from(candidates).filter(Boolean);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Delays between attempts at the same image when the registry misbehaves. HOSTERAX_PULL_RETRY_MS="3000,8000". */
+function pullRetryDelays() {
+  const raw = process.env.HOSTERAX_PULL_RETRY_MS;
+  if (raw === undefined) return [3000, 8000];
+  return raw
+    .split(",")
+    .map((n) => Number(n))
+    .filter((n) => Number.isFinite(n) && n >= 0 && n <= 60000);
+}
+
+/**
+ * Failures that say nothing about whether an image exists: the registry is rate limiting us, down or
+ * unreachable. "not found", "denied" and "manifest unknown" are NOT in this list on purpose.
+ */
+export function isTransientPullFailure(output) {
+  const text = String(output || "");
+  if (
+    /not found|manifest unknown|repository does not exist|pull access denied|denied: requested access/i.test(
+      text,
+    )
+  )
+    return false;
+  // phrases, not bare status numbers: a layer size such as "429.1MB" in the output is not an HTTP status
+  return /too ?many ?requests|toomanyrequests|rate limit|timeout|timed out|deadline exceeded|tls handshake|connection (refused|reset)|no such host|temporary failure|unexpected eof|i\/o timeout|service unavailable|bad gateway|gateway time-?out|internal server error|network is unreachable|try again|server misbehaving|dial tcp|\bEOF\b/i.test(
+    text,
+  );
+}
+
+/** Whether a resolved reference is the one that was asked for (`nginx` and `docker.io/library/nginx:latest` are). */
+function sameImage(requested, resolved) {
+  const canon = (r) => {
+    let s = String(r)
+      .toLowerCase()
+      .replace(/^docker\.io\//, "")
+      .replace(/^library\//, "");
+    if (!/[:@]/.test(s.split("/").pop())) s += ":latest";
+    return s;
+  };
+  return canon(requested) === canon(resolved);
+}
+
 /**
  * Universal Pull Engine: Pulls image with progressive fallback, live Docker Hub discovery, and platform emulation.
  */
@@ -313,15 +424,28 @@ export async function pullWithUniversalHealing({
   runArgv,
 }) {
   // Always pull via argv (no shell). Fall back to a quoted shell string only if no argv runner is given.
-  const pull = (ref, extra = []) =>
-    runArgv
-      ? runArgv(deploymentId, workdir, "docker", ["pull", ...extra, ref])
+  // What the last pull printed, so a failure can be told apart: "not found" means try another name,
+  // "the registry did not answer properly" means try the SAME name again and, failing that, stop.
+  const pull = (ref, extra = []) => {
+    lastPullOutput = [];
+    return runArgv
+      ? runArgv(
+          deploymentId,
+          workdir,
+          "docker",
+          ["pull", ...extra, ref],
+          {},
+          { capture: lastPullOutput },
+        )
       : runStep(
           deploymentId,
           workdir,
           `docker pull ${extra.join(" ")} ${ref}`.replace("  ", " "),
           {},
         );
+  };
+  let lastPullOutput = [];
+  const delays = pullRetryDelays();
   const initialCandidates = generateCandidateImageTags(initialTag, projectName).filter(
     isSafeImageRef,
   );
@@ -345,13 +469,43 @@ export async function pullWithUniversalHealing({
     });
 
     let rc = await pull(candidate);
+    for (
+      let i = 0;
+      rc !== 0 && isTransientPullFailure(lastPullOutput.join("")) && i < delays.length;
+      i++
+    ) {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "system",
+        text: `[docker] The registry did not answer properly for ${candidate}; trying the same image again in ${Math.round(delays[i] / 1000)}s...`,
+      });
+      await sleep(delays[i]);
+      rc = await pull(candidate);
+    }
     if (rc === 0) {
       publish(deploymentId, {
         ts: Date.now(),
         stream: "system",
         text: `[docker] Successfully pulled and verified: ${candidate}`,
       });
+      if (initialTag && !sameImage(initialTag, candidate)) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "stderr",
+          text: `[docker] ⚠ "${initialTag}" was not available under that name, so ${candidate} is being used instead. Check that it is the image you meant, or set the exact image reference on the project.`,
+        });
+      }
       return { ok: true, tag: candidate };
+    }
+    if (isTransientPullFailure(lastPullOutput.join(""))) {
+      // A network problem says nothing about whether the image exists. Moving on to other names here would
+      // run a different publisher's image just because Docker Hub was busy.
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[docker] ERROR: The registry is not answering properly (rate limit, timeout or network error), so ${candidate} could not be pulled. Other images are NOT tried for a failure like this. Try again in a few minutes.`,
+      });
+      return { ok: false, transient: true, error: "The registry did not answer; try again later" };
     }
   }
 

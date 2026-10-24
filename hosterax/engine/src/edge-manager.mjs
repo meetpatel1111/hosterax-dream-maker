@@ -121,12 +121,16 @@ export class EdgeManager {
 
     const row = this.db.prepare("SELECT * FROM edge_settings WHERE id=1").get();
     if (!row) {
+      // HOSTERAX_EDGE_PROVIDER picks the edge for a fresh install: `external` means HosteraX starts no proxy
+      // container (you run your own, or none), which also keeps ports 80 and 443 free.
+      const wanted = String(process.env.HOSTERAX_EDGE_PROVIDER || "").toLowerCase();
+      const provider = ["caddy", "openresty", "external"].includes(wanted) ? wanted : "caddy";
       this.db
         .prepare(
           `INSERT INTO edge_settings (id, provider, http_port, https_port, admin_port, acme_email, auto_https, on_demand_tls, hsts_enabled, is_running, last_sync_at, updated_at)
-           VALUES (1, 'caddy', 80, 443, 2019, '', 1, 1, 1, 0, 0, ?)`,
+           VALUES (1, ?, 80, 443, 2019, '', 1, 1, 1, 0, 0, ?)`,
         )
-        .run(Date.now());
+        .run(provider, Date.now());
     }
   }
 

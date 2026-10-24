@@ -18,10 +18,45 @@ import {
   authenticateEncryptedFile,
 } from "./secrets.mjs";
 
+/**
+ * Run (as root, no network) in a throwaway container sharing the Redis container's /data, with the snapshot on
+ * stdin. Swapping `dump.rdb` in is not enough: HosteraX starts Redis with `--appendonly yes`, and a Redis with
+ * the AOF on ignores `dump.rdb` at startup (it creates an empty AOF instead), so the "restore" silently
+ * restored nothing. So the snapshot is loaded by a temporary server with the AOF off, which is then told to
+ * switch the AOF on: Redis writes a fresh AOF from memory, and the real container starts from that. A Redis
+ * with the AOF off simply reads `dump.rdb`. The snapshot is checked before anything is replaced.
+ */
+const REDIS_RESTORE_SCRIPT = String.raw`set -e
+cat > /data/hx-restore.rdb
+if command -v redis-check-rdb >/dev/null 2>&1; then redis-check-rdb /data/hx-restore.rdb >/dev/null; fi
+rm -rf /data/appendonlydir /data/appendonly.aof
+mv /data/hx-restore.rdb /data/dump.rdb
+OWNER=$(stat -c %u:%g /data)
+S=/tmp/hx-restore.sock
+redis-server --dir /data --appendonly no --save "" --port 0 --unixsocket $S --daemonize yes >/dev/null
+i=0; until redis-cli -s $S ping 2>/dev/null | grep -q PONG; do i=$((i+1)); [ $i -lt 600 ] || { echo "Redis did not load the snapshot" >&2; exit 1; }; sleep 0.2; done
+redis-cli -s $S config set appendonly yes >/dev/null
+i=0; until redis-cli -s $S info persistence | tr -d '\r' | grep -q '^aof_rewrite_in_progress:0$'; do i=$((i+1)); [ $i -lt 600 ] || { echo "the AOF rewrite did not finish" >&2; exit 1; }; sleep 0.2; done
+redis-cli -s $S info persistence | tr -d '\r' | grep -q '^aof_last_bgrewrite_status:ok$'
+redis-cli -s $S shutdown nosave || true
+chown -R "$OWNER" /data/dump.rdb /data/appendonlydir
+`;
+
 const DRILL_SKIP_ENV = new Set(["PATH", "HOME", "HOSTNAME", "TERM"]);
 
 // Commands run inside the scratch container. They use the container's own environment (copied from the
 // source container), never interpolated values.
+/**
+ * `pg_dumpall --clean` starts with `DROP ROLE IF EXISTS <user>` and later `CREATE ROLE <user>` for every role,
+ * including the one the restore itself connects as. PostgreSQL refuses to drop the current user, so the first
+ * such line aborts the whole restore (`ERROR: current user cannot be dropped`). That role is by definition
+ * already there, so those two lines are removed, and nothing else: its attributes and password still come
+ * back from the dump's `ALTER ROLE`, and `ON_ERROR_STOP` keeps any other error fatal.
+ * (`LC_ALL=C` so GNU grep does not mistake a dump holding non-UTF-8 text for a binary file.)
+ */
+const POSTGRES_RESTORE_SCRIPT =
+  'U="${POSTGRES_USER:-postgres}"; LC_ALL=C grep -vxF -e "DROP ROLE IF EXISTS $U;" -e "CREATE ROLE $U;" -e "DROP ROLE IF EXISTS \\"$U\\";" -e "CREATE ROLE \\"$U\\";" | psql -v ON_ERROR_STOP=1 -U "$U" -d postgres';
+
 const DRILL_SCRIPTS = {
   postgres: {
     ready: 'pg_isready -q -h 127.0.0.1 -U "${POSTGRES_USER:-postgres}"',
@@ -113,6 +148,9 @@ export class BackupManager {
       "verified_at INTEGER",
       "verify_status TEXT",
       "verify_message TEXT",
+      // index.mjs creates `backups` first, without the S3 columns that retention and sync read and write
+      "s3_key TEXT",
+      "s3_synced_at INTEGER",
     ]) {
       try {
         this.db.exec(`ALTER TABLE backups ADD COLUMN ${col}`);
@@ -896,14 +934,7 @@ export class BackupManager {
   async _restorePostgres(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
     await this._streamFromFile(
-      [
-        "exec",
-        "-i",
-        containerName,
-        "sh",
-        "-c",
-        'exec psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER:-postgres}" -d postgres',
-      ],
+      ["exec", "-i", containerName, "sh", "-c", POSTGRES_RESTORE_SCRIPT],
       filePath,
       { gunzip: true, decrypt: opts.decrypt },
     );
@@ -921,20 +952,33 @@ export class BackupManager {
 
   async _restoreRedis(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
-    const tmp = path.join(os.tmpdir(), `hx-redis-${crypto.randomBytes(6).toString("hex")}.rdb`);
+    const image = (
+      await this._docker(["inspect", containerName, "--format", "{{.Config.Image}}"])
+    ).trim();
+    if (!image) throw new Error("could not determine the Redis container's image");
+    // Redis must be stopped, otherwise it overwrites the snapshot with its own data on shutdown.
+    await this._docker(["stop", containerName], 60000);
     try {
-      await pipeline(
-        fs.createReadStream(filePath),
-        ...(opts.decrypt ? [createDecryptStream()] : []),
-        zlib.createGunzip(),
-        fs.createWriteStream(tmp),
+      await this._streamFromFile(
+        [
+          "run",
+          "--rm",
+          "-i",
+          "--network",
+          "none",
+          "--volumes-from",
+          containerName,
+          "--entrypoint",
+          "sh",
+          image,
+          "-c",
+          REDIS_RESTORE_SCRIPT,
+        ],
+        filePath,
+        { gunzip: true, decrypt: opts.decrypt },
       );
-      // The RDB must be swapped in while Redis is stopped, otherwise it overwrites it on shutdown.
-      await this._docker(["stop", containerName], 60000);
-      await this._docker(["cp", tmp, `${containerName}:/data/dump.rdb`]);
-      await this._docker(["start", containerName]);
     } finally {
-      fs.rmSync(tmp, { force: true });
+      await this._docker(["start", containerName]).catch(() => {});
     }
   }
 
