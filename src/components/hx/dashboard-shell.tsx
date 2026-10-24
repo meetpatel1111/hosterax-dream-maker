@@ -23,6 +23,7 @@ import {
   ChevronDown,
   Languages,
   Share2,
+  Bell,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
@@ -46,6 +47,7 @@ const NAV = [
   { to: "/team", key: "team" as const, label: "Team & RBAC", icon: Users },
   { to: "/mail", key: "mail" as const, label: "Mailboxes", icon: Mail },
   { to: "/activity", key: "activity" as any, label: "Activity", icon: Activity },
+  { to: "/notifications", key: "notifications" as any, label: "Notifications", icon: Bell },
   { to: "/tokens", key: "tokens" as any, label: "API Tokens", icon: KeyRound },
   { to: "/oauth", key: "oauth" as any, label: "OAuth (planned)", icon: ShieldCheck },
   { to: "/settings", key: "settings" as const, label: "Settings", icon: Settings },

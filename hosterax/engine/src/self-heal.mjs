@@ -160,6 +160,9 @@ export class SelfHealEngine {
     };
     this.events.unshift(event);
     if (this.events.length > 200) this.events.pop();
+    try {
+      this.onEvent?.(event);
+    } catch {}
 
     try {
       this.db

@@ -24,6 +24,7 @@ import { Route as AppJobsRouteImport } from './routes/_app.jobs'
 import { Route as AppLocalRouteImport } from './routes/_app.local'
 import { Route as AppMailRouteImport } from './routes/_app.mail'
 import { Route as AppNewRouteImport } from './routes/_app.new'
+import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
 import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
@@ -106,6 +107,11 @@ const AppNewRoute = AppNewRouteImport.update({
   path: '/new',
   getParentRoute: () => AppRoute,
 } as any)
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppOauthRoute = AppOauthRouteImport.update({
   id: '/oauth',
   path: '/oauth',
@@ -157,6 +163,7 @@ export interface FileRoutesByFullPath {
   '/local': typeof AppLocalRoute
   '/mail': typeof AppMailRoute
   '/new': typeof AppNewRoute
+  '/notifications': typeof AppNotificationsRoute
   '/oauth': typeof AppOauthRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
@@ -180,6 +187,7 @@ export interface FileRoutesByTo {
   '/local': typeof AppLocalRoute
   '/mail': typeof AppMailRoute
   '/new': typeof AppNewRoute
+  '/notifications': typeof AppNotificationsRoute
   '/oauth': typeof AppOauthRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
@@ -205,6 +213,7 @@ export interface FileRoutesById {
   '/_app/local': typeof AppLocalRoute
   '/_app/mail': typeof AppMailRoute
   '/_app/new': typeof AppNewRoute
+  '/_app/notifications': typeof AppNotificationsRoute
   '/_app/oauth': typeof AppOauthRoute
   '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -230,6 +239,7 @@ export interface FileRouteTypes {
     | '/local'
     | '/mail'
     | '/new'
+    | '/notifications'
     | '/oauth'
     | '/servers'
     | '/settings'
@@ -253,6 +263,7 @@ export interface FileRouteTypes {
     | '/local'
     | '/mail'
     | '/new'
+    | '/notifications'
     | '/oauth'
     | '/servers'
     | '/settings'
@@ -277,6 +288,7 @@ export interface FileRouteTypes {
     | '/_app/local'
     | '/_app/mail'
     | '/_app/new'
+    | '/_app/notifications'
     | '/_app/oauth'
     | '/_app/servers'
     | '/_app/settings'
@@ -399,6 +411,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/notifications': {
+      id: '/_app/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/oauth': {
       id: '/_app/oauth'
       path: '/oauth'
@@ -464,6 +483,7 @@ interface AppRouteChildren {
   AppLocalRoute: typeof AppLocalRoute
   AppMailRoute: typeof AppMailRoute
   AppNewRoute: typeof AppNewRoute
+  AppNotificationsRoute: typeof AppNotificationsRoute
   AppOauthRoute: typeof AppOauthRoute
   AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -486,6 +506,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppLocalRoute: AppLocalRoute,
   AppMailRoute: AppMailRoute,
   AppNewRoute: AppNewRoute,
+  AppNotificationsRoute: AppNotificationsRoute,
   AppOauthRoute: AppOauthRoute,
   AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,

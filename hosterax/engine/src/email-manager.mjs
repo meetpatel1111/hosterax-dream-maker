@@ -621,6 +621,30 @@ export class EmailManager {
       .all(mailboxId, folder);
   }
 
+  /**
+   * A plain text message from the engine itself (notifications), sent through the default SMTP relay.
+   * Throws when no relay is configured: there is nowhere to send it from.
+   */
+  async sendSystemMail({ to, subject, text }) {
+    const relay =
+      this.db.prepare("SELECT * FROM email_smtp_relays WHERE is_default=1 LIMIT 1").get() ||
+      this.db.prepare("SELECT * FROM email_smtp_relays ORDER BY created_at DESC LIMIT 1").get();
+    if (!relay?.host || !relay.password)
+      throw new Error("No SMTP relay is configured. Add one under Mail first.");
+    const transporter = nodemailer.createTransport({
+      host: relay.host,
+      port: Number(relay.port),
+      secure: Number(relay.port) === 465,
+      auth: { user: relay.username || relay.from_email, pass: decryptSecret(relay.password) },
+    });
+    await transporter.sendMail({
+      from: relay.from_email || relay.username,
+      to: (Array.isArray(to) ? to : [to]).join(", "),
+      subject,
+      text,
+    });
+  }
+
   async sendMessage({ mailbox_id, to, subject, body_text, body_html }) {
     const mbox = this.db.prepare("SELECT * FROM mailboxes WHERE id=?").get(mailbox_id);
     if (!mbox) throw new Error("Mailbox not found.");

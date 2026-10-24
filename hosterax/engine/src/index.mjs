@@ -47,6 +47,7 @@ import { BackupManager } from "./backup-manager.mjs";
 import { CronManager } from "./cron-manager.mjs";
 import { MCPServer } from "./mcp-server.mjs";
 import { ServerManager } from "./server-manager.mjs";
+import { NotificationManager, EVENT_KINDS, CHANNEL_TYPES } from "./notification-manager.mjs";
 import { createDashboard } from "./dashboard-server.mjs";
 import { BackupScheduler } from "./backup-scheduler.mjs";
 import {
@@ -877,6 +878,11 @@ function serverOf(project) {
 const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
 const orgManager = new OrgManager({ db });
 const emailManager = new EmailManager({ db, HOME });
+const notifier = new NotificationManager({
+  db,
+  sendEmail: (m) => emailManager.sendSystemMail(m),
+  baseUrl: () => process.env.HOSTERAX_PUBLIC_URL || "",
+});
 const dockerApi = new DockerApiClient();
 const remoteDockerApis = new Map();
 /** Docker HTTP client for a project's server: this machine's daemon, or the remote one through its bridge. */
@@ -2250,6 +2256,31 @@ const ALLOWED_PHASE_COLUMNS = new Set([
   "trigger",
   "version",
 ]);
+const notifiedDeployments = new Set();
+/** Tell the notification channels how a deployment ended (once per deployment). */
+function notifyDeployOutcome(id, phase) {
+  if (!["failed", "ready"].includes(phase) || notifiedDeployments.has(id)) return;
+  const d = db.prepare("SELECT project, version, trigger FROM deployments WHERE id=?").get(id);
+  if (!d) return;
+  notifiedDeployments.add(id);
+  if (notifiedDeployments.size > 500)
+    notifiedDeployments.delete(notifiedDeployments.values().next().value);
+  const failed = phase === "failed";
+  const tail = failed
+    ? readDeploymentLog(id, 40)
+        .split("\n")
+        .filter((l) => /error|✗|❌|failed|cannot|denied/i.test(l))
+        .slice(-3)
+        .join("\n")
+    : "";
+  notifier.notify(failed ? "deploy.failed" : "deploy.succeeded", {
+    title: `Deploy of ${d.project} ${failed ? "failed" : "finished"} (${d.version})`,
+    text: failed ? tail || "See the deployment log for details." : `Triggered by ${d.trigger}.`,
+    project: d.project,
+    severity: failed ? "error" : "info",
+  });
+}
+
 function setPhase(id, phase, extra = {}) {
   const fields = ["phase = ?"];
   const values = [phase];
@@ -2260,6 +2291,7 @@ function setPhase(id, phase, extra = {}) {
   }
   values.push(id);
   db.prepare(`UPDATE deployments SET ${fields.join(",")} WHERE id=?`).run(...values);
+  notifyDeployOutcome(id, phase);
 }
 
 /** Options that make runDeployment replay an earlier deployment (workdir + frozen snapshot). */
@@ -3196,6 +3228,8 @@ const selfHeal = new SelfHealEngine({
   },
   HOME,
 });
+
+selfHeal.onEvent = (e) => notifier.fromEvent(e);
 
 let s3Storage = null;
 try {
@@ -4193,6 +4227,45 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/tunnels/providers" && req.method === "GET") {
       return json(res, 200, tunnelManager.providers());
     }
+    // ────────── Notifications ──────────
+    if (url.pathname === "/api/notifications" && req.method === "GET") {
+      return json(res, 200, {
+        channels: notifier.list(),
+        events: EVENT_KINDS,
+        types: CHANNEL_TYPES,
+        recent: notifier.recentLog(30),
+      });
+    }
+    if (url.pathname === "/api/notifications" && req.method === "POST") {
+      try {
+        return json(res, 201, notifier.create(await readBody(req)));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if (
+      (m = url.pathname.match(/^\/api\/notifications\/([^/]+)\/test$/)) &&
+      req.method === "POST"
+    ) {
+      try {
+        return json(res, 200, await notifier.test(m[1]));
+      } catch (err) {
+        return json(res, 404, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/notifications\/([^/]+)$/)) && req.method === "PATCH") {
+      try {
+        return json(res, 200, notifier.update(m[1], await readBody(req)));
+      } catch (err) {
+        return json(res, /not found/.test(err.message) ? 404 : 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/notifications\/([^/]+)$/)) && req.method === "DELETE") {
+      return notifier.remove(m[1])
+        ? json(res, 200, { ok: true })
+        : json(res, 404, { error: "Notification channel not found" });
+    }
+
     if (url.pathname === "/api/tunnels" && req.method === "GET") {
       return json(res, 200, tunnelManager.list());
     }

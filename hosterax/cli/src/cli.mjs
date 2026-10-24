@@ -227,6 +227,15 @@ function help() {
     server:rm <serverId>                      Remove a server (it must not run any project)
     create <name> --server <serverId>         Place a Docker project on a server (also: deploy <path> --server)
 
+  Notifications:
+    notify:list                               Channels, what they listen to, and whether the last send worked
+    notify:add <name> --type webhook|slack|discord|ntfy|email --url <url> | --to a@b.com
+               [--secret <s>] [--events deploy.failed,server.down,...]
+                                              Be told when a deploy fails, an app crashes, a server goes away,
+                                              a backup fails (events default to everything important)
+    notify:test <id>                          Send a test message
+    notify:rm <id>                            Remove a channel
+
   Cron & Backups:
     cron:list                                 List scheduled background cron jobs
     cron:run <jobId>                          Trigger immediate execution of cron job
@@ -1306,6 +1315,79 @@ try {
       }
       await api("DELETE", `/api/servers/${srvId}`);
       console.log(`✓ Removed ${srvId}`);
+      break;
+    }
+
+    case "notify:list": {
+      const r = await api("GET", "/api/notifications");
+      if (!r.channels.length) {
+        console.log(
+          "No notification channels. Add one with: hosterax notify:add <name> --type slack --url <webhook url>",
+        );
+        console.log(`Events: ${Object.keys(r.events).join(", ")}`);
+        break;
+      }
+      console.table(
+        r.channels.map((c) => ({
+          ID: c.id,
+          Name: c.name,
+          Type: c.type,
+          Target: c.target,
+          Events: c.events.length ? c.events.join(",") : "all important",
+          Enabled: c.enabled ? "✓" : "✗",
+          "Last send": c.lastStatus
+            ? `${c.lastStatus}${c.lastError ? `: ${c.lastError.slice(0, 40)}` : ""}`
+            : "never",
+        })),
+      );
+      break;
+    }
+
+    case "notify:add": {
+      const name = args[0];
+      const type = flag("type");
+      if (!name || name.startsWith("--") || !type) {
+        console.error(
+          "Usage: hosterax notify:add <name> --type webhook|slack|discord|ntfy|email (--url <url> | --to <email,...>) [--secret <s>] [--events a,b]",
+        );
+        process.exit(1);
+      }
+      const body = { name, type };
+      if (flag("url")) body.url = flag("url");
+      if (flag("to")) body.to = flag("to");
+      if (flag("secret")) body.secret = flag("secret");
+      if (flag("events"))
+        body.events = flag("events")
+          .split(",")
+          .map((e) => e.trim());
+      const c = await api("POST", "/api/notifications", body);
+      console.log(`✓ Added ${c.name} (${c.id}). Sending a test message…`);
+      const t = await api("POST", `/api/notifications/${c.id}/test`);
+      console.log(
+        t.ok ? "✓ The test message was delivered." : `✗ The test message failed: ${t.error}`,
+      );
+      if (!t.ok) process.exitCode = 1;
+      break;
+    }
+
+    case "notify:test": {
+      if (!args[0]) {
+        console.error("Usage: hosterax notify:test <id>");
+        process.exit(1);
+      }
+      const t = await api("POST", `/api/notifications/${args[0]}/test`);
+      console.log(t.ok ? "✓ Delivered." : `✗ Failed: ${t.error}`);
+      if (!t.ok) process.exitCode = 1;
+      break;
+    }
+
+    case "notify:rm": {
+      if (!args[0]) {
+        console.error("Usage: hosterax notify:rm <id>");
+        process.exit(1);
+      }
+      await api("DELETE", `/api/notifications/${args[0]}`);
+      console.log(`✓ Removed ${args[0]}`);
       break;
     }
 
