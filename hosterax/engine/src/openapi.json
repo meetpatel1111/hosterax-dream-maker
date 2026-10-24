@@ -1580,6 +1580,46 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/expose/auto": {
+      "get": {
+        "summary": "GET /api/expose/auto",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "put": {
+        "summary": "PUT /api/expose/auto",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/expose/public-ip": {
+      "get": {
+        "summary": "GET /api/expose/public-ip",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "post": {
+        "summary": "POST /api/expose/public-ip",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/health": {
       "get": {
         "summary": "Any method /api/health",
@@ -4137,6 +4177,161 @@
             }
           }
         ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/tunnels": {
+      "get": {
+        "summary": "GET /api/tunnels",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "post": {
+        "summary": "POST /api/tunnels",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/tunnels/{param3}": {
+      "delete": {
+        "summary": "DELETE /api/tunnels/{param}",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "get": {
+        "summary": "GET /api/tunnels/{param}",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/tunnels/{param3}/logs": {
+      "get": {
+        "summary": "GET /api/tunnels/{param}/logs",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/tunnels/{param3}/restart": {
+      "post": {
+        "summary": "POST /api/tunnels/{param}/restart",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/tunnels/{param3}/start": {
+      "post": {
+        "summary": "POST /api/tunnels/{param}/start",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/tunnels/{param3}/stop": {
+      "post": {
+        "summary": "POST /api/tunnels/{param}/stop",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/tunnels/providers": {
+      "get": {
+        "summary": "GET /api/tunnels/providers",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."

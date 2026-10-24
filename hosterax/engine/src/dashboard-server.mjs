@@ -125,6 +125,7 @@ export function createDashboard({ log = () => {} } = {}) {
   let child = null;
   let starting = null;
   let lastFailure = 0;
+  let ssrPort = 0;
 
   function startSsr() {
     if (starting) return starting;
@@ -146,6 +147,7 @@ export function createDashboard({ log = () => {} } = {}) {
         },
       });
       child = proc;
+      ssrPort = port;
       let stderr = "";
       proc.stderr.on("data", (d) => {
         stderr = (stderr + d).slice(-2000);
@@ -154,6 +156,7 @@ export function createDashboard({ log = () => {} } = {}) {
         if (child === proc) {
           child = null;
           starting = null;
+          ssrPort = 0;
         }
       });
       const ready = await waitForPort(port, 15000);
@@ -205,6 +208,8 @@ export function createDashboard({ log = () => {} } = {}) {
 
   return {
     available: Boolean(bundle),
+    /** Loopback port of the dashboard's own server while it runs (0 otherwise). */
+    ssrPort: () => ssrPort,
     /** Handles a GET/HEAD request; resolves to false when the engine should answer 404 itself. */
     async handle(req, res, pathname) {
       if (!bundle) return false;

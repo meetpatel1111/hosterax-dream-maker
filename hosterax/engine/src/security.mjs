@@ -115,6 +115,8 @@ const ADMIN_ONLY = [
   /^\/api\/org(\/|$)/,
   /^\/api\/settings(\/|$)/,
   /^\/api\/edge\/settings$/,
+  /^\/api\/tunnels(\/|$)/,
+  /^\/api\/expose(\/|$)/,
   /^\/api\/email\/smtp-relays(\/|$)/,
   /^\/api\/backups\/s3-config$/,
   /^\/api\/docker\/system\/prune$/,

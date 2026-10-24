@@ -48,6 +48,13 @@ import { MCPServer } from "./mcp-server.mjs";
 import { ServerManager } from "./server-manager.mjs";
 import { createDashboard } from "./dashboard-server.mjs";
 import { BackupScheduler } from "./backup-scheduler.mjs";
+import {
+  TunnelManager,
+  PROVIDERS as TUNNEL_PROVIDERS,
+  detectPublicIp,
+  isPrivateAddress,
+  tunnelTargetHost,
+} from "./tunnel-manager.mjs";
 import { WebhookManager } from "./webhook-manager.mjs";
 import { OrgManager } from "./org-manager.mjs";
 import { EmailManager } from "./email-manager.mjs";
@@ -779,6 +786,38 @@ const backupScheduler = new BackupScheduler({
   // selfHeal is created later in this file; events are only recorded once a run has failed
   recordEvent: (project, type, details, status) =>
     selfHeal?.logEvent?.(project, type, details, status),
+});
+// What a tunnel may point at: a deployed project's port, or the edge proxy. Never the engine itself.
+function resolveTunnelTarget(target) {
+  const host = tunnelTargetHost({ bindHost: BIND_HOST });
+  let port;
+  if (target === "edge") {
+    port = Number(edgeManager.getSettings().http_port) || 80;
+  } else {
+    const p = db.prepare("SELECT port FROM projects WHERE name=?").get(target);
+    if (!p) return { missing: true };
+    if (!p.port) return { waiting: "the project has not been deployed yet" };
+    port = p.port;
+  }
+  if (port === PORT || port === dashboard.ssrPort())
+    throw new Error(`port ${port} belongs to the HosteraX engine and is never made public`);
+  return { host, port };
+}
+const tunnelManager = new TunnelManager({
+  db,
+  HOME,
+  resolveTarget: resolveTunnelTarget,
+  recordEvent: (project, type, details, status) =>
+    selfHeal?.logEvent?.(project, type, details, status),
+  // opt-in: every deployed project gets a public address on its own
+  autoTargets: () =>
+    getSetting("tunnels_auto_expose", "0") === "1"
+      ? db
+          .prepare("SELECT name FROM projects WHERE port IS NOT NULL")
+          .all()
+          .map((r) => r.name)
+      : [],
+  autoProvider: () => getSetting("tunnels_auto_provider", "auto"),
 });
 const drillsInFlight = new Set();
 const cronManager = new CronManager({ db, backupManager });
@@ -3949,6 +3988,113 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ────────── Magic DNS settings ──────────
+    // ── public access: tunnels ──
+    if (url.pathname === "/api/tunnels/providers" && req.method === "GET") {
+      return json(res, 200, tunnelManager.providers());
+    }
+    if (url.pathname === "/api/tunnels" && req.method === "GET") {
+      return json(res, 200, tunnelManager.list());
+    }
+    if (url.pathname === "/api/tunnels" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return json(res, 201, tunnelManager.create(b));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/tunnels\/([^/]+)$/)) && req.method === "GET") {
+      const t = tunnelManager.get(m[1]);
+      return t ? json(res, 200, t) : json(res, 404, { error: "tunnel not found" });
+    }
+    if ((m = url.pathname.match(/^\/api\/tunnels\/([^/]+)$/)) && req.method === "DELETE") {
+      return tunnelManager.remove(m[1])
+        ? json(res, 200, { ok: true })
+        : json(res, 404, { error: "tunnel not found" });
+    }
+    if ((m = url.pathname.match(/^\/api\/tunnels\/([^/]+)\/logs$/)) && req.method === "GET") {
+      const lines = tunnelManager.logs(m[1]);
+      return lines ? json(res, 200, { lines }) : json(res, 404, { error: "tunnel not found" });
+    }
+    if (
+      (m = url.pathname.match(/^\/api\/tunnels\/([^/]+)\/(start|stop|restart)$/)) &&
+      req.method === "POST"
+    ) {
+      const t =
+        m[2] === "start"
+          ? tunnelManager.enable(m[1])
+          : m[2] === "stop"
+            ? tunnelManager.disable(m[1])
+            : tunnelManager.restart(m[1]);
+      return t ? json(res, 200, t) : json(res, 404, { error: "tunnel not found" });
+    }
+    // what this machine's public address is, and whether it can be reached without a tunnel
+    if (url.pathname === "/api/expose/public-ip" && req.method === "GET") {
+      const configured = getServerIp();
+      const found = await detectPublicIp();
+      if (!found)
+        return json(res, 200, {
+          ip: null,
+          configured,
+          error: "could not reach any address-lookup service (is this machine offline?)",
+        });
+      const assignedToThisMachine = edgeManager.getLocalIps().includes(found.ip);
+      return json(res, 200, {
+        ip: found.ip,
+        source: found.source,
+        configured,
+        configuredMatches: configured === found.ip,
+        assignedToThisMachine,
+        advice: assignedToThisMachine
+          ? "This machine has a public address of its own. Apps are reachable on it once ports 80 and 443 are open in the firewall."
+          : "This machine is behind a router or carrier NAT, so people on the internet cannot reach this address directly. Use a tunnel, or forward ports 80 and 443 on your router.",
+      });
+    }
+    if (url.pathname === "/api/expose/public-ip" && req.method === "POST") {
+      const b = await readBody(req);
+      let ip = b.ip ? String(b.ip).trim() : "";
+      if (!ip) {
+        const found = await detectPublicIp();
+        if (!found) return json(res, 502, { error: "could not detect the public address" });
+        ip = found.ip;
+      }
+      const octets = ip.split(".").map(Number);
+      if (octets.length !== 4 || octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255))
+        return json(res, 400, { error: "give an IPv4 address such as 203.0.113.9" });
+      if (isPrivateAddress(ip))
+        return json(res, 400, {
+          error: `${ip} is a private address; the internet cannot reach it`,
+        });
+      setSetting("server_public_ip", ip);
+      return json(res, 200, { ok: true, ip });
+    }
+    // expose every deployed project automatically (off by default)
+    if (url.pathname === "/api/expose/auto" && req.method === "GET") {
+      return json(res, 200, {
+        enabled: getSetting("tunnels_auto_expose", "0") === "1",
+        provider: getSetting("tunnels_auto_provider", "auto"),
+      });
+    }
+    if (url.pathname === "/api/expose/auto" && req.method === "PUT") {
+      const b = await readBody(req);
+      if (b.provider !== undefined) {
+        const def = TUNNEL_PROVIDERS[b.provider];
+        const ok =
+          b.provider === "auto" ||
+          (def && !def.custom && !def.targetOnly && !def.options.some((o) => o.required));
+        if (!ok)
+          return json(res, 400, {
+            error:
+              "automatic exposure needs auto or a provider that requires no account or settings",
+          });
+        setSetting("tunnels_auto_provider", b.provider);
+      }
+      if (b.enabled !== undefined) setSetting("tunnels_auto_expose", b.enabled ? "1" : "0");
+      return json(res, 200, {
+        enabled: getSetting("tunnels_auto_expose", "0") === "1",
+        provider: getSetting("tunnels_auto_provider", "auto"),
+      });
+    }
     if (url.pathname === "/api/settings/magic-dns" && req.method === "GET") {
       const activeProvider = getSetting("magic_dns_provider", "sslip.io");
       const list = Object.entries(MAGIC_DNS_PROVIDERS).map(([id, p]) => ({
@@ -5334,6 +5480,7 @@ server.listen(PORT, () => {
   console.log(`HosteraX engine listening on http://localhost:${PORT}`);
   selfHeal.start();
   backupScheduler.start();
+  tunnelManager.start();
 });
 
 // ── Global Process Resilience & Crash Traps ──
@@ -5352,6 +5499,7 @@ function handleGracefulShutdown(signal) {
     selfHeal?.stop?.();
     scaleToZeroManager?.stop?.();
     backupScheduler.stop();
+    tunnelManager.stop();
     dashboard.close();
     server.close(() => {
       console.log("[hosterax-engine] HTTP server closed.");

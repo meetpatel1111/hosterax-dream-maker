@@ -22,6 +22,7 @@ import {
   UserCog,
   ChevronDown,
   Languages,
+  Share2,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
@@ -38,6 +39,7 @@ const NAV = [
   { to: "/deployments", key: "deploy" as const, label: "Deployments", icon: Rocket },
   { to: "/jobs", key: "jobs" as const, label: "Jobs & Schedules", icon: Clock },
   { to: "/domains", key: "domains" as any, label: "Domains & SSL", icon: Globe },
+  { to: "/expose", key: "expose" as any, label: "Public access", icon: Share2 },
   { to: "/databases", key: "databases" as const, label: "Databases", icon: Database },
   { to: "/servers", key: "servers" as const, label: "Servers", icon: Cpu },
   { to: "/users", key: "users" as any, label: "Users & access", icon: UserCog },

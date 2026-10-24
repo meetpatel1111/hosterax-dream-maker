@@ -41,6 +41,7 @@ Please factor these into your threat model:
 - **Local access is still full admin.** A request from the engine's own machine (or any API token) is not tied to a user. Set `HOSTERAX_REQUIRE_AUTH=1` to require a credential even locally.
 - **SSO is tested against a simulated identity provider only.**
 - **Account lockout is per email,** which protects against guessing but means someone can lock a known email for 15 minutes; admins and API tokens are unaffected.
+- **Public tunnels expose an app to everyone.** An `admin` can make a deployed project (or the edge proxy) public through a free third-party relay. The app is exposed as it is, with no login added, and the relay operator can see traffic the app does not encrypt itself. Tunnels can only point at a project's port or the edge, never at the engine or dashboard, and tokens for them are stored encrypted and kept out of command lines and logs. The ssh-based providers trust a relay's host key the first time they connect (`StrictHostKeyChecking=accept-new`) and use none of your own keys or ssh config. The `localtunnel` provider downloads and runs an npm package each time it starts (`auto` never picks it), and the `custom` provider runs a command you supply, so it is off unless the machine owner sets `HOSTERAX_ALLOW_CUSTOM_TUNNELS=1`. The provider integrations were tested against stand-in programs, not the live services.
 - **Not implemented:** SSH deployment to remote nodes (servers are registered and pinged only), an inbound mail server and an OAuth provider.
 
 ---

@@ -24,45 +24,52 @@ marked **(gap)** are things the product already implies but does not do yet.
 
 ## P1 — Finish what is half-built
 
-6. **Deploy to remote servers (gap).** Servers can be registered and pinged, but projects run only
+6. **Public access: prove it against the live services and harden it.** Free tunnels (Cloudflare,
+   localhost.run, Pinggy, Serveo, localtunnel, ngrok, Tailscale Funnel, bore, custom) exist but were
+   only tested against programs that print each service's documented output. Still missing: a CI
+   job or manual checklist that runs each against the real service, pinned relay host keys for the
+   ssh providers, an optional login (basic auth or Cloudflare Access) in front of an exposed app,
+   automatic UPnP/NAT-PMP port mapping and an external reachability test for direct exposure, and
+   stable custom domains on top of quick tunnels.
+7. **Deploy to remote servers (gap).** Servers can be registered and pinged, but projects run only
    on the engine host. Implement SSH-based deploys (or a small agent), real CPU/RAM/Docker probes
    for remote nodes, and a placement choice per project.
-7. **Email that actually receives mail (gap).** Either integrate a proper MTA (Stalwart or Mailu as
+8. **Email that actually receives mail (gap).** Either integrate a proper MTA (Stalwart or Mailu as
    a managed app) or narrow the feature to "DNS records + relay sending" and say so in the UI.
-8. **Backup notifications and verification depth.** Scheduled backups, retention, archive
+9. **Backup notifications and verification depth.** Scheduled backups, retention, archive
    verification, restore drills and opt-in encrypted archives now exist. Still missing: pushing
    failures to email/Slack/webhooks, running a restore drill against a real Docker daemon in CI,
    deeper verification of mongodump archives, per-backup key rotation, and MCP tools for schedules.
-9. **Verified catalog images.** A CI job that pulls every catalog image, records its digest and
-   architectures, and flips `imageVerified` (currently 608 of ~2,500). Pin digests, and verify
-   signatures with cosign where publishers provide them.
-10. **OAuth 2.1 + PKCE for remote MCP clients (gap)**, so hosted agents can authenticate without
+10. **Verified catalog images.** A CI job that pulls every catalog image, records its digest and
+    architectures, and flips `imageVerified` (currently 608 of ~2,500). Pin digests, and verify
+    signatures with cosign where publishers provide them.
+11. **OAuth 2.1 + PKCE for remote MCP clients (gap)**, so hosted agents can authenticate without
     sharing a long-lived admin token.
 
 ## P2 — Product features
 
-11. **Observability.** A Prometheus `/metrics` endpoint, OpenTelemetry export, alert rules (crash
+12. **Observability.** A Prometheus `/metrics` endpoint, OpenTelemetry export, alert rules (crash
     loop, disk, cert expiry, failed backup) with Slack/email/webhook notifications.
-12. **GitHub App integration.** Replace per-repo webhook secrets with an app: deploy status checks,
+13. **GitHub App integration.** Replace per-repo webhook secrets with an app: deploy status checks,
     PR comments with preview URLs, and GitLab/Gitea equivalents.
-13. **Environments and promotion.** Staging → production promotion, deploy approvals, per-PR
+14. **Environments and promotion.** Staging → production promotion, deploy approvals, per-PR
     preview databases (seeded from a backup), and scheduled/ephemeral previews.
-14. **More deploy targets.** Import `docker-compose.yml` as a multi-service project, and a Kubernetes
+15. **More deploy targets.** Import `docker-compose.yml` as a multi-service project, and a Kubernetes
     or Nomad driver behind the same deploy interface.
-15. **Log retention and search.** Persist logs with rotation and add in-dashboard search/filter;
+16. **Log retention and search.** Persist logs with rotation and add in-dashboard search/filter;
     stream to Loki or an external syslog.
-16. **Localization without a third party.** Replace opt-in machine translation with community
+17. **Localization without a third party.** Replace opt-in machine translation with community
     dictionaries and a missing-key report in CI; add an accessibility pass (focus order, contrast).
 
 ## P3 — Engineering health
 
-17. **Break up `engine/src/index.mjs` (~5k lines)** into route modules with JSDoc/TypeScript types.
-18. **Generate the API contract.** Many past bugs were the CLI and dashboard calling routes or
+18. **Break up `engine/src/index.mjs` (~5k lines)** into route modules with JSDoc/TypeScript types.
+19. **Generate the API contract.** Many past bugs were the CLI and dashboard calling routes or
     fields that did not exist. Emit an OpenAPI document from the route table, generate the client
     types from it, and add a contract test that fails CI on drift.
-19. **Broader tests.** Playwright end-to-end tests for sign-in, deploy and rollback; Docker-backed
+20. **Broader tests.** Playwright end-to-end tests for sign-in, deploy and rollback; Docker-backed
     integration tests (database provisioning, backup/restore, blue/green cutover) on CI.
-20. **Release and dependency hygiene.** One package manager for the repo (the root `bun.lock` is
+21. **Release and dependency hygiene.** One package manager for the repo (the root `bun.lock` is
     stale), Renovate, SBOM generation, and signed images with build provenance. Remove the unused
     Supabase scaffold (`src/integrations/supabase`, `supabase/`, the tracked `.env`) once confirmed
     it is not needed by the Lovable project.

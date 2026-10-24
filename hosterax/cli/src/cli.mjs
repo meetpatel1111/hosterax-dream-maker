@@ -200,6 +200,14 @@ function help() {
     backup:verify <backupId>                  Check a backup's checksum, encryption and archive integrity
     backup:drill <backupId>                   Restore a backup into a scratch container to prove it works
 
+  Public access (free tunnels, no public IP or router setup needed):
+    expose <project|edge> [--provider auto]   Give an app a public https address (see expose:providers)
+    expose:list                               Public addresses and their status
+    expose:providers                          Free options and which ones this machine can run
+    expose:logs|stop|start|restart|rm <id|project>   Manage one tunnel
+    expose:ip [--save]                        This machine's public IP; --save uses it for Magic DNS
+    expose:auto [on|off] [--provider auto]    Automatically expose every deployed project (off by default)
+
   Domains & Edge Routing:
     domains <name>                            List custom domains for project
     domain:add <name> <hostname> [--primary]  Add custom domain to project
@@ -257,6 +265,27 @@ function help() {
     tokens                                    List personal access tokens
     token:new <label>                         Mint personal access token
 `);
+}
+
+/** Finds a tunnel by its id, or by the project it exposes when that is unambiguous. */
+async function findTunnel(ref) {
+  if (!ref) {
+    console.error("Give a tunnel id or project name (see: hosterax expose:list)");
+    process.exit(1);
+  }
+  const list = await api("GET", "/api/tunnels");
+  const hits = list.filter((t) => t.id === ref || t.target === ref);
+  if (hits.length === 0) {
+    console.error(`No tunnel matches "${ref}" (see: hosterax expose:list)`);
+    process.exit(1);
+  }
+  if (hits.length > 1) {
+    console.error(
+      `"${ref}" has ${hits.length} tunnels; use one of these ids: ${hits.map((t) => t.id).join(", ")}`,
+    );
+    process.exit(1);
+  }
+  return hits[0];
 }
 
 function flag(name) {
@@ -839,6 +868,182 @@ try {
       }
       await api("DELETE", `/api/backups/schedules/${id}`);
       console.log(`✓ Schedule ${id} deleted (backups it already took are kept)`);
+      break;
+    }
+
+    case "expose": {
+      const target = args[0];
+      if (!target || target.startsWith("--")) {
+        console.error(
+          "Usage: hosterax expose <project|edge> [--provider auto|cloudflare|localhost-run|pinggy|localtunnel|serveo|ngrok|tailscale|bore|cloudflare-token|custom] [--no-wait]\n" +
+            "  ngrok:             --authtoken <token> (or NGROK_AUTHTOKEN) [--domain you.ngrok-free.app]\n" +
+            "  cloudflare-token:  edge --token <token> (or CLOUDFLARE_TUNNEL_TOKEN) [--hostname apps.example.com]\n" +
+            "  bore:              [--server host[:port]] [--secret <secret>]\n" +
+            '  custom:            --command "zrok share public --headless {host}:{port}" --url-pattern "(https://\\\\S+)"\n' +
+            "See what this machine can run with: hosterax expose:providers",
+        );
+        process.exit(1);
+      }
+      const provider = flag("provider") || "auto";
+      const options = {};
+      const token = flag("token") || process.env.CLOUDFLARE_TUNNEL_TOKEN;
+      const authtoken = flag("authtoken") || process.env.NGROK_AUTHTOKEN;
+      if (provider === "cloudflare-token" && token) options.token = token;
+      if (provider === "ngrok" && authtoken) options.authtoken = authtoken;
+      for (const [f, k] of [
+        ["hostname", "hostname"],
+        ["domain", "domain"],
+        ["server", "server"],
+        ["secret", "secret"],
+        ["command", "command"],
+        ["url-pattern", "urlPattern"],
+      ])
+        if (flag(f)) options[k] = flag(f);
+      const created = await api("POST", "/api/tunnels", { target, provider, options });
+      console.log(`Making ${target} public (${provider})…`);
+      if (has("no-wait")) {
+        console.log(`✓ Started tunnel ${created.id}. Check it with: hosterax expose:list`);
+        break;
+      }
+      let t = created;
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        t = await api("GET", `/api/tunnels/${created.id}`);
+        if (["running", "failed", "waiting"].includes(t.status)) break;
+      }
+      if (t.status === "running") {
+        console.log(`✓ ${target} is public${t.providerUsed ? ` through ${t.providerUsed}` : ""}:`);
+        console.log(`  ${t.publicUrl || "(the address is set in your Cloudflare dashboard)"}`);
+        if (t.kind === "tcp") console.log("  This is a raw TCP address, not a web page.");
+        console.log(`  It restarts by itself and comes back after the engine restarts.`);
+        console.log(`  Stop it with: hosterax expose:stop ${t.id}`);
+      } else if (t.status === "waiting") {
+        console.log(`… ${t.lastError}. It will go public by itself once the project is running.`);
+      } else {
+        console.error(
+          `✗ Could not make ${target} public:\n${t.lastError || "no address after waiting"}`,
+        );
+        console.error(
+          `  Details: hosterax expose:logs ${t.id}   ·   Options: hosterax expose:providers`,
+        );
+        process.exit(1);
+      }
+      break;
+    }
+
+    case "expose:list": {
+      const list = await api("GET", "/api/tunnels");
+      if (list.length === 0) {
+        console.log("Nothing is public. Try: hosterax expose <project>");
+        break;
+      }
+      console.table(
+        list.map((t) => ({
+          ID: t.id,
+          Target: t.target,
+          Provider: t.providerUsed || t.provider,
+          Status: t.status,
+          Address: t.publicUrl || "—",
+          Answers: t.reachable === null ? "—" : t.reachable ? `yes (${t.checkStatus})` : "no",
+          Restarts: t.restarts,
+          Note: (t.lastError || "").split("\n")[0].slice(0, 70),
+        })),
+      );
+      break;
+    }
+
+    case "expose:providers": {
+      const list = await api("GET", "/api/tunnels/providers");
+      console.table(
+        list.map((p) => ({
+          Provider: p.id,
+          Account: p.needsAccount ? "needed" : "none",
+          Kind: p.kind,
+          "Ready here": p.ready ? `yes (${p.runsWith})` : "no",
+          Auto: p.inAuto ? "yes" : "",
+          Needs: (p.missing || "").replace(/ \([^)]*\)/g, ""),
+        })),
+      );
+      console.log(
+        "\nauto tries the providers marked Auto, in this order, and uses the first that works.\n" +
+          "Details and limits of each: GET /api/tunnels/providers",
+      );
+      break;
+    }
+
+    case "expose:logs": {
+      const t = await findTunnel(args[0]);
+      const r = await api("GET", `/api/tunnels/${t.id}/logs`);
+      console.log(r.lines.join("\n") || "(no output yet)");
+      break;
+    }
+
+    case "expose:stop": {
+      const t = await findTunnel(args[0]);
+      await api("POST", `/api/tunnels/${t.id}/stop`);
+      console.log(
+        `✓ ${t.target} is no longer public (tunnel ${t.id} stopped; start it again with expose:start)`,
+      );
+      break;
+    }
+
+    case "expose:start": {
+      const t = await findTunnel(args[0]);
+      await api("POST", `/api/tunnels/${t.id}/start`);
+      console.log(`✓ Tunnel ${t.id} starting. Watch it with: hosterax expose:list`);
+      break;
+    }
+
+    case "expose:restart": {
+      const t = await findTunnel(args[0]);
+      await api("POST", `/api/tunnels/${t.id}/restart`);
+      console.log(`✓ Tunnel ${t.id} restarting (its address may change)`);
+      break;
+    }
+
+    case "expose:rm": {
+      const t = await findTunnel(args[0]);
+      await api("DELETE", `/api/tunnels/${t.id}`);
+      console.log(`✓ Tunnel ${t.id} removed`);
+      break;
+    }
+
+    case "expose:ip": {
+      const r = await api("GET", "/api/expose/public-ip");
+      if (!r.ip) {
+        console.error(`✗ ${r.error}`);
+        process.exit(1);
+      }
+      console.log(`Public IP: ${r.ip}   (HosteraX is using: ${r.configured})`);
+      console.log(r.advice);
+      if (has("save")) {
+        await api("POST", "/api/expose/public-ip", { ip: r.ip });
+        console.log(`✓ ${r.ip} saved. Magic DNS names will now use it.`);
+      } else if (!r.configuredMatches) {
+        console.log("Use it for Magic DNS names with: hosterax expose:ip --save");
+      }
+      break;
+    }
+
+    case "expose:auto": {
+      const word = args[0];
+      if (word === "on" || word === "off" || flag("provider")) {
+        const body = {};
+        if (word === "on") body.enabled = true;
+        if (word === "off") body.enabled = false;
+        if (flag("provider")) body.provider = flag("provider");
+        const r = await api("PUT", "/api/expose/auto", body);
+        console.log(
+          r.enabled
+            ? `✓ Every deployed project is now made public automatically (${r.provider}). Anyone with the address can open them.`
+            : "✓ Automatic exposure is off. Existing tunnels keep running until you stop them.",
+        );
+      } else {
+        const r = await api("GET", "/api/expose/auto");
+        console.log(`Automatic exposure: ${r.enabled ? "on" : "off"} (provider: ${r.provider})`);
+        console.log("Change it with: hosterax expose:auto on|off [--provider auto]");
+      }
       break;
     }
 

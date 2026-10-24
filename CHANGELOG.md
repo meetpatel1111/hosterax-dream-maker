@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Free public access (tunnels):** `htx expose <project|edge>` and a dashboard **Public access** page give an app a public https address from any computer, with no public IP or router setup. Providers: Cloudflare Quick Tunnel and named tunnel, localhost.run, Pinggy, Serveo, localtunnel, ngrok, Tailscale Funnel, bore (raw TCP) and an opt-in custom command. `auto` picks the first that works, falling through failures and saying what it tried; tunnels reconnect with backoff, resume after an engine restart, follow a redeployed project's new port and are removed with their project. Admin-only; can only target a deployed project or the edge, never the engine or dashboard; tokens are stored encrypted and kept out of command lines and logs. Optional automatic exposure of every deployed project (off by default). Works from the official Docker image (apps are reached on the Docker host; override with `HOSTERAX_TUNNEL_HOST`).
+- `htx expose:ip` / `GET /api/expose/public-ip` looks up the machine's public IP, says whether it is assigned to this machine or behind NAT, and can save it for Magic DNS names.
 - **Scheduled backups:** per-database cron schedules with retention (`keepLast`, `keepDays`), run serially, catch-up after downtime, failure events, and REST/CLI/dashboard management (`/api/backups/schedules`, `htx backup:schedule*`, Backups → Schedules).
 - **Backup verification:** `POST /api/backups/:id/verify` / `htx backup:verify` check the checksum, authenticate encryption, read the archive end to end and look for a complete-dump footer. Every scheduled run is verified by default.
 - **Restore drills:** `POST /api/backups/:id/drill` / `htx backup:drill` restore a backup into an isolated, throwaway container from the source's image and confirm the database answers (Postgres, MySQL/MariaDB, MongoDB, Redis).
@@ -40,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Fixed
 
+- The README claimed `HOSTERAX_PUBLIC_IP` was detected automatically. It never was: Magic DNS names used `127.0.0.1` unless you set it. The table now says so, and `htx expose:ip --save` sets it.
 - **Engine no longer aborts on Node 24.21+.** `better-sqlite3` 11 and 12 crash the whole process (`Assertion failed: (env) != nullptr`) when the garbage collector frees a statement or database wrapper, which the engine does constantly because it prepares statements ad hoc; the Docker image runs Node 24. Upgraded to `better-sqlite3` 13, which does not have the problem and ships prebuilt binaries (no compiler needed); `hosterax/engine/.npmrc` sets `ignore-scripts=true` so lockfile installs (CI, Docker) do not run `node-gyp` for it, which needs a C++ toolchain and failed on Windows runners. A regression test (`sqlite-gc.test.mjs`) fails on the old versions. **Breaking:** `better-sqlite3` 13 needs Node 22 or newer, so the minimum Node version is now 22 (Node 20 is end-of-life).
 - Engine failed to boot (`catalogAppsList is not defined`) and `npm ci` failed against a private registry lockfile.
 - Backups, rollbacks, database provisioning, start/stop/restart and the 9-stage audit now perform the real operation and report failure honestly instead of returning fake success.
