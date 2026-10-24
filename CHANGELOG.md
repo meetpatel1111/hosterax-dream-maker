@@ -11,7 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scheduled backups:** per-database cron schedules with retention (`keepLast`, `keepDays`), run serially, catch-up after downtime, failure events, and REST/CLI/dashboard management (`/api/backups/schedules`, `htx backup:schedule*`, Backups → Schedules).
+- **Backup verification:** `POST /api/backups/:id/verify` / `htx backup:verify` check the checksum, authenticate encryption, read the archive end to end and look for a complete-dump footer. Every scheduled run is verified by default.
+- **Restore drills:** `POST /api/backups/:id/drill` / `htx backup:drill` restore a backup into an isolated, throwaway container from the source's image and confirm the database answers (Postgres, MySQL/MariaDB, MongoDB, Redis).
+- **Opt-in encrypted backup archives** (AES-256-GCM, streaming, authenticated before any restore); downloads are served decrypted.
 - **API contract:** `scripts/api-contract.mjs` extracts the engine's routes, generates `hosterax/engine/src/openapi.json` (served at `GET /api/openapi.json`) and fails the test suite when the CLI or dashboard call a route the engine does not serve or use the wrong method (`npm run api:check` / `api:write`).
+
+### Fixed
+
+- The dashboard assumed the engine was at `http://localhost:7777`, so a dashboard served by an engine on any other port could not find it. The engine now marks the pages it serves (`Server-Timing: hosterax`) and the dashboard uses its own origin.
+- Backups left `in_progress` by a crash are now marked failed on start; a stale unused `backup_schedules` table from an older version is set aside (`backup_schedules_legacy`).
 
 ### 🔒 Security
 
@@ -27,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🐛 Fixed
 
+- **Engine no longer aborts on Node 24.21+.** `better-sqlite3` 11 and 12 crash the whole process (`Assertion failed: (env) != nullptr`) when the garbage collector frees a statement or database wrapper, which the engine does constantly because it prepares statements ad hoc; the Docker image runs Node 24. Upgraded to `better-sqlite3` 13, which does not have the problem and ships prebuilt binaries (no compiler needed); `hosterax/engine/.npmrc` sets `ignore-scripts=true` so lockfile installs (CI, Docker) do not run `node-gyp` for it, which needs a C++ toolchain and failed on Windows runners. A regression test (`sqlite-gc.test.mjs`) fails on the old versions. **Breaking:** `better-sqlite3` 13 needs Node 22 or newer, so the minimum Node version is now 22 (Node 20 is end-of-life).
 - Engine failed to boot (`catalogAppsList is not defined`) and `npm ci` failed against a private registry lockfile.
 - Backups, rollbacks, database provisioning, start/stop/restart and the 9-stage audit now perform the real operation and report failure honestly instead of returning fake success.
 - Environment variables have a single source of truth (`project_env`); webhook handling consolidated; duplicated self-heal methods and an un-awaited Docker probe removed.

@@ -1,15 +1,16 @@
 import { useSyncExternalStore, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { FALLBACK_ENGINE_URL, defaultEngineUrl } from "./engine-url";
 export * from "./schema";
 
 type EngineState = { url: string; token: string };
 
-const DEFAULT_URL = "http://localhost:7777";
+const DEFAULT_URL = FALLBACK_ENGINE_URL;
 
 function read(): EngineState {
   if (typeof window === "undefined") return { url: DEFAULT_URL, token: "" };
   return {
-    url: localStorage.getItem("hx.url") || DEFAULT_URL,
+    url: localStorage.getItem("hx.url") || defaultEngineUrl(),
     token: localStorage.getItem("hx.token") || "",
   };
 }
@@ -432,7 +433,51 @@ export type BackupItem = {
   finished_at?: number;
   error_message?: string;
   existsOnDisk?: boolean;
+  encrypted?: number;
+  schedule_id?: string | null;
+  verified_at?: number | null;
+  verify_status?: "verified" | "failed" | null;
+  verify_message?: string | null;
 };
+
+export type BackupSchedule = {
+  id: string;
+  name: string;
+  databaseName: string;
+  dbType: string;
+  projectName: string | null;
+  containerName: string;
+  cron: string;
+  keepLast: number;
+  keepDays: number;
+  drill: "off" | "archive" | "restore";
+  drillEvery: number;
+  encrypt: boolean;
+  enabled: boolean;
+  lastRunAt: number | null;
+  lastStatus: "ok" | "failed" | "running" | null;
+  lastError: string | null;
+  lastBackupId: string | null;
+  lastDrillAt: number | null;
+  nextRunAt: number | null;
+};
+
+export function useBackupSchedules() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<BackupSchedule[]>({
+    queryKey: ["backup-schedules", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        return await eng.call<BackupSchedule[]>("GET", "/api/backups/schedules");
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 5000,
+  });
+}
 
 export function useBackupTargets() {
   const eng = useEngine();

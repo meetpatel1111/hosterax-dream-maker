@@ -18,7 +18,7 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
                 ▼                               ▼                      ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    HOSTERAX ENGINE DAEMON (Port :7777)                      │
-│                Native Node.js 20+ ESM • SQLite (WAL Mode)                   │
+│                Native Node.js 22+ ESM • SQLite (WAL Mode)                   │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  ┌───────────────────────┐  ┌───────────────────────┐  ┌──────────────────┐ │
 │  │ Model Context Protocol│  │ Autonomous Self-Heal  │  │ Deployment Engine│ │

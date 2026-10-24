@@ -245,6 +245,27 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/backups/{param3}/drill": {
+      "post": {
+        "summary": "POST /api/backups/{param}/drill",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/backups/{param3}/restore": {
       "post": {
         "summary": "POST /api/backups/{param}/restore",
@@ -269,6 +290,27 @@
     "/api/backups/{param3}/sync-s3": {
       "post": {
         "summary": "POST /api/backups/{param}/sync-s3",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/backups/{param3}/verify": {
+      "post": {
+        "summary": "POST /api/backups/{param}/verify",
         "parameters": [
           {
             "name": "param3",
@@ -341,6 +383,87 @@
     "/api/backups/s3-test": {
       "post": {
         "summary": "POST /api/backups/s3-test",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/backups/schedules": {
+      "get": {
+        "summary": "GET /api/backups/schedules",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "post": {
+        "summary": "POST /api/backups/schedules",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/backups/schedules/{param4}": {
+      "delete": {
+        "summary": "DELETE /api/backups/schedules/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "patch": {
+        "summary": "PATCH /api/backups/schedules/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/backups/schedules/{param4}/run": {
+      "post": {
+        "summary": "POST /api/backups/schedules/{param}/run",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."

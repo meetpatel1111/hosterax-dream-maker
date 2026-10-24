@@ -13,11 +13,11 @@
     "test": "node --test"
   },
   "dependencies": {
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^13.0.3",
     "nodemailer": "^9.0.5",
     "ws": "^8.18.0"
   },
   "engines": {
-    "node": ">=20.18.0"
+    "node": ">=22.0.0"
   }
 }

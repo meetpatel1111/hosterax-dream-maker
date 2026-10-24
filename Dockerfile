@@ -39,8 +39,9 @@ ENV NODE_ENV=production \
     HOSTERAX_PORT=7777 \
     HOSTERAX_HOME=/root/.hosterax
 
-# Install engine production dependencies (compiling better-sqlite3 with native musl toolchain)
-COPY hosterax/engine/package.json hosterax/engine/package-lock.json ./hosterax/engine/
+# Install engine production dependencies (better-sqlite3 ships a prebuilt musl binary; the .npmrc
+# keeps npm from running node-gyp for it)
+COPY hosterax/engine/package.json hosterax/engine/package-lock.json hosterax/engine/.npmrc ./hosterax/engine/
 RUN cd hosterax/engine && npm ci --omit=dev --no-audit --no-fund \
     && apk del make g++
 

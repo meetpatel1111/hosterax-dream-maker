@@ -14,6 +14,9 @@ import {
   UploadCloud,
   Check,
   Zap,
+  Clock,
+  Play,
+  Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -22,12 +25,22 @@ import {
   useBackups,
   useS3Config,
   useRemoteS3Backups,
+  useBackupSchedules,
   type BackupItem,
 } from "../../lib/engine";
 
+const CRON_PRESETS = [
+  { cron: "0 2 * * *", label: "Every day at 02:00" },
+  { cron: "0 */6 * * *", label: "Every 6 hours" },
+  { cron: "0 3 * * 0", label: "Every Sunday at 03:00" },
+  { cron: "custom", label: "Custom cron expression…" },
+] as const;
+
 export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   const engine = useEngine();
-  const [activeTab, setActiveTab] = useState<"create" | "history" | "storage">("create");
+  const [activeTab, setActiveTab] = useState<"create" | "schedules" | "history" | "storage">(
+    "create",
+  );
   const [destination, setDestination] = useState("local");
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
@@ -39,6 +52,18 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   const backupsQuery = useBackups();
   const s3ConfigQuery = useS3Config();
   const remoteBackupsQuery = useRemoteS3Backups();
+  const schedulesQuery = useBackupSchedules();
+  const schedules = useMemo(() => schedulesQuery.data || [], [schedulesQuery.data]);
+
+  // New schedule form
+  const [cronPreset, setCronPreset] = useState<string>(CRON_PRESETS[0].cron);
+  const [customCron, setCustomCron] = useState("0 2 * * *");
+  const [keepLast, setKeepLast] = useState(7);
+  const [keepDays, setKeepDays] = useState(0);
+  const [drill, setDrill] = useState<"off" | "archive" | "restore">("archive");
+  const [encryptNew, setEncryptNew] = useState(false);
+  const [savingSchedule, setSavingSchedule] = useState(false);
+  const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
   const targets = useMemo(() => targetsQuery.data || [], [targetsQuery.data]);
   const backups = useMemo(() => backupsQuery.data || [], [backupsQuery.data]);
@@ -239,6 +264,78 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const createSchedule = async () => {
+    if (!selectedTarget) {
+      toast.error("Please select a target database");
+      return;
+    }
+    setSavingSchedule(true);
+    try {
+      await engine.call("POST", "/api/backups/schedules", {
+        databaseName: selectedTarget.name || selectedTarget.id,
+        containerName: selectedTarget.containerName || selectedTarget.id,
+        dbType: selectedTarget.dbType || "mongodb",
+        projectName: selectedTarget.projectName || selectedTarget.name,
+        cron: cronPreset === "custom" ? customCron : cronPreset,
+        keepLast,
+        keepDays,
+        drill,
+        encrypt: encryptNew,
+      });
+      toast.success("Backup schedule created");
+      schedulesQuery.refetch();
+    } catch (e: any) {
+      toast.error(e?.message || "Could not create the schedule");
+    } finally {
+      setSavingSchedule(false);
+    }
+  };
+
+  const runSchedule = async (id: string) => {
+    try {
+      await engine.call("POST", `/api/backups/schedules/${id}/run`);
+      toast.success("Backup started — the result appears here when it finishes");
+      schedulesQuery.refetch();
+    } catch (e: any) {
+      toast.error(e?.message || "Could not start the backup");
+    }
+  };
+
+  const toggleSchedule = async (id: string, enabled: boolean) => {
+    try {
+      await engine.call("PATCH", `/api/backups/schedules/${id}`, { enabled });
+      schedulesQuery.refetch();
+    } catch (e: any) {
+      toast.error(e?.message || "Could not update the schedule");
+    }
+  };
+
+  const removeSchedule = async (id: string) => {
+    if (!confirm("Delete this schedule? Backups it already took are kept.")) return;
+    try {
+      await engine.call("DELETE", `/api/backups/schedules/${id}`);
+      schedulesQuery.refetch();
+    } catch (e: any) {
+      toast.error(e?.message || "Could not delete the schedule");
+    }
+  };
+
+  const verifyBackup = async (id: string) => {
+    setVerifyingId(id);
+    try {
+      const r = await engine.call<{ ok: boolean; message: string }>(
+        "POST",
+        `/api/backups/${id}/verify`,
+      );
+      (r.ok ? toast.success : toast.error)(r.message);
+      backupsQuery.refetch();
+    } catch (e: any) {
+      toast.error(e?.message || "Verification failed to run");
+    } finally {
+      setVerifyingId(null);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md">
       <div className="flex h-[85vh] w-full max-w-4xl flex-col rounded-xl border border-border bg-card shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
@@ -268,7 +365,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
 
         {/* Navigation Tabs */}
         <div className="flex border-b border-border bg-surface/50 px-6 pt-2">
-          {(["create", "history", "storage"] as const).map((tab) => (
+          {(["create", "schedules", "history", "storage"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -279,6 +376,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
               }`}
             >
               {tab === "create" && "Create Snapshot"}
+              {tab === "schedules" && `Schedules (${schedules.length})`}
               {tab === "history" && `Snapshots History (${backups.length})`}
               {tab === "storage" && "Remote S3 / R2 Storage"}
             </button>
@@ -381,6 +479,185 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
+          {activeTab === "schedules" && (
+            <div className="space-y-6">
+              <div className="space-y-3 rounded-xl border border-border p-4 max-w-2xl">
+                <div className="flex items-center gap-2 text-xs font-semibold">
+                  <Clock className="h-4 w-4 text-primary" /> New backup schedule
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Backs up the database selected on the “Create Snapshot” tab (
+                  {selectedTarget ? selectedTarget.label : "none detected"}) on a schedule. Times
+                  use the engine host's clock.
+                </p>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <label className="space-y-1">
+                    <span className="font-medium">When</span>
+                    <select
+                      value={cronPreset}
+                      onChange={(e) => setCronPreset(e.target.value)}
+                      className="w-full rounded-md border border-input bg-input/40 px-3 py-2 outline-none focus:border-primary"
+                    >
+                      {CRON_PRESETS.map((p) => (
+                        <option key={p.cron} value={p.cron}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {cronPreset === "custom" ? (
+                    <label className="space-y-1">
+                      <span className="font-medium">Cron (min hour day month weekday)</span>
+                      <input
+                        value={customCron}
+                        onChange={(e) => setCustomCron(e.target.value)}
+                        className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono outline-none focus:border-primary"
+                      />
+                    </label>
+                  ) : (
+                    <div />
+                  )}
+                  <label className="space-y-1">
+                    <span className="font-medium">Keep the last</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={keepLast}
+                      onChange={(e) => setKeepLast(Number(e.target.value))}
+                      className="w-full rounded-md border border-input bg-input/40 px-3 py-2 outline-none focus:border-primary"
+                    />
+                  </label>
+                  <label className="space-y-1">
+                    <span className="font-medium">
+                      …and nothing older than (days, 0 = no limit)
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      max={3650}
+                      value={keepDays}
+                      onChange={(e) => setKeepDays(Number(e.target.value))}
+                      className="w-full rounded-md border border-input bg-input/40 px-3 py-2 outline-none focus:border-primary"
+                    />
+                  </label>
+                  <label className="space-y-1 col-span-2">
+                    <span className="font-medium">Prove each backup works</span>
+                    <select
+                      value={drill}
+                      onChange={(e) => setDrill(e.target.value as typeof drill)}
+                      className="w-full rounded-md border border-input bg-input/40 px-3 py-2 outline-none focus:border-primary"
+                    >
+                      <option value="archive">Check the archive (checksum, integrity)</option>
+                      <option value="restore">
+                        Check the archive and, every 7th run, restore it into a throwaway container
+                      </option>
+                      <option value="off">Don't check</option>
+                    </select>
+                  </label>
+                </div>
+                <label className="flex items-start gap-2 text-xs">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={encryptNew}
+                    onChange={(e) => setEncryptNew(e.target.checked)}
+                  />
+                  <span>
+                    <span className="font-medium">Encrypt the archives (AES-256-GCM)</span>
+                    <span className="block text-[11px] text-amber-400">
+                      Without this server's encryption key (<code>secret.key</code>) encrypted
+                      backups cannot be restored — including copies in S3. Keep a copy of the key
+                      somewhere else.
+                    </span>
+                  </span>
+                </label>
+                <button
+                  disabled={savingSchedule || !selectedTarget}
+                  onClick={createSchedule}
+                  className="rounded-md bg-primary px-3.5 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
+                >
+                  {savingSchedule ? "Saving…" : "Create schedule"}
+                </button>
+              </div>
+
+              {schedules.length === 0 ? (
+                <p className="text-xs text-muted-foreground">No schedules yet.</p>
+              ) : (
+                <div className="divide-y divide-border rounded-xl border border-border overflow-hidden">
+                  {schedules.map((s) => (
+                    <div
+                      key={s.id}
+                      className="flex flex-wrap items-center justify-between gap-3 p-4 text-xs"
+                    >
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex flex-wrap items-center gap-2 font-mono font-medium">
+                          <Database className="h-3.5 w-3.5 text-primary" />
+                          <span>{s.databaseName}</span>
+                          <span className="rounded bg-surface-2 px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                            {s.cron}
+                          </span>
+                          <span
+                            className={`rounded-full px-2 text-[10px] uppercase font-semibold ${
+                              s.lastStatus === "ok"
+                                ? "bg-success/15 text-success"
+                                : s.lastStatus === "failed"
+                                  ? "bg-destructive/15 text-destructive"
+                                  : s.lastStatus === "running"
+                                    ? "bg-amber-500/15 text-amber-400"
+                                    : "bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            {s.lastStatus ?? "not run yet"}
+                          </span>
+                          {s.encrypt && (
+                            <span className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                              <Lock className="h-3 w-3" /> encrypted
+                            </span>
+                          )}
+                          {!s.enabled && <span className="text-[10px] text-amber-400">paused</span>}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          Keeps {s.keepLast}
+                          {s.keepDays ? ` / ${s.keepDays} days` : ""} · verification: {s.drill}
+                          {s.nextRunAt && s.enabled
+                            ? ` · next ${new Date(s.nextRunAt).toLocaleString()}`
+                            : ""}
+                          {s.lastRunAt ? ` · last ${new Date(s.lastRunAt).toLocaleString()}` : ""}
+                        </div>
+                        {s.lastError && (
+                          <div className="text-[11px] text-destructive">{s.lastError}</div>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          disabled={s.lastStatus === "running"}
+                          onClick={() => runSchedule(s.id)}
+                          className="inline-flex items-center gap-1 rounded-md border border-border bg-primary/10 px-2.5 py-1.5 font-medium text-primary hover:bg-primary/20 disabled:opacity-50"
+                        >
+                          <Play className="h-3.5 w-3.5" /> Run now
+                        </button>
+                        <button
+                          onClick={() => toggleSchedule(s.id, !s.enabled)}
+                          className="rounded-md border border-border bg-surface-2 px-2.5 py-1.5 font-medium hover:bg-accent"
+                        >
+                          {s.enabled ? "Pause" : "Resume"}
+                        </button>
+                        <button
+                          onClick={() => removeSchedule(s.id)}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                          title="Delete schedule"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === "history" && (
             <div className="space-y-4">
               {backups.length === 0 ? (
@@ -424,6 +701,26 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                           >
                             {b.status}
                           </span>
+                          {b.encrypted === 1 && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground"
+                              title="Stored encrypted (AES-256-GCM)"
+                            >
+                              <Lock className="h-3 w-3" /> encrypted
+                            </span>
+                          )}
+                          {b.verify_status && (
+                            <span
+                              className={`rounded-full px-2 py-0.2 text-[10px] font-medium ${
+                                b.verify_status === "verified"
+                                  ? "bg-success/15 text-success"
+                                  : "bg-destructive/15 text-destructive"
+                              }`}
+                              title={b.verify_message || undefined}
+                            >
+                              {b.verify_status === "verified" ? "verified" : "verification failed"}
+                            </span>
+                          )}
                           {b.destination === "s3_synced" && (
                             <span className="rounded-full bg-sky-500/15 text-sky-400 px-2 py-0.2 text-[10px] font-medium flex items-center gap-1">
                               <Cloud className="w-3 h-3" /> S3 Synced
@@ -459,6 +756,19 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                               Sync S3
                             </button>
                           )}
+                        {b.status === "completed" && (
+                          <button
+                            disabled={verifyingId === b.id}
+                            onClick={() => verifyBackup(b.id)}
+                            className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+                            title="Check the checksum and that the archive is complete and readable"
+                          >
+                            <ShieldCheck
+                              className={`h-3.5 w-3.5 text-muted-foreground ${verifyingId === b.id ? "animate-pulse" : ""}`}
+                            />{" "}
+                            Verify
+                          </button>
+                        )}
                         <button
                           onClick={() => downloadBackup(b.id)}
                           className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
