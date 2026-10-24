@@ -7,6 +7,7 @@ import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { ENGINE_VERSION } from "./version.mjs";
+import { decryptJson } from "./secrets.mjs";
 
 // Tools that only read state. Everything else needs at least a "deploy" scoped token.
 const READ_ONLY_TOOLS = new Set([
@@ -882,7 +883,7 @@ export class MCPServer {
             env_json: undefined,
             clone_token: undefined,
             // values are revealed only through get_project_env
-            envKeys: Object.keys(JSON.parse(p.env_json || "{}")),
+            envKeys: Object.keys(decryptJson(p.env_json)),
             resources: JSON.parse(p.resources_json || "{}"),
             domains,
             route,
@@ -1064,7 +1065,7 @@ export class MCPServer {
             .prepare("SELECT env_json FROM projects WHERE name=?")
             .get(args.projectName);
           if (!p) return formatResponse({ error: `Project '${args.projectName}' not found` }, true);
-          return formatResponse(JSON.parse(p.env_json || "{}"));
+          return formatResponse(decryptJson(p.env_json));
         }
 
         case "set_project_env": {

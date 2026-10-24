@@ -8,7 +8,7 @@ import { spawn, execFile } from "node:child_process";
 import { spawnSync } from "./safe-exec.mjs";
 import { S3StorageClient } from "./s3-storage.mjs";
 import { isSafeContainerName } from "./security.mjs";
-import { encryptSecret, decryptSecret } from "./secrets.mjs";
+import { encryptSecret, decryptSecret, decryptJson } from "./secrets.mjs";
 
 export class BackupManager {
   constructor({ db, HOME }) {
@@ -179,7 +179,7 @@ export class BackupManager {
     try {
       const projects = this.db.prepare("SELECT name, source, target, env_json FROM projects").all();
       for (const p of projects) {
-        const env = JSON.parse(p.env_json || "{}");
+        const env = decryptJson(p.env_json);
         const hasMongo = env.MONGO_DB_URI || env.MONGODB_URI;
         const hasPostgres = env.DATABASE_URL?.includes("postgres") || env.POSTGRES_URL;
         const hasRedis = env.REDIS_URL || env.REDIS_HOST;
