@@ -42,6 +42,7 @@ let fx;
 let engine;
 let admin;
 let serverId;
+let startsWithoutImage = true;
 const remote = (...args) => dockerOn(remoteHost, args);
 const api = (method, path, body) => h.call(engine, admin, method, path, body);
 /** Local addresses of TCP sockets listening on `port`, read from the kernel's table (no ss needed). */
@@ -83,12 +84,17 @@ before(async () => {
   isolated = Boolean(remoteHost);
   if (!why && remote("info").status !== 0) why = "the remote Docker daemon does not answer";
   if (!why) {
-    // start from nothing on the server, so the engine really has to pull
     remote("rm", "-f", "hx_realdemo", "hx_realbuild", "hx_localdemo");
-    remote("rmi", "-f", IMAGE);
-    const pulled = remote("pull", IMAGE);
-    if (pulled.status !== 0) why = `cannot pull ${IMAGE} (no registry access?)`;
-    else remote("rmi", IMAGE);
+    if (remote("image", "inspect", IMAGE).status === 0 && !isolated) {
+      // "remote" is this machine's own Docker and the image is someone's: leave it alone
+      startsWithoutImage = false;
+    } else {
+      // start from nothing on the server, so the engine really has to pull
+      remote("rmi", "-f", IMAGE);
+      const pulled = remote("pull", IMAGE);
+      if (pulled.status !== 0) why = `cannot pull ${IMAGE} (no registry access?)`;
+      else remote("rmi", IMAGE);
+    }
   }
   if (why) return;
   fx = await startSshFixture({ remoteDockerHost: remoteHost });
@@ -109,14 +115,28 @@ after(async () => {
     for (const p of ["realdemo", "realbuild", "localdemo", "realtag", "realnet"])
       await api("DELETE", `/api/projects/${p}?permanent=true`).catch(() => {});
   }
-  await h.cleanup();
-  await fx?.stop();
-  if (why) return;
-  for (const docker of [remote, local]) {
-    docker("rm", "-f", "hx_realdemo", "hx_realdemo_green", "hx_realbuild", "hx_localdemo");
-    docker("rmi", "-f", "hosterax/realbuild:latest");
+  // Each step runs even if an earlier one throws: a leftover sshd or dockerd keeps this process alive.
+  const steps = [
+    () => h.cleanup(),
+    () => fx?.stop(),
+    () => {
+      if (why) return;
+      for (const docker of [remote, local]) {
+        docker("rm", "-f", "hx_realdemo", "hx_realdemo_green", "hx_realbuild", "hx_localdemo");
+        docker("rmi", "-f", "hosterax/realbuild:latest");
+      }
+    },
+    () => second?.stop(),
+  ];
+  const failures = [];
+  for (const step of steps) {
+    try {
+      await step();
+    } catch (e) {
+      failures.push(e);
+    }
   }
-  await second?.stop();
+  if (failures.length) throw failures[0];
 });
 
 /** A test that is skipped (with the reason) when the environment cannot run it. */
@@ -181,11 +201,12 @@ real("a server is added, confirmed and tested against the real Docker daemon", a
 real(
   "deploying an image runs a real container on the server, reachable only through the forward",
   async () => {
-    assert.equal(
-      remote("image", "inspect", IMAGE).status !== 0,
-      true,
-      "the server starts without the image",
-    );
+    if (startsWithoutImage)
+      assert.equal(
+        remote("image", "inspect", IMAGE).status !== 0,
+        true,
+        "the server starts without the image",
+      );
     const created = await api("POST", "/api/projects", {
       name: "realdemo",
       source: IMAGE,

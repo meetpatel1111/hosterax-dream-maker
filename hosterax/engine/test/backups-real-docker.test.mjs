@@ -41,7 +41,13 @@ before(async () => {
 });
 after(async () => {
   if (engine && admin) await api("DELETE", "/api/projects/dbproj?permanent=true").catch(() => {});
-  await h.cleanup();
+  try {
+    await h.cleanup();
+  } finally {
+    removeContainers();
+  }
+});
+function removeContainers() {
   if (why) return;
   for (const n of ["pgreal", "redisreal"]) {
     docker("rm", "-f", `hx_db_${n}`);
@@ -53,7 +59,7 @@ after(async () => {
     .split("\n")
     .filter(Boolean);
   if (left.length) docker("rm", "-f", ...left);
-});
+}
 
 const real = (name, fn) =>
   test(name, async (t) => {

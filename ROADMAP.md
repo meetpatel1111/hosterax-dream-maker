@@ -29,10 +29,12 @@ TypeScript monorepo of about 7,300 files). None of them was run.
 - **Engineering discipline:** Openship has about 1,850 test files, end-to-end and release-gate
   workflows, release advisories, structured error reporting and a `TODO.md` checked against the
   tree. HosteraX has 24 test files (224 tests, including end-to-end tests against a real OpenSSH server).
-- **Unproven:** the newest features were tested against simulated systems only (an identity
-  provider, Docker for restore drills, the tunnel services, the Docker image build). Remote servers
-  were tested with the real engine, the real `docker` CLI and a real OpenSSH server, but the Docker
-  daemon behind the SSH connection was a stand-in, and no real second machine was used.
+- **Unproven:** an identity provider (SSO), the tunnel services and MySQL/MongoDB restores were tested
+  against simulated systems only. Remote servers, Docker image deploys and builds, and PostgreSQL and
+  Redis backups, restores and drills were tested against a real Docker daemon (the real-Docker tests
+  found five bugs the simulated tests could not, two of them in restores), but the "remote" daemon is a second
+  one on the same machine: no real second machine, no real network between them, and no real proxy in
+  front of a remote app yet. A PostgreSQL restore needs the application stopped (see the README).
 
 ## Priority order
 

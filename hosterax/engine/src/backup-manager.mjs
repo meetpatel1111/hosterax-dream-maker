@@ -85,6 +85,13 @@ const DRILL_SCRIPTS = {
 
 export class BackupManager {
   constructor({ db, HOME }) {
+    // Which engine a scratch container belongs to: several engines can share one Docker daemon (a second
+    // instance, a test run), and one must never remove the other's running drill.
+    this.instanceId = crypto
+      .createHash("sha256")
+      .update(path.resolve(String(HOME)))
+      .digest("hex")
+      .slice(0, 12);
     this.db = db;
     this.HOME = HOME;
     this.backupsDir = path.join(this.HOME, "backups");
@@ -683,6 +690,8 @@ export class BackupManager {
           scratch,
           "--label",
           "hosterax.drill=1",
+          "--label",
+          `hosterax.engine=${this.instanceId}`,
           "--network",
           "none",
           "--memory",
@@ -732,10 +741,25 @@ export class BackupManager {
     return { ok, id, message, durationSeconds: seconds };
   }
 
-  /** Removes scratch containers left behind by a drill that was interrupted (e.g. engine restart). */
+  /**
+   * Removes this engine's scratch containers left behind by a drill that was interrupted (e.g. engine
+   * restart). Other engines' drills on the same daemon are left alone.
+   */
   async cleanupDrillContainers() {
     try {
-      const ids = (await this._docker(["ps", "-aq", "--filter", "label=hosterax.drill=1"], 15000))
+      const ids = (
+        await this._docker(
+          [
+            "ps",
+            "-aq",
+            "--filter",
+            "label=hosterax.drill=1",
+            "--filter",
+            `label=hosterax.engine=${this.instanceId}`,
+          ],
+          15000,
+        )
+      )
         .split(/\s+/)
         .filter(Boolean);
       if (ids.length) await this._docker(["rm", "-f", "-v", ...ids], 60000);
