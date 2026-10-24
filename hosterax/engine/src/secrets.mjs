@@ -1,6 +1,7 @@
 // hosterax/engine/src/secrets.mjs
 // At-rest encryption (AES-256-GCM) for credentials stored in SQLite: SSH keys, S3 secrets,
-// SMTP relay passwords, custom TLS private keys. The key lives next to the database with 0600 perms.
+// SMTP relay passwords, custom TLS private keys, project environment variables. The key lives next to
+// the database with 0600 perms.
 // Values written before this existed are passed through unchanged and re-encrypted on next write.
 
 import crypto from "node:crypto";
@@ -45,9 +46,28 @@ export function decryptSecret(stored) {
   if (!isEncrypted(stored)) return stored; // legacy plaintext
   if (!key) throw new Error("secrets not initialised");
   const raw = Buffer.from(stored.slice(PREFIX.length), "base64");
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, raw.subarray(0, 12));
-  decipher.setAuthTag(raw.subarray(12, 28));
-  return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString("utf8");
+  try {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, raw.subarray(0, 12));
+    decipher.setAuthTag(raw.subarray(12, 28));
+    return Buffer.concat([decipher.update(raw.subarray(28)), decipher.final()]).toString("utf8");
+  } catch {
+    // Loud on purpose: silently returning nothing would deploy an app without its configuration.
+    throw new Error(
+      "cannot decrypt a stored secret — the encryption key changed (check HOSTERAX_SECRET_KEY / secret.key)",
+    );
+  }
+}
+
+/** Encrypts a JSON-serialisable object. Empty objects stay "{}" so there is nothing to protect. */
+export function encryptJson(obj) {
+  const text = JSON.stringify(obj ?? {});
+  return text === "{}" ? text : encryptSecret(text);
+}
+
+/** Inverse of encryptJson; also accepts legacy plaintext JSON. */
+export function decryptJson(stored, fallback = {}) {
+  if (stored === null || stored === undefined || stored === "") return fallback;
+  return JSON.parse(decryptSecret(stored));
 }
 
 // ───────────── Streaming file encryption (backup archives) ─────────────

@@ -54,7 +54,7 @@ To test what ships in the Docker image, npm package and desktop app, run `npm ru
 Before submitting a pull request, ensure all tests and linting checks pass:
 
 ```bash
-# Run backend engine test suite (18 test suites)
+# Run backend engine test suite
 npm run test:engine
 
 # Check TypeScript types
@@ -64,6 +64,19 @@ npx tsc --noEmit
 npm run lint
 npm run format
 ```
+
+### The API contract
+
+The engine, CLI and dashboard are written separately, so `scripts/api-contract.mjs` checks them
+against each other. It reads the engine source for the routes it serves, reads the CLI and dashboard
+for the calls they make, and the test suite fails if a client calls a route the engine does not have
+(or uses the wrong method). It also keeps `hosterax/engine/src/openapi.json` (served at
+`GET /api/openapi.json`) in step with the code.
+
+When you add, rename or remove an engine route, run `npm run api:write` and commit the updated
+`openapi.json`. `npm run api:check` runs the same checks from the command line. Routes are detected
+from comparisons like `url.pathname === "/api/x"`, `url.pathname.match(/^\/api\/x\/([^/]+)$/)` and
+`R("sub", "GET")`; calls whose path is built from a variable cannot be checked.
 
 ---
 

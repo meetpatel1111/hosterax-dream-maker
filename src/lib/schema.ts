@@ -22,7 +22,6 @@ export interface DbProject {
   stack: string;
   branch: string;
   version: string;
-  env_json: string; // JSON string
   status: "idle" | "building" | "running" | "ready" | "failed" | "stopped";
   created_at: number;
   updated_at: number;

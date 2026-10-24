@@ -12,7 +12,7 @@ import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
 import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
-import { initSecrets } from "./secrets.mjs";
+import { initSecrets, encryptJson, decryptJson } from "./secrets.mjs";
 import { ENGINE_VERSION } from "./version.mjs";
 import { createCatalogApi, catalogApps as catalogAppsList } from "./catalog-api.mjs";
 import {
@@ -2108,7 +2108,7 @@ async function runDeployment(project, opts = {}) {
     workdir,
     environment,
   );
-  const env = { ...JSON.parse(p.env_json || "{}") };
+  const env = { ...decryptJson(p.env_json) };
   if (p.cpu_limit) env.HOSTERAX_CPU_LIMIT = String(p.cpu_limit);
   if (p.memory_mb_limit) env.HOSTERAX_MEMORY_LIMIT_MB = String(p.memory_mb_limit);
   env.HOSTERAX_ENVIRONMENT = environment;
@@ -2581,7 +2581,7 @@ async function restartService(project) {
         project,
         dep.workdir,
         p.start_cmd,
-        JSON.parse(p.env_json || "{}"),
+        decryptJson(p.env_json),
         p.target,
         p.port || 3000,
       );
@@ -2618,7 +2618,7 @@ async function restartService(project) {
         project,
         dep.workdir,
         p.start_cmd,
-        JSON.parse(p.env_json || "{}"),
+        decryptJson(p.env_json),
         p.target,
         p.port || 3000,
       );
@@ -3114,6 +3114,16 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (url.pathname === "/api/openapi.json" && req.method === "GET") {
+    try {
+      const spec = fs.readFileSync(path.join(__dirname, "openapi.json"), "utf8");
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+      return res.end(spec);
+    } catch {
+      return json(res, 404, { error: "openapi.json is not bundled with this build" });
+    }
+  }
+
   if (await catalogApi(req, res, url.pathname)) return;
 
   if ((url.pathname === "/api/system" || url.pathname === "/api/stats") && req.method === "GET") {
@@ -3539,7 +3549,14 @@ const server = http.createServer(async (req, res) => {
 
     // ────────── projects (legacy engine surface) ──────────
     if (url.pathname === "/api/projects" && req.method === "GET")
-      return json(res, 200, db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all());
+      return json(
+        res,
+        200,
+        db
+          .prepare("SELECT * FROM projects ORDER BY created_at DESC")
+          .all()
+          .map(({ env_json: _env, ...row }) => row),
+      );
     if (url.pathname === "/api/projects" && req.method === "POST") {
       const b = await readBody(req);
       if (!b.name) return json(res, 400, { error: "name required" });
@@ -3551,7 +3568,7 @@ const server = http.createServer(async (req, res) => {
         b.source || "",
         b.buildCmd || "",
         b.startCmd || "",
-        JSON.stringify(b.env || {}),
+        encryptJson(b.env || {}),
         b.target || "process",
         current?.created_at ?? Date.now(),
         current?.cpu_limit ?? null,
@@ -3717,8 +3734,8 @@ const server = http.createServer(async (req, res) => {
       // load project env for each
       const p1 = db.prepare("SELECT env_json FROM projects WHERE name=?").get(d1.project);
       const p2 = db.prepare("SELECT env_json FROM projects WHERE name=?").get(d2.project);
-      const env1 = p1 ? JSON.parse(p1.env_json || "{}") : {};
-      const env2 = p2 ? JSON.parse(p2.env_json || "{}") : {};
+      const env1 = p1 ? decryptJson(p1.env_json) : {};
+      const env2 = p2 ? decryptJson(p2.env_json) : {};
       const allKeys = [...new Set([...Object.keys(env1), ...Object.keys(env2)])];
       const envDiff = allKeys
         .map((k) => ({

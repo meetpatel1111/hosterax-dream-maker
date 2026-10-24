@@ -9,9 +9,9 @@ marked **(gap)** are things the product already implies but does not do yet.
    the Team/Organization pages are a directory **(gap)**. Add users with scrypt passwords, sessions,
    TOTP 2FA and OIDC/SSO sign-in, then make `Owner/Admin/Developer/Viewer` actually gate routes and
    MCP tools per organization.
-2. **Encrypt project environment variables at rest.** The `secrets.mjs` machinery already protects
-   SSH/S3/DKIM/TLS keys; env values still sit in SQLite in clear text. Encrypt them, add a "secret"
-   flag, and write an audit entry whenever a value is revealed.
+2. **Audit secret reads.** Environment values are now encrypted at rest. Still missing: an audit
+   entry whenever a value is revealed (MCP `get_project_env`, deploy tokens) and a "reveal" action in
+   the dashboard that is separate from editing.
 3. **Close the edge and transport gaps.** Bind the Caddy admin API to a unix socket, offer built-in
    ACME for the dashboard hostname so the engine can serve HTTPS itself, and add HSTS/secure-cookie
    defaults.
