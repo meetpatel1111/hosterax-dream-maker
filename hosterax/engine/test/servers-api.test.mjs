@@ -281,11 +281,33 @@ test("deleting a server removes its key material", { skip }, async () => {
   await h.until(() => keyDirs(srv.id).length === 0, 8000, "the key directory to be removed");
 });
 
-test("the engine leaves no ssh helper processes behind when it stops", { skip }, async () => {
-  const before = readdirSync("/proc").filter((p) => /^\d+$/.test(p));
+// The bridge worker for one server, found by the server's id (other tests may be running engines of
+// their own at the same time, so a global search for "ssh-bridge-worker" would see their workers).
+const workersFor = (id) =>
+  spawnSync("pgrep", ["-f", `ssh-bridge-worker.*hx-${id}`], { encoding: "utf8" })
+    .stdout.split(/\s+/)
+    .filter(Boolean);
+
+test("the engine leaves no bridge worker behind when it stops", { skip }, async () => {
+  const added = (
+    await api("POST", "/api/servers", {
+      name: "Stopping",
+      type: "remote",
+      host: fx.host,
+      port: fx.port,
+      username: fx.username,
+    })
+  ).data;
+  const scan = (await api("GET", `/api/servers/${added.id}/host-key`)).data;
+  await api("POST", `/api/servers/${added.id}/host-key`, { fingerprint: scan.keys[0].fingerprint });
+  fx.authorizeKey(added.public_key);
+  assert.equal((await api("POST", `/api/servers/${added.id}/test`)).data.ok, true);
+  assert.equal(workersFor(added.id).length, 1, "a connected server has a bridge worker running");
+
   await engine.stop();
-  await new Promise((r) => setTimeout(r, 1200));
-  const left = spawnSync("pgrep", ["-f", "ssh-bridge-worker"], { encoding: "utf8" }).stdout.trim();
-  assert.equal(left, "", "no bridge worker survives the engine");
-  assert.ok(before.length > 0);
+  await h.until(
+    () => workersFor(added.id).length === 0,
+    8000,
+    "the bridge worker to exit with the engine",
+  );
 });
