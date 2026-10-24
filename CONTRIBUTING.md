@@ -74,7 +74,7 @@ access, so `npm run test:engine` stays safe on any machine:
 
 - `remote-deploy-real-docker.test.mjs`: a real engine deploys images and a Dockerfile project through the real
   SSH bridge to a real daemon, then stops, restarts, redeploys, rolls back and deletes them.
-- `backups-real-docker.test.mjs`: real PostgreSQL and Redis containers: dump, verify, restore drill, restore
+- `backups-real-docker.test.mjs`: real PostgreSQL, MySQL, MariaDB, MongoDB and Redis containers: dump, verify, restore drill, restore
   over live data, encryption, tampering, scheduled backups with retention.
 
 To make the "remote server" a genuinely separate Docker (as root, with `dockerd` installed):

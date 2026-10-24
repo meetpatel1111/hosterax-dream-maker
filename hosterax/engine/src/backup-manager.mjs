@@ -909,8 +909,10 @@ export class BackupManager {
 
   async _dumpMysql(containerName, outPath, opts = {}) {
     this._assertContainer(containerName);
+    // mysqldump leaves stored procedures, functions and events out unless asked; MySQL 8 then restores a
+    // database that has lost them while the backup still verifies.
     const script =
-      'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysqldump || command -v mariadb-dump)"; [ -n "$B" ] || { echo "mysqldump not found in container" >&2; exit 127; }; exec "$B" --all-databases --single-transaction -uroot ${P:+-p"$P"}';
+      'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysqldump || command -v mariadb-dump)"; [ -n "$B" ] || { echo "mysqldump not found in container" >&2; exit 127; }; exec "$B" --all-databases --single-transaction --routines --events -uroot ${P:+-p"$P"}';
     await this._streamToFile(["exec", containerName, "sh", "-c", script], outPath, {
       gzip: true,
       encrypt: opts.encrypt,
@@ -948,8 +950,12 @@ export class BackupManager {
 
   async _restoreMongo(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
+    // The users and roles in the dump are left out: restoring them replaces the user this very command is logged
+    // in as, which ends its session (`Unauthorized` while building indexes) and, in a drill's fresh container
+    // or after a password change, makes a good backup fail. Data and indexes are restored; the instance keeps
+    // its own users.
     const script =
-      'exec mongorestore --archive --gzip --drop ${MONGO_INITDB_ROOT_USERNAME:+--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin}';
+      'exec mongorestore --archive --gzip --drop --nsExclude "admin.system.users" --nsExclude "admin.system.roles" ${MONGO_INITDB_ROOT_USERNAME:+--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin}';
     await this._streamFromFile(["exec", "-i", containerName, "sh", "-c", script], filePath, {
       decrypt: opts.decrypt,
     });

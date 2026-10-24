@@ -165,7 +165,9 @@ test("a forged, altered, expired or cross-project cookie is worthless", async ()
     const value = cookie.slice(name.length + 1);
     const [payload, sig] = value.split(".");
     const tries = {
-      "signature flipped": `${name}=${payload}.${sig.slice(0, -2)}AA`,
+      // always a different character: overwriting the end with a fixed string leaves a signature that
+      // happens to end that way unchanged (about one run in a thousand), and then it is rightly accepted
+      "signature flipped": `${name}=${payload}.${sig[0] === "A" ? "B" : "A"}${sig.slice(1)}`,
       "payload altered": `${name}=${Buffer.from(JSON.stringify({ p: "shop", exp: clock + 9e9, n: "x" })).toString("base64url")}.${sig}`,
       "no signature": `${name}=${payload}`,
       garbage: `${name}=not-a-token`,

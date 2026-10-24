@@ -17,10 +17,18 @@ const docker = (...args) => {
   return spawnSync("docker", args, { encoding: "utf8", env, timeout: 180000 });
 };
 
+// PostgreSQL and Redis are small and always tried; the others are big, so each skips on its own when its
+// image cannot be pulled (a registry rate limit, no network) instead of taking every other test down.
 const ENGINES = {
   postgres: { image: "postgres:16-alpine" },
   redis: { image: "redis:7-alpine" },
 };
+const EXTRA = {
+  mariadb: { image: "mariadb:11" },
+  mysql: { image: "mysql:8" },
+  mongodb: { image: "mongo:7" },
+};
+const unavailable = {};
 
 let why = "";
 let engine;
@@ -35,6 +43,9 @@ before(async () => {
       why = `cannot pull ${image} (no registry access?)`;
   }
   if (why) return;
+  for (const [name, { image }] of Object.entries(EXTRA))
+    if (docker("image", "inspect", image).status !== 0 && docker("pull", image).status !== 0)
+      unavailable[name] = `cannot pull ${image} (no registry access, or rate limited?)`;
   engine = await h.startEngine({ env: { HOSTERAX_EDGE_PROVIDER: "external" } });
   admin = engine.bootstrap;
   await api("POST", "/api/projects", { name: "dbproj", source: "x", target: "process" });
@@ -49,7 +60,7 @@ after(async () => {
 });
 function removeContainers() {
   if (why) return;
-  for (const n of ["pgreal", "redisreal"]) {
+  for (const n of ["pgreal", "redisreal", "mariadbreal", "mysqlreal", "mongodbreal"]) {
     docker("rm", "-f", `hx_db_${n}`);
     docker("volume", "rm", "-f", `hx_dbvol_${n}`);
   }
@@ -61,9 +72,10 @@ function removeContainers() {
   if (left.length) docker("rm", "-f", ...left);
 }
 
-const real = (name, fn) =>
+const real = (name, fn, needs = null) =>
   test(name, async (t) => {
     if (why) return t.skip(why);
+    if (needs && unavailable[needs]) return t.skip(unavailable[needs]);
     await fn(t);
   });
 
@@ -299,8 +311,148 @@ real(
   },
 );
 
+// ───────────── MariaDB, MySQL and MongoDB ─────────────
+
+/** Runs SQL as root inside a MySQL/MariaDB container, in the database's own schema. */
+const sqlRun = (db, sql) =>
+  docker(
+    "exec",
+    `hx_db_${db.name}`,
+    "sh",
+    "-c",
+    'P="${MYSQL_ROOT_PASSWORD:-$MARIADB_ROOT_PASSWORD}"; B="$(command -v mysql || command -v mariadb)"; "$B" -h 127.0.0.1 -uroot -p"$P" -D "$1" -Nse "$0"',
+    sql,
+    db.name,
+  );
+const sqlOut = (db, sql) => {
+  const r = sqlRun(db, sql);
+  assert.equal(r.status, 0, `${sql}\n${r.stderr}`);
+  return r.stdout.trim();
+};
+const mongoRun = (db, js) =>
+  docker(
+    "exec",
+    `hx_db_${db.name}`,
+    "sh",
+    "-c",
+    'mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin --eval "$0"',
+    js,
+  );
+const mongoOut = (db, js) => {
+  const r = mongoRun(db, js);
+  assert.equal(r.status, 0, `${js}\n${r.stdout}${r.stderr}`);
+  return r.stdout.trim().split("\n").at(-1);
+};
+
+for (const flavour of ["mariadb", "mysql"]) {
+  real(
+    `${flavour}: rows, a stored procedure, a function, an event and a user survive backup, drill and restore`,
+    async () => {
+      const db = await provision(`${flavour}real`, flavour);
+      await waitReady(db, (d) => sqlRun(d, "select 1"));
+      for (const sql of [
+        "create table hx_demo(id int primary key, body text)",
+        `insert into hx_demo values (1, '${stamp}'), (2, 'second row')`,
+        "create procedure hx_hello() select 'hello'",
+        "create function hx_twice(x int) returns int deterministic return x * 2",
+        "create event hx_tick on schedule every 1 day disable do select 1",
+        "create user 'hx_extra'@'%' identified by 'pw-extra-1'",
+      ])
+        sqlOut(db, sql);
+      const routines = () =>
+        sqlOut(
+          db,
+          "select coalesce(group_concat(routine_name order by routine_name), '') from information_schema.routines where routine_schema=database()",
+        );
+      assert.equal(routines(), "hx_hello,hx_twice");
+
+      const b = await takeBackup(`/api/databases/${db.id}/backup`);
+      assert.equal(b.db_type, flavour);
+      const dump = spawnSync("gzip", ["-dc", b.file_path], {
+        encoding: "utf8",
+        maxBuffer: 1 << 28,
+      });
+      assert.ok(dump.stdout.includes(stamp), "the rows are in the dump");
+      assert.match(dump.stdout, /PROCEDURE `hx_hello`/, "the stored procedure is in the dump");
+      assert.match(dump.stdout, /FUNCTION `hx_twice`/, "the stored function is in the dump");
+      assert.match(dump.stdout, /EVENT `hx_tick`/, "the event is in the dump");
+      assert.equal((await api("POST", `/api/backups/${b.id}/verify`)).data.ok, true);
+
+      // a restore drill brings the backup up in a scratch container of its own
+      assert.equal((await api("POST", `/api/backups/${b.id}/drill`)).status, 202);
+      const drilled = await pollDrill(b.id, 360000);
+      assert.equal(drilled.verify_status, "verified", drilled.verify_message);
+
+      // lose everything the dump holds, then restore over the live database
+      for (const sql of [
+        "delete from hx_demo",
+        "drop procedure hx_hello",
+        "drop function hx_twice",
+        "drop event hx_tick",
+        "drop user 'hx_extra'@'%'",
+      ])
+        sqlOut(db, sql);
+      assert.equal(routines(), "");
+      const restored = await api("POST", `/api/backups/${b.id}/restore`, {});
+      assert.equal(restored.status, 200, restored.text);
+      await waitReady(db, (d) => sqlRun(d, "select 1"));
+      assert.equal(sqlOut(db, "select count(*) from hx_demo"), "2");
+      assert.equal(sqlOut(db, "select body from hx_demo where id=1"), stamp);
+      assert.equal(routines(), "hx_hello,hx_twice", "stored routines come back");
+      assert.equal(
+        sqlOut(db, "select count(*) from information_schema.events where event_name='hx_tick'"),
+        "1",
+        "the event comes back",
+      );
+      assert.equal(
+        sqlOut(db, "select count(*) from mysql.user where user='hx_extra'"),
+        "1",
+        "the user comes back",
+      );
+    },
+    flavour,
+  );
+}
+
+real(
+  "mongodb: documents and an index survive backup, drill and restore; users are left alone",
+  async () => {
+    const db = await provision("mongodbreal", "mongodb");
+    await waitReady(db, (d) => mongoRun(d, "db.adminCommand({ping:1}).ok"));
+    const app = 'db.getSiblingDB("hxapp")';
+    mongoOut(db, `${app}.notes.insertMany([{n:1,t:"${stamp}"},{n:2,t:"second"}])`);
+    mongoOut(db, `${app}.notes.createIndex({n:1},{unique:true})`);
+    mongoOut(db, `${app}.createUser({user:"hx_extra",pwd:"pw-extra-1",roles:["read"]})`);
+
+    const b = await takeBackup(`/api/databases/${db.id}/backup`);
+    assert.equal(b.db_type, "mongodb");
+    assert.equal((await api("POST", `/api/backups/${b.id}/verify`)).data.ok, true);
+    assert.equal((await api("POST", `/api/backups/${b.id}/drill`)).status, 202);
+    const drilled = await pollDrill(b.id, 360000);
+    assert.equal(drilled.verify_status, "verified", drilled.verify_message);
+
+    mongoOut(db, `${app}.notes.deleteMany({})`);
+    mongoOut(db, `${app}.notes.dropIndexes()`);
+    assert.equal(mongoOut(db, `${app}.notes.countDocuments()`), "0");
+
+    const restored = await api("POST", `/api/backups/${b.id}/restore`, {});
+    assert.equal(restored.status, 200, restored.text);
+    assert.equal(mongoOut(db, `${app}.notes.countDocuments()`), "2");
+    assert.equal(mongoOut(db, `${app}.notes.findOne({n:1}).t`), stamp);
+    assert.equal(mongoOut(db, `${app}.notes.getIndexes().length`), "2", "the unique index is back");
+    assert.equal(
+      mongoOut(db, `${app}.getUsers().users.length`),
+      "1",
+      "the instance's users are left alone (the dump's users and roles are not restored)",
+    );
+  },
+  "mongodb",
+);
+
 real("removing a database removes its container and volume", async () => {
-  for (const d of [pg, rd]) {
+  const all = (await api("GET", "/api/databases")).data;
+  assert.ok(all.length >= 2, "the databases this run provisioned are listed");
+  for (const d of all) {
     const r = await api("DELETE", `/api/databases/${d.id}`);
     assert.equal(r.status, 200, r.text);
     assert.equal(docker("ps", "-a", "-q", "--filter", `name=^hx_db_${d.name}$`).stdout.trim(), "");

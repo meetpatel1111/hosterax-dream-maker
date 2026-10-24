@@ -470,6 +470,21 @@ real("a project on this machine still runs on this machine's Docker", async () =
   const inside = local("exec", "hx_localdemo", "wget", "-qO-", "http://127.0.0.1/");
   assert.match(inside.stdout, /Welcome to nginx!/);
   assert.equal((await project("localdemo")).serverId, "local");
+
+  // deploying again swaps the container (blue/green) without leaving a second one beside it
+  const first = ids(local, "hx_localdemo")[0];
+  const port = (await project("localdemo")).port;
+  await deploy("localdemo");
+  const now = ids(local, "hx_localdemo");
+  assert.equal(now.length, 1, "one container, not two");
+  assert.notEqual(now[0], first, "it is a new container");
+  assert.deepEqual(ids(local, "hx_localdemo_green"), [], "no candidate container is left over");
+  assert.equal(inspect(local, "hx_localdemo", "{{.State.Status}}"), "running");
+  assert.equal((await project("localdemo")).port, port, "the address stays the same");
+  assert.match(
+    local("exec", "hx_localdemo", "wget", "-qO-", "http://127.0.0.1/").stdout,
+    /Welcome to nginx!/,
+  );
 });
 
 real(
