@@ -30,9 +30,13 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
         host: type === "remote" ? host : undefined,
         port: type === "remote" ? parseInt(port, 10) || 22 : undefined,
         username: type === "remote" ? username : undefined,
-        private_key: type === "remote" ? privateKey : undefined,
+        private_key: type === "remote" && privateKey.trim() ? privateKey : undefined,
       });
-      toast.success("Server added successfully");
+      toast.success(
+        type === "remote"
+          ? "Server added. Next: put its public key on the server, then confirm the host key."
+          : "Server added successfully",
+      );
       qc.invalidateQueries({ queryKey: ["server-nodes"] });
       onOpenChange(false);
     } catch (e: any) {
@@ -58,7 +62,7 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
               <Terminal className="h-6 w-6" />
               <div className="font-medium">Remote VPS</div>
               <div className="text-center text-xs">
-                Register a remote server (reachability check only).
+                Deploy projects to a server over SSH. Only Docker has to be installed there.
               </div>
             </button>
             <button
@@ -121,11 +125,12 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
 
                 <div>
                   <label className="mb-1.5 block text-sm font-medium flex items-center gap-2">
-                    <Key className="h-4 w-4" /> SSH Private Key
+                    <Key className="h-4 w-4" /> SSH Private Key (optional)
                   </label>
                   <p className="mb-1.5 text-[11px] text-muted-foreground">
-                    Stored encrypted on the engine host. It is not used to deploy yet — remote SSH
-                    deployment is not implemented.
+                    Leave empty and HosteraX creates a key for this server; you then add its public
+                    key to the server. A key you paste must have no passphrase. It is stored
+                    encrypted on the engine host and never shown again.
                   </p>
                   <textarea
                     value={privateKey}
@@ -148,7 +153,7 @@ export function AddServerDialog({ open, onOpenChange }: AddServerDialogProps) {
           </button>
           <button
             onClick={handleAdd}
-            disabled={busy || !name || (type === "remote" && (!host || !privateKey))}
+            disabled={busy || !name || (type === "remote" && !host)}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
           >
             {busy ? "Adding..." : "Add Server"}

@@ -3,7 +3,7 @@ import { useState, useId } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
 import { createTarGz } from "@/lib/tar";
-import { useEngine, useEngineHealth } from "@/lib/engine";
+import { useEngine, useEngineHealth, useServerNodes } from "@/lib/engine";
 import { STACKS, REGIONS, TARGETS, WORKSPACES, StackDef } from "@/lib/stacks";
 import {
   GitBranch,
@@ -138,6 +138,10 @@ function NewProject() {
   const [stack, setStack] = useState("auto");
   const [region, setRegion] = useState("local");
   const [target, setTarget] = useState<"docker" | "process" | "ssh">("process");
+  // "local" runs on the machine hosting the engine; otherwise the id of a server to deploy to over SSH.
+  const [serverId, setServerId] = useState("local");
+  const { data: servers = [] } = useServerNodes();
+  const remoteServers = servers.filter((s) => s.type === "remote");
   const [workspace, setWorkspace] = useState<string>("none");
   const [buildTimeout, setBuildTimeout] = useState(30);
   const [customBuild, setCustomBuild] = useState("");
@@ -216,7 +220,9 @@ function NewProject() {
       if (row.key.trim()) envMap[row.key.trim()] = row.value;
     }
 
-    const apiTarget = chosenTarget === "docker" ? "docker" : "process";
+    // Projects on a remote server always run as a Docker container.
+    const apiTarget = chosenTarget === "docker" || serverId !== "local" ? "docker" : "process";
+    const placement = serverId !== "local" ? { serverId } : {};
     const buildCmd = customBuild || stackDef?.build || "";
     const startCmd = customStart || stackDef?.start || "";
 
@@ -253,6 +259,7 @@ function NewProject() {
           path: scan.root,
           name: finalName,
           target: apiTarget,
+          ...placement,
           ...(buildCmd ? { buildCmd } : {}),
           ...(startCmd ? { startCmd } : {}),
           port: overrides?.port || effectivePort,
@@ -267,6 +274,7 @@ function NewProject() {
           buildCmd,
           startCmd,
           target: apiTarget,
+          ...placement,
           port: overrides?.port || effectivePort,
           env: envMap,
           ...(tab === "git" || tab === "url" ? { gitBranch: branch } : {}),
@@ -715,14 +723,36 @@ function NewProject() {
 
                 <Field label="Target Execution Mode" desc="How HosteraX runs this app.">
                   <select
-                    value={target}
+                    value={serverId !== "local" ? "docker" : target}
                     onChange={(e) => setTarget(e.target.value as any)}
+                    disabled={serverId !== "local"}
                     className={inputCls}
                   >
                     {TARGETS.map((t) => (
                       <option key={t.id} value={t.id} disabled={t.id === "ssh"}>
                         {t.icon} {t.name}
-                        {t.id === "ssh" ? " — coming soon" : ""}
+                        {t.id === "ssh" ? " — choose a server instead" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+
+                <Field
+                  label="Run on"
+                  desc="This machine, or a server you added. A server runs the app as a Docker container."
+                >
+                  <select
+                    value={serverId}
+                    onChange={(e) => setServerId(e.target.value)}
+                    className={inputCls}
+                  >
+                    <option value="local">This machine</option>
+                    {remoteServers.map((s) => (
+                      <option key={s.id} value={s.id} disabled={!s.ready}>
+                        {s.name}
+                        {s.ready
+                          ? ""
+                          : ` — ${s.last_error ? "needs attention" : "not connected yet"}`}
                       </option>
                     ))}
                   </select>

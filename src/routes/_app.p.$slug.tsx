@@ -45,6 +45,7 @@ import {
   Sun,
   Zap,
   Sparkles,
+  Server,
 } from "lucide-react";
 import { SelfHealingPanel } from "@/components/hx/self-healing-panel";
 
@@ -106,6 +107,8 @@ function ProjectPage() {
             start_command: ep.start_cmd || null,
             port: ep.port || ep.route?.upstream_port || 3000,
             target_type: ep.target || "process",
+            server_name:
+              ep.serverId && ep.serverId !== "local" ? ep.serverName || ep.serverId : null,
             health_path: ep.health_path || ep.healthPath || "/",
             workspace_type: "none",
             build_timeout_minutes: 30,
@@ -251,6 +254,14 @@ function ProjectPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <StatusBadge status={project.status} />
+              {"server_name" in project && project.server_name && (
+                <span
+                  className="flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5"
+                  title="This project runs on a remote server over SSH"
+                >
+                  <Server className="h-3 w-3" /> {project.server_name}
+                </span>
+              )}
               <span className="flex items-center gap-1">
                 <GitBranch className="h-3 w-3" /> {project.branch || "main"}
               </span>

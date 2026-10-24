@@ -216,9 +216,18 @@ function help() {
     domain:primary <domainId>                 Set domain as primary
     edge:status                               Inspect edge proxy (OpenResty/Caddy)
 
-  Multi-Node Fleet & Cron:
-    servers                                   List connected remote SSH server nodes
-    server:test <serverId>                    Ping & test SSH connectivity to remote node
+  Remote Servers (deploy over SSH):
+    servers                                   List servers and whether each is ready
+    server:add <name> --host H [--port 22] [--user root] [--key-file path]
+                                              Add a server (a key is generated unless --key-file)
+    server:trust <serverId> [--fingerprint SHA256:...] [--replace]
+                                              Confirm the server's host key; nothing connects before this
+    server:test <serverId>                    Connect, log in, and check Docker on the server
+    server:bootstrap <serverId>               Print the script that installs Docker and authorises the key
+    server:rm <serverId>                      Remove a server (it must not run any project)
+    create <name> --server <serverId>         Place a Docker project on a server (also: deploy <path> --server)
+
+  Cron & Backups:
     cron:list                                 List scheduled background cron jobs
     cron:run <jobId>                          Trigger immediate execution of cron job
     s3:status                                 Check remote S3/R2 backup sync status
@@ -444,6 +453,7 @@ try {
           Name: p.name,
           Status: p.status || (p.enabled ? "active" : "stopped"),
           Target: p.target || "docker",
+          Server: p.serverName && p.serverId !== "local" ? p.serverName : "local",
           Port: p.port ?? "—",
           HealthPath: p.health_path || "/",
           SleepMode: p.sleep_mode || "auto_sleep",
@@ -467,8 +477,9 @@ try {
         startCmd: start,
         port,
         target,
+        serverId: flag("server"),
       });
-      console.log("✓ created project", name);
+      console.log("✓ created project", name, flag("server") ? `on server ${flag("server")}` : "");
       break;
     }
 
@@ -484,7 +495,11 @@ try {
       } else if (name && fs.existsSync(name)) {
         source = path.resolve(name);
         name = path.basename(source);
-        await api("POST", "/api/projects", { name, source });
+        await api("POST", "/api/projects", {
+          name,
+          source,
+          ...(flag("server") ? { serverId: flag("server"), target: "docker" } : {}),
+        });
       }
 
       if (!name) {
@@ -1163,7 +1178,7 @@ try {
     case "servers": {
       const srvs = await api("GET", "/api/servers");
       if (!srvs || srvs.length === 0) {
-        console.log("No remote servers connected.");
+        console.log("No servers.");
         break;
       }
       console.table(
@@ -1171,11 +1186,91 @@ try {
           ID: s.id,
           Name: s.name,
           Type: s.type,
-          Host: s.host,
+          Host: s.type === "local" ? "this machine" : `${s.username}@${s.host}:${s.port}`,
           Status: s.status,
-          "Last ping": s.last_ping_at ? new Date(s.last_ping_at).toISOString() : "—",
+          "Host key": s.type === "local" ? "—" : s.host_key_pinned ? "confirmed" : "NOT CONFIRMED",
+          Docker: s.docker_version || "—",
+          Problem: s.last_error ? s.last_error.slice(0, 60) : "",
         })),
       );
+      break;
+    }
+
+    case "server:add": {
+      const name = args[0];
+      const host = flag("host");
+      if (!name || name.startsWith("--") || !host) {
+        console.error(
+          "Usage: hosterax server:add <name> --host <host> [--port 22] [--user root] [--key-file <private key>]",
+        );
+        process.exit(1);
+      }
+      const keyFile = flag("key-file");
+      const body = {
+        name,
+        type: "remote",
+        host,
+        port: flag("port") ? Number(flag("port")) : 22,
+        username: flag("user") || "root",
+      };
+      if (keyFile) body.private_key = fs.readFileSync(keyFile, "utf8");
+      const srv = await api("POST", "/api/servers", body);
+      console.log(`✓ Added ${srv.name} (${srv.id})`);
+      console.log(
+        `\nStep 1: let HosteraX log in. Add this public key to ~${srv.username}/.ssh/authorized_keys`,
+      );
+      console.log(
+        `        on the server, or run: hosterax server:bootstrap ${srv.id}  (as root there)\n`,
+      );
+      console.log(`  ${srv.public_key}\n`);
+      console.log(`Step 2: confirm the server's identity:  hosterax server:trust ${srv.id}`);
+      console.log(`Step 3: check it:                      hosterax server:test ${srv.id}`);
+      break;
+    }
+
+    case "server:trust": {
+      const id = args[0];
+      if (!id || id.startsWith("--")) {
+        console.error(
+          "Usage: hosterax server:trust <serverId> [--fingerprint SHA256:...] [--replace]",
+        );
+        process.exit(1);
+      }
+      const scan = await api("GET", `/api/servers/${id}/host-key`);
+      console.log(`${scan.host}:${scan.port} presents:`);
+      for (const k of scan.keys) console.log(`  ${k.type.padEnd(22)} ${k.fingerprint}`);
+      if (scan.pinned) {
+        console.log(
+          scan.changed
+            ? `\n⚠ The pinned key (${scan.pinned.fingerprint}) is NOT among them. The server was reinstalled, or the connection is being intercepted.`
+            : `\nAlready confirmed: ${scan.pinned.fingerprint}`,
+        );
+        if (!has("replace")) break;
+      }
+      let want = flag("fingerprint");
+      if (!want) {
+        console.log(
+          "\nCompare with your provider's console, or run on the server:\n  ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub",
+        );
+        const { createInterface } = await import("node:readline");
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await new Promise((resolve) => {
+          rl.on("close", () => resolve("")); // no terminal attached: that is a "no"
+          rl.question(`Trust ${scan.keys[0].fingerprint}? [y/N] `, resolve);
+        });
+        rl.close();
+        if (!/^y(es)?$/i.test(answer.trim())) {
+          console.log("Not confirmed.");
+          process.exitCode = 1;
+          break;
+        }
+        want = scan.keys[0].fingerprint;
+      }
+      await api("POST", `/api/servers/${id}/host-key`, {
+        fingerprint: want,
+        replace: has("replace"),
+      });
+      console.log(`✓ Host key confirmed. Next: hosterax server:test ${id}`);
       break;
     }
 
@@ -1186,12 +1281,31 @@ try {
         process.exit(1);
       }
       const r = await api("POST", `/api/servers/${srvId}/test`);
-      console.log(
-        r.ok
-          ? `✓ ${r.message || "Server reachable"} (${r.latencyMs}ms)`
-          : `✗ Connection failed: ${r.message}`,
-      );
+      console.log(r.ok ? `✓ ${r.message}` : `✗ ${r.message}${r.code ? ` (${r.code})` : ""}`);
       if (!r.ok) process.exitCode = 1;
+      break;
+    }
+
+    case "server:bootstrap": {
+      const srvId = args[0];
+      if (!srvId) {
+        console.error(
+          "Usage: hosterax server:bootstrap <serverId>   (pipe the output to bash on the server)",
+        );
+        process.exit(1);
+      }
+      console.log(await api("GET", `/api/servers/${srvId}/bootstrap`));
+      break;
+    }
+
+    case "server:rm": {
+      const srvId = args[0];
+      if (!srvId) {
+        console.error("Usage: hosterax server:rm <serverId>");
+        process.exit(1);
+      }
+      await api("DELETE", `/api/servers/${srvId}`);
+      console.log(`✓ Removed ${srvId}`);
       break;
     }
 
