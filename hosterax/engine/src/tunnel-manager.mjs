@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn, execFile, execFileSync } from "node:child_process";
 import { spawnSync } from "./safe-exec.mjs";
-import { splitArgs, isSafeHostname } from "./security.mjs";
+import { splitArgs, isSafeHostname, isSafeImageRef } from "./security.mjs";
 import { encryptJson, decryptJson } from "./secrets.mjs";
 
 const TARGET_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/;
@@ -24,6 +24,20 @@ const MAX_LOG_LINES = 300;
 const ANSI_RE = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const URL_RE = /https?:\/\/[^\s"'<>|)\]\\]+/gi;
 const STABLE_MS = 120000;
+
+/**
+ * The programs the Docker fallback runs, pinned by version and digest so a compromised or broken
+ * "latest" can never start on its own. Read from Docker Hub on 2026-10-24 (the multi-architecture
+ * index digest of each tag). Set HOSTERAX_CLOUDFLARED_IMAGE, HOSTERAX_NGROK_IMAGE or
+ * HOSTERAX_BORE_IMAGE to use another reference, for example to move to a newer release.
+ */
+export const IMAGES = {
+  cloudflared:
+    "cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39",
+  ngrok:
+    "ngrok/ngrok:3.39.13-debian@sha256:ff3b5c3674432d14a786349908b7bdf28ee56c25662637afcbe7180d471993ef",
+  bore: "ekzhang/bore:0.6.0@sha256:add9294ed874251ca1737f1d4e10a8681c3b885048888b3022cb327e4133c988",
+};
 
 /**
  * Providers tried, in this order, when a tunnel is created with provider "auto". localtunnel is left
@@ -191,7 +205,8 @@ export const PROVIDERS = {
       },
       {
         type: "docker",
-        image: "cloudflare/cloudflared:latest",
+        image: IMAGES.cloudflared,
+        imageEnv: "HOSTERAX_CLOUDFLARED_IMAGE",
         args: (c, h) => ["tunnel", "--no-autoupdate", "--url", `http://${hostPort(h, c.port)}`],
       },
     ],
@@ -221,7 +236,8 @@ export const PROVIDERS = {
       },
       {
         type: "docker",
-        image: "cloudflare/cloudflared:latest",
+        image: IMAGES.cloudflared,
+        imageEnv: "HOSTERAX_CLOUDFLARED_IMAGE",
         args: () => ["tunnel", "--no-autoupdate", "run"],
         env: (c) => ({ TUNNEL_TOKEN: c.opts.token }),
       },
@@ -309,7 +325,8 @@ export const PROVIDERS = {
       },
       {
         type: "docker",
-        image: "ngrok/ngrok:latest",
+        image: IMAGES.ngrok,
+        imageEnv: "HOSTERAX_NGROK_IMAGE",
         args: (c, h) => ngrokArgs(c, h),
         env: (c) => ({ NGROK_AUTHTOKEN: c.opts.authtoken }),
       },
@@ -359,7 +376,8 @@ export const PROVIDERS = {
       },
       {
         type: "docker",
-        image: "ekzhang/bore:latest",
+        image: IMAGES.bore,
+        imageEnv: "HOSTERAX_BORE_IMAGE",
         args: (c, h) => boreArgs(c, h),
         env: (c) => (c.opts.secret ? { BORE_SECRET: c.opts.secret } : {}),
       },
@@ -853,6 +871,9 @@ export class TunnelManager {
       }
       // Docker: on Linux the container shares the host network so "localhost" is this machine; Docker
       // Desktop cannot do that and reaches the host as host.docker.internal.
+      const image = String(this.env[r.imageEnv] || "").trim() || r.image;
+      if (!isSafeImageRef(image))
+        throw new NotReady(`${r.imageEnv} is not a valid image reference`);
       const linux = process.platform === "linux";
       const name = `hx_tunnel_${c.id}`;
       const dockerHost = linux ? c.host : "host.docker.internal";
@@ -864,7 +885,7 @@ export class TunnelManager {
         name,
         ...(linux ? ["--network", "host"] : ["--add-host", "host.docker.internal:host-gateway"]),
         ...Object.keys(secrets).flatMap((k) => ["-e", k]),
-        r.image,
+        image,
         ...r.args(c, dockerHost),
       ];
       return { cmd: "docker", args, env: secrets, via: "Docker", container: name };

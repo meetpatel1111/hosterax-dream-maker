@@ -14,6 +14,7 @@ import {
   isPrivateAddress,
   defaultGateway,
   tunnelTargetHost,
+  IMAGES,
 } from "../src/tunnel-manager.mjs";
 
 const HOME = fs.mkdtempSync(path.join(os.tmpdir(), "hosterax-tunnels-"));
@@ -314,7 +315,7 @@ test("Docker is used when the program is not installed, and only then", () => {
   assert.equal(plan.cmd, "docker");
   assert.equal(plan.via, "Docker");
   assert.equal(plan.container, "hx_tunnel_ab12");
-  assert.ok(plan.args.includes("cloudflare/cloudflared:latest"));
+  assert.ok(plan.args.includes(IMAGES.cloudflared));
   assert.ok(plan.args.includes("--rm") && plan.args.includes("--init"));
   if (process.platform === "linux") {
     assert.ok(plan.args.join(" ").includes("--network host"));
@@ -334,6 +335,33 @@ test("Docker is used when the program is not installed, and only then", () => {
   const i = ng.args.indexOf("-e");
   assert.equal(ng.args[i + 1], "NGROK_AUTHTOKEN");
   assert.ok(!ng.args.join(" ").includes("ngrok_c"));
+});
+
+test("the programs run from Docker are pinned by version and digest, and the pin can be overridden", () => {
+  for (const [name, ref] of Object.entries(IMAGES)) {
+    assert.match(ref, /:[0-9][^@]*@sha256:[0-9a-f]{64}$/, `${name} must be tag@digest`);
+    assert.ok(!ref.includes(":latest"), `${name} must not float`);
+  }
+  // every Docker runner in every provider uses a pinned reference
+  for (const def of Object.values(PROVIDERS))
+    for (const r of def.runners)
+      if (r.type === "docker") {
+        assert.ok(Object.values(IMAGES).includes(r.image), `${def.id} uses a pinned image`);
+        assert.match(r.imageEnv, /^HOSTERAX_[A-Z]+_IMAGE$/);
+      }
+  const ctx = { id: "ab12", host: "127.0.0.1", port: 4101, opts: {}, dirs: {} };
+  const own = make({
+    installed: [],
+    docker: true,
+    env: { PATH: "", HOSTERAX_CLOUDFLARED_IMAGE: "registry.example/cf:1.2.3" },
+  });
+  assert.ok(own.mgr._plan(PROVIDERS.cloudflare, ctx).args.includes("registry.example/cf:1.2.3"));
+  const bad = make({
+    installed: [],
+    docker: true,
+    env: { PATH: "", HOSTERAX_CLOUDFLARED_IMAGE: "--privileged evil" },
+  });
+  assert.throws(() => bad.mgr._plan(PROVIDERS.cloudflare, ctx), /not a valid image reference/);
 });
 
 test("localtunnel runs through the npx that belongs to this Node", () => {

@@ -4070,6 +4070,46 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/servers/{param3}/host-key": {
+      "get": {
+        "summary": "GET /api/servers/{param}/host-key",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "post": {
+        "summary": "POST /api/servers/{param}/host-key",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/servers/{param3}/test": {
       "post": {
         "summary": "POST /api/servers/{param}/test",

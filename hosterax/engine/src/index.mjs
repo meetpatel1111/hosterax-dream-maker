@@ -822,7 +822,17 @@ const tunnelManager = new TunnelManager({
 const drillsInFlight = new Set();
 const cronManager = new CronManager({ db, backupManager });
 cronManager.startScheduler();
-const serverManager = new ServerManager({ db, HOME });
+const serverManager = new ServerManager({
+  db,
+  HOME,
+  onStatusChange: (srv, from, to, detail) =>
+    selfHeal?.logEvent?.(
+      srv.name,
+      "server_status",
+      `Server ${srv.name} went from ${from} to ${to}${detail ? `: ${detail}` : ""}`,
+      to === "online" ? "info" : "error",
+    ),
+});
 const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
 const orgManager = new OrgManager({ db });
 const emailManager = new EmailManager({ db, HOME });
@@ -4461,6 +4471,34 @@ const server = http.createServer(async (req, res) => {
         return json(res, 500, { error: err.message });
       }
     }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)\/host-key$/)) && req.method === "GET") {
+      try {
+        return json(res, 200, await serverManager.scanHostKey(m[1]));
+      } catch (err) {
+        return json(res, err.code === "no_ssh_client" ? 501 : 502, {
+          error: err.message,
+          code: err.code,
+        });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)\/host-key$/)) && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return json(
+          res,
+          200,
+          await serverManager.pinHostKey(m[1], {
+            fingerprint: b.fingerprint,
+            replace: b.replace === true,
+          }),
+        );
+      } catch (err) {
+        return json(res, err.code === "fingerprint_mismatch" ? 409 : 400, {
+          error: err.message,
+          code: err.code,
+        });
+      }
+    }
     if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)\/bootstrap$/)) && req.method === "GET") {
       const script = serverManager.getBootstrapScript(m[1]);
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -5481,6 +5519,7 @@ server.listen(PORT, () => {
   selfHeal.start();
   backupScheduler.start();
   tunnelManager.start();
+  serverManager.start();
 });
 
 // ── Global Process Resilience & Crash Traps ──
@@ -5500,6 +5539,7 @@ function handleGracefulShutdown(signal) {
     scaleToZeroManager?.stop?.();
     backupScheduler.stop();
     tunnelManager.stop();
+    serverManager.stop().catch(() => {});
     dashboard.close();
     server.close(() => {
       console.log("[hosterax-engine] HTTP server closed.");
