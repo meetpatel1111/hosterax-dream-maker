@@ -13,6 +13,8 @@ import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
 import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
 import { initSecrets, encryptJson, decryptJson } from "./secrets.mjs";
+import { AccountManager, AccountError } from "./accounts.mjs";
+import { OidcClient, OidcError, loadOidcConfig } from "./oidc.mjs";
 import { ENGINE_VERSION } from "./version.mjs";
 import { createCatalogApi, catalogApps as catalogAppsList } from "./catalog-api.mjs";
 import {
@@ -2496,6 +2498,40 @@ function readRawBody(req, maxBytes = 5 * 1024 * 1024) {
   });
 }
 
+// ───────────── user accounts and single sign-on ─────────────
+const accounts = new AccountManager({ db });
+accounts.purgeExpiredSessions();
+setInterval(() => accounts.purgeExpiredSessions(), 3600_000).unref();
+const oidcConfig = loadOidcConfig();
+if (oidcConfig && !oidcConfig.ok) console.warn(`[sso] disabled: ${oidcConfig.reason}`);
+const oidc = oidcConfig?.ok ? new OidcClient({ config: oidcConfig }) : null;
+if (oidc) console.log(`[sso] enabled: "${oidcConfig.name}" (${oidcConfig.issuer})`);
+
+/** The signed-in user behind this request's session token, if any (resolved once per request). */
+function sessionOf(req) {
+  if (req.hxSession === undefined) {
+    const t = bearerFrom(req);
+    req.hxSession = t.startsWith("hxs_") ? accounts.resolveSession(t) : null;
+  }
+  return req.hxSession;
+}
+
+/** Who is acting, for permission checks on user management: a signed-in user, or an admin token / the local machine. */
+function actorOf(req) {
+  const ses = sessionOf(req);
+  return ses ? { kind: "user", user: ses.user } : { kind: "system" };
+}
+
+const clientIp = (req) => req.socket?.remoteAddress || null;
+
+/** Turns an AccountError into the matching JSON response. */
+function authFail(res, e) {
+  if (!(e instanceof AccountError))
+    return json(res, 500, { ok: false, error: String(e.message || e) });
+  if (e.extra?.retryAfterSeconds) res.setHeader("Retry-After", String(e.extra.retryAfterSeconds));
+  return json(res, e.status, { ok: false, error: e.message, ...e.extra });
+}
+
 const touchToken = (() => {
   const stmt = db.prepare("UPDATE tokens SET last_used_at=? WHERE token=?");
   const last = new Map();
@@ -2513,6 +2549,7 @@ const touchToken = (() => {
 function callerScopes(req) {
   const t = bearerFrom(req);
   if (t) {
+    if (t.startsWith("hxs_")) return sessionOf(req)?.scopes ?? null;
     const hash = hashToken(t);
     const row = db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hash);
     if (!row) return null;
@@ -2546,6 +2583,7 @@ function aiRoleFor(req) {
 
 const projectsApi = createProjectsApi({
   db,
+  sessionScopes: (token) => accounts.resolveSession(token)?.scopes ?? null,
   runDeployment,
   running,
   runtimeLogs,
@@ -2986,11 +3024,79 @@ const server = http.createServer(async (req, res) => {
   if (rateLimit(req, isAuthEndpoint ? 20 : 600)) {
     return json(res, 429, { error: "too many requests" });
   }
+  // ── public sign-in surface: password login, SSO, and what this engine offers ──
+  if (url.pathname === "/api/auth/providers" && req.method === "GET") {
+    const hasUsers = accounts.hasUsers();
+    return json(res, 200, {
+      setupRequired: !hasUsers,
+      password: hasUsers,
+      sso: oidc ? { name: oidcConfig.name } : null,
+    });
+  }
+  if (url.pathname === "/api/auth/oidc/login" && req.method === "GET") {
+    const back = (location) => {
+      res.writeHead(302, { location });
+      res.end();
+    };
+    if (!oidc) return json(res, 404, { error: "single sign-on is not configured" });
+    try {
+      return back(await oidc.begin());
+    } catch (e) {
+      return back(`/auth?sso_error=${encodeURIComponent(e.message)}`);
+    }
+  }
+  if (url.pathname === "/api/auth/oidc/callback" && req.method === "GET") {
+    const back = (location) => {
+      res.writeHead(302, {
+        location,
+        "cache-control": "no-store",
+        "referrer-policy": "no-referrer",
+      });
+      res.end();
+    };
+    const fail = (message) => back(`/auth?sso_error=${encodeURIComponent(message)}`);
+    if (!oidc) return fail("single sign-on is not configured");
+    const idpError = url.searchParams.get("error");
+    if (idpError) return fail(url.searchParams.get("error_description") || idpError);
+    try {
+      const identity = await oidc.complete({
+        code: url.searchParams.get("code"),
+        state: url.searchParams.get("state"),
+      });
+      const r = accounts.loginWithIdentity(identity, {
+        defaultRole: oidcConfig.defaultRole,
+        ip: clientIp(req),
+        userAgent: req.headers["user-agent"],
+      });
+      // the session travels in the URL fragment: it is never sent to a server or logged in a Referer
+      return back(`/auth#session=${r.token}`);
+    } catch (e) {
+      const message =
+        e instanceof OidcError || e instanceof AccountError ? e.message : "single sign-on failed";
+      accounts.record("login_failed", { ip: clientIp(req), detail: `sso: ${message}` });
+      return fail(message);
+    }
+  }
   if (url.pathname === "/api/auth/login" && req.method === "POST") {
     let b = {};
     try {
       b = await readBody(req);
     } catch {}
+    if (b.email !== undefined || b.password !== undefined) {
+      try {
+        const r = accounts.login({
+          email: b.email,
+          password: b.password,
+          code: b.code,
+          ip: clientIp(req),
+          userAgent: req.headers["user-agent"],
+        });
+        return json(res, 200, { ok: true, token: r.token, expiresAt: r.expiresAt, user: r.user });
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    // legacy: exchange an API token for itself
     const scopes = b.token
       ? db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hashToken(b.token))
       : null;
@@ -4795,7 +4901,133 @@ const server = http.createServer(async (req, res) => {
         scopes,
         local: !t && isTrustedLocalRequest(req, PORT),
         tokenName: row?.name || null,
+        user: sessionOf(req)?.user ?? null,
       });
+    }
+
+    // ────────── accounts: first-run setup, self-service, user management ──────────
+    // (sign-in itself, SSO and /api/auth/providers are public and live above the auth gate)
+    if (url.pathname === "/api/auth/setup" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        const user = accounts.bootstrapOwner({
+          email: b.email,
+          name: b.name,
+          password: b.password,
+        });
+        const s = accounts.sessionForUser(user.id, {
+          ip: clientIp(req),
+          userAgent: req.headers["user-agent"],
+          method: "setup",
+        });
+        return json(res, 201, { ok: true, user, token: s.token, expiresAt: s.expiresAt });
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    if (url.pathname === "/api/auth/logout" && req.method === "POST") {
+      const t = bearerFrom(req);
+      if (t.startsWith("hxs_")) accounts.revokeSession(t);
+      return json(res, 200, { ok: true });
+    }
+    const needSession = () =>
+      sessionOf(req)
+        ? null
+        : json(res, 400, { ok: false, error: "sign in with a user account to use this" });
+    if (url.pathname === "/api/auth/password" && req.method === "POST") {
+      if (needSession()) return;
+      const b = await readBody(req);
+      try {
+        const ses = sessionOf(req);
+        return json(res, 200, {
+          ok: true,
+          ...accounts.changePassword(ses.user.id, b.current, b.next, {
+            keepSessionId: ses.sessionId,
+          }),
+        });
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    if (url.pathname === "/api/auth/2fa/setup" && req.method === "POST") {
+      if (needSession()) return;
+      try {
+        return json(res, 200, { ok: true, ...accounts.beginTwoFactor(sessionOf(req).user.id) });
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    if (url.pathname === "/api/auth/2fa/enable" && req.method === "POST") {
+      if (needSession()) return;
+      const b = await readBody(req);
+      try {
+        return json(res, 200, {
+          ok: true,
+          ...accounts.enableTwoFactor(sessionOf(req).user.id, b.code),
+        });
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    if (url.pathname === "/api/auth/2fa/disable" && req.method === "POST") {
+      if (needSession()) return;
+      const b = await readBody(req);
+      try {
+        accounts.disableTwoFactor(sessionOf(req).user.id, { password: b.password, code: b.code });
+        return json(res, 200, { ok: true });
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    if (url.pathname === "/api/auth/events" && req.method === "GET") {
+      return json(res, 200, accounts.listEvents(Number(url.searchParams.get("limit")) || 100));
+    }
+    if (url.pathname === "/api/users" && req.method === "GET") {
+      return json(res, 200, accounts.listUsers());
+    }
+    if (url.pathname === "/api/users" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return json(
+          res,
+          201,
+          accounts.createUser(actorOf(req), {
+            email: b.email,
+            name: b.name,
+            role: b.role,
+            password: b.password,
+          }),
+        );
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/users\/([^/]+)$/)) && req.method === "PATCH") {
+      const b = await readBody(req);
+      try {
+        const patch = {};
+        for (const k of ["name", "role", "disabled", "password"])
+          if (b[k] !== undefined) patch[k] = b[k];
+        return json(res, 200, accounts.updateUser(actorOf(req), m[1], patch));
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/users\/([^/]+)$/)) && req.method === "DELETE") {
+      try {
+        accounts.deleteUser(actorOf(req), m[1]);
+        return json(res, 200, { ok: true });
+      } catch (e) {
+        return authFail(res, e);
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/users\/([^/]+)\/2fa-reset$/)) && req.method === "POST") {
+      try {
+        accounts.resetTwoFactor(actorOf(req), m[1]);
+        return json(res, 200, { ok: true });
+      } catch (e) {
+        return authFail(res, e);
+      }
     }
 
     // ────────── tokens ──────────
@@ -5080,9 +5312,9 @@ wss.on("connection", (ws, req) => {
   const token = url.searchParams.get("token");
   if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return ws.close();
   // Auth check: require a valid token or a genuinely local, same-origin client
-  const isValidToken = !!db
-    .prepare("SELECT 1 FROM tokens WHERE token=?")
-    .get(hashToken(token || ""));
+  const isValidToken = String(token || "").startsWith("hxs_")
+    ? !!accounts.resolveSession(token)
+    : !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(hashToken(token || ""));
   if (!isValidToken && !isTrustedLocalRequest(req, PORT)) return ws.close();
   if (!subscribers.has(id)) subscribers.set(id, new Set());
   subscribers.get(id).add(ws);

@@ -19,6 +19,7 @@ import {
   Users,
   Mail,
   Building,
+  UserCog,
   ChevronDown,
   Languages,
 } from "lucide-react";
@@ -39,6 +40,7 @@ const NAV = [
   { to: "/domains", key: "domains" as any, label: "Domains & SSL", icon: Globe },
   { to: "/databases", key: "databases" as const, label: "Databases", icon: Database },
   { to: "/servers", key: "servers" as const, label: "Servers", icon: Cpu },
+  { to: "/users", key: "users" as any, label: "Users & access", icon: UserCog },
   { to: "/team", key: "team" as const, label: "Team & RBAC", icon: Users },
   { to: "/mail", key: "mail" as const, label: "Mailboxes", icon: Mail },
   { to: "/activity", key: "activity" as any, label: "Activity", icon: Activity },

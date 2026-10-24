@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Restore drills:** `POST /api/backups/:id/drill` / `htx backup:drill` restore a backup into an isolated, throwaway container from the source's image and confirm the database answers (Postgres, MySQL/MariaDB, MongoDB, Redis).
 - **Opt-in encrypted backup archives** (AES-256-GCM, streaming, authenticated before any restore); downloads are served decrypted.
 - **API contract:** `scripts/api-contract.mjs` extracts the engine's routes, generates `hosterax/engine/src/openapi.json` (served at `GET /api/openapi.json`) and fails the test suite when the CLI or dashboard call a route the engine does not serve or use the wrong method (`npm run api:check` / `api:write`).
+- **User accounts with enforced roles** (`owner`, `admin`, `developer`, `viewer`): sessions are bearer tokens (`hxs_…`) resolved into the same scope levels the engine already enforces, so every REST route, MCP tool and AI action respects the role, and role changes, disabling and deletion apply to live sessions immediately. First-run setup (`POST /api/auth/setup`) needs an admin credential; there is always at least one active owner; admins cannot create or change admins/owners.
+- **Two-factor authentication (TOTP, RFC 6238)** with single-use recovery codes, replay protection and admin reset; secrets are encrypted at rest.
+- **Single sign-on (OpenID Connect)** with authorization code + PKCE, full ID-token verification and least-privilege provisioning (never admin/owner).
+- Sign-in lockout (8 failures → 15 minutes, per email, uniform for unknown emails), a sign-in audit log (`GET /api/auth/events`), dashboard pages (sign-in, Users & access, Settings → Your account) and CLI commands (`htx users`, `user:add|role|disable|enable|2fa-reset|rm`).
 
 ### Fixed
 

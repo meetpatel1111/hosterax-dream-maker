@@ -108,6 +108,9 @@ export function scopesLevel(scopes) {
 
 const ADMIN_ONLY = [
   /^\/api\/tokens(\/|$)/,
+  /^\/api\/users(\/|$)/,
+  /^\/api\/auth\/setup$/,
+  /^\/api\/auth\/events$/,
   /^\/api\/servers(\/|$)/,
   /^\/api\/org(\/|$)/,
   /^\/api\/settings(\/|$)/,
@@ -131,6 +134,8 @@ const SECRET_READS = [
 export function requiredLevel(method, pathname) {
   // MCP enforces a per-tool level itself (read-only tools work with read tokens).
   if (pathname === "/api/mcp" || pathname === "/mcp") return 1;
+  // Signing out and managing your own password / two-factor must work for every role, viewers included.
+  if (/^\/api\/auth\/(logout|password|2fa(\/|$))/.test(pathname)) return 1;
   if (ADMIN_ONLY.some((re) => re.test(pathname))) return 3;
   const m = String(method || "GET").toUpperCase();
   if (m === "GET" || m === "HEAD" || m === "OPTIONS") {

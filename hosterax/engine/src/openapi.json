@@ -151,6 +151,50 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/auth/2fa/disable": {
+      "post": {
+        "summary": "POST /api/auth/2fa/disable",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/auth/2fa/enable": {
+      "post": {
+        "summary": "POST /api/auth/2fa/enable",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/auth/2fa/setup": {
+      "post": {
+        "summary": "POST /api/auth/2fa/setup",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/auth/events": {
+      "get": {
+        "summary": "GET /api/auth/events",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/auth/login": {
       "post": {
         "summary": "POST /api/auth/login",
@@ -162,9 +206,75 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/auth/logout": {
+      "post": {
+        "summary": "POST /api/auth/logout",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/auth/me": {
       "get": {
         "summary": "GET /api/auth/me",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/auth/oidc/callback": {
+      "get": {
+        "summary": "GET /api/auth/oidc/callback",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/auth/oidc/login": {
+      "get": {
+        "summary": "GET /api/auth/oidc/login",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/auth/password": {
+      "post": {
+        "summary": "POST /api/auth/password",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/auth/providers": {
+      "get": {
+        "summary": "GET /api/auth/providers",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/auth/setup": {
+      "post": {
+        "summary": "POST /api/auth/setup",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
@@ -4017,6 +4127,87 @@
     "/api/tokens/{param3}": {
       "delete": {
         "summary": "DELETE /api/tokens/{param}",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/users": {
+      "get": {
+        "summary": "GET /api/users",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "post": {
+        "summary": "POST /api/users",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/users/{param3}": {
+      "delete": {
+        "summary": "DELETE /api/users/{param}",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "patch": {
+        "summary": "PATCH /api/users/{param}",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/users/{param3}/2fa-reset": {
+      "post": {
+        "summary": "POST /api/users/{param}/2fa-reset",
         "parameters": [
           {
             "name": "param3",
