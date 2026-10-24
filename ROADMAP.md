@@ -7,15 +7,24 @@ marked **(gap)** are things the product already implies but does not do yet.
 
 HosteraX was compared with Coolify, Dokploy, CapRover, Dokku, Portainer and Openship. Openship is the
 closest in shape: a desktop app and CLI, self-hosted, an OpenResty edge, a mail server, scheduled
-backups and an MCP endpoint. The comparison comes from each project's own README and licence files
-(star counts read from their GitHub pages on 2026-10-24); none of them was run.
+backups and an MCP endpoint. Five were compared from their READMEs and licence files (star counts
+read from their GitHub pages on 2026-10-24). Openship's source was also read (commit `eb09a99`, a
+TypeScript monorepo of about 7,300 files). None of them was run.
 
-- **Ahead or different:** the AI copilot and MCP server, backups that are verified and drilled,
-  accounts with roles, 2FA and SSO, environment values encrypted at rest, a generated API contract,
-  free public access without a public IP, and a broad app catalog.
+- **Ahead or different:** the AI copilot (no AI features found in Openship's API, platform or CLI
+  code), backups that are verified and restore-drilled (Openship checks checksums, upload
+  completeness and destinations, but no restore drill was found), SSO sign-in (Openship has two-factor
+  authentication, passkeys and what looks like OAuth for MCP clients, but no user SSO was found), free public tunnels that need no
+  account or domain, a broad app catalog, and a much smaller footprint: one Node process and SQLite
+  where Openship's server mode runs Postgres and Redis.
 - **Behind:** deploying to other machines (Coolify, Dokploy and Openship all can; HosteraX runs
   everything on the engine host), clustering, mail that receives mail, notifications and monitoring,
   a GitHub App, a CDN, and awareness (Coolify has about 63.6k GitHub stars, Openship about 14.9k).
+  Openship also manages Cloudflare Tunnels through the Cloudflare API with Cloudflare Access login
+  policies, and has a password gate at the edge for any route.
+- **Engineering discipline:** Openship has about 1,850 test files, end-to-end and release-gate
+  workflows, release advisories, structured error reporting and a `TODO.md` checked against the
+  tree. HosteraX has 11 test files (about 120 tests).
 - **Unproven:** the newest features were tested against simulated systems only (an identity
   provider, Docker for restore drills, the tunnel services, the Docker image build).
 
@@ -51,22 +60,43 @@ is involved. Builds happen on the remote daemon. Alternatives considered: a cust
 control and works behind NAT, but a new program to secure and ship; kept for a later phase), Docker
 Swarm (clustering, not placement; item 7), and shell scripts over ssh (fragile).
 
+**What Openship does (from its source).** Everything goes through a command-executor interface with a
+local implementation and two ssh ones (the `ssh2` library, and the OS `ssh` binary for agent auth).
+Docker is driven through its Engine API over a transport object (local socket, ssh, mutual TLS) with
+a reachability preflight and an actionable hint for each failure. The ssh transport runs
+`docker system dial-stdio` over an ssh channel, falling back from socket forwarding to it because some
+`sshd` setups open channels that never carry data. It runs an OpenResty edge and certbot on each
+target server. As far as the code shows, it pins host keys only for customer-owned connections;
+ordinary servers are connected with `StrictHostKeyChecking=accept-new` or with no verifier, and a changed key in `known_hosts` is
+removed rather than refused, although its own security guide says strict checking is always used.
+This plan keeps the same shape but does the host-key part properly.
+
 - **Phase 0, honest connection test (S).** Log in with the stored key, run `docker version`,
   `docker info` and a disk and memory probe, and report what is wrong in plain words. Show the host
-  key fingerprint at registration, store it, and refuse to connect if it ever changes. Key
-  authentication only; no password login.
+  key fingerprint at registration, store it, and refuse to connect if it ever changes (the
+  competitor reviewed does not do this for ordinary servers). Key authentication only; no password
+  login.
 - **Phase 1, one way to reach Docker (M).** A `dockerFor(server)` function that returns the
   environment, arguments and API client for a server, and route all roughly 40 CLI call sites and the API
   client through it. The local engine host stays the default and must behave exactly as today.
+  Model each server's connection as a transport with a preflight check and a plain-words hint for
+  each failure. Prefer `docker system dial-stdio` (what `DOCKER_HOST=ssh://` uses) over socket
+  forwarding. Find the remote socket instead of assuming `/var/run/docker.sock` (rootless Docker),
+  never cache a failed probe as "no Docker here", and send ssh keepalives often enough that a heavy
+  build cannot starve `sshd` and drop the session.
 - **Phase 2, placement (M).** A `server_id` on each project, a choice in the dashboard, CLI and API,
   and make deploy, rollback, health checks, logs, metrics, stop and delete run on that server.
   Managed databases, backups, verification and restore drills run through the same function.
-- **Phase 3, routing (M).** The edge forwards to the server's address instead of
-  `host.docker.internal`; tunnels point at it too. Document binding app ports to a private interface
-  and firewalling them.
+- **Phase 3, routing (M).** Run an edge on each server (preferred), managed through the same
+  transport: DNS points at the server, TLS ends there, nothing crosses between hosts in plain
+  text, and traffic keeps flowing if the engine is down. Forwarding from one central edge to a
+  remote address stays available for private networks; tunnels point at the server's address
+  either way. Document binding app ports to a private interface and firewalling them.
 - **Phase 4, failure behaviour (M).** A server that cannot be reached shows its projects as
   unreachable, not crashed, and self-heal does not move them elsewhere unasked. Reuse ssh
-  connections (`ControlMaster`) and limit concurrent commands per server.
+  connections (`ControlMaster`), limit concurrent commands per server, serialise changes to one
+  server with a lock, make long operations cancellable, and journal remote commands so a dropped
+  connection during a long build does not lose the result.
 - **Later:** an agent for servers that cannot accept inbound ssh, and scheduling across servers
   (item 7).
 
@@ -82,6 +112,32 @@ where Docker exists.
 
 **Done when** a project can be deployed, routed, logged, rolled back, backed up and restore-drilled
 on a real remote server, and the limits are written down.
+
+### Smaller follow-ups from reading Openship's code
+
+- **Pin the tunnel programs (S, soon).** HosteraX's Docker fallback runs `cloudflared`, `ngrok` and
+  `bore` as `:latest`. Openship pins `cloudflared` by image digest and by a SHA-256 per
+  architecture. Pin version and digest, and say how to update them.
+- **API-driven Cloudflare tunnels with login policies (M).** Given a Cloudflare API token, create
+  the tunnel, DNS records and ingress rules, and optionally a Cloudflare Access policy, instead of
+  asking the user to copy a token from the dashboard.
+- **A password gate at the edge for any route (S–M).** A salted PBKDF2 hash and a signed session
+  cookie checked by the proxy, so an exposed app can have a login without changing the app.
+- **Edge-side metrics (M).** Count requests in the proxy's log phase and flush aggregates on a
+  schedule: no per-request I/O and no database write per request.
+- **Find the Docker daemon through the CLI's active context (S).** Colima, Rancher Desktop, Podman
+  and rootless Docker advertise themselves that way, not through `DOCKER_HOST`.
+- **Consent and an audit trail for MCP clients (M).** Openship appears to issue OAuth tokens to MCP
+  clients with a consent step and an audit log, judging by its MCP consent, token and audit modules
+  (not read in full); this is the same work as the OAuth item in the backlog below.
+- **Generate and check reference docs (S).** Generate the CLI, API and MCP references from code and
+  fail CI when they drift, as the API contract already does for routes.
+- **Write the deploy sequence down as code (M).** One pipeline (preflight, start the new release,
+  health gate, route, retire the old one) with retain-and-revert and cancellation, shared by every
+  deploy target.
+- **Keep a component licence inventory.** Openship ships a vendored GPL v3 mail engine inside its API
+  image and has an open issue about the provenance of its webmail code. Record every bundled
+  component's licence, and run mail as a separate managed app if it is added.
 
 ### Decisions for the owner
 
