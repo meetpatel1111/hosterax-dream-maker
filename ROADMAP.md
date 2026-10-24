@@ -10,9 +10,9 @@ marked **(gap)** are things the product already implies but does not do yet.
    directory **(gap)**. Still missing: scoping roles to organizations/projects, SCIM or group-to-role
    mapping from the identity provider, "sign out everywhere" and session lists, WebAuthn/passkeys,
    and requiring 2FA by policy.
-2. **Encrypt project environment variables at rest.** The `secrets.mjs` machinery already protects
-   SSH/S3/DKIM/TLS keys; env values still sit in SQLite in clear text. Encrypt them, add a "secret"
-   flag, and write an audit entry whenever a value is revealed.
+2. **Audit secret reads.** Environment values are now encrypted at rest. Still missing: an audit
+   entry whenever a value is revealed (MCP `get_project_env`, deploy tokens) and a "reveal" action in
+   the dashboard that is separate from editing.
 3. **Close the edge and transport gaps.** Bind the Caddy admin API to a unix socket, offer built-in
    ACME for the dashboard hostname so the engine can serve HTTPS itself, and add HSTS/secure-cookie
    defaults.
@@ -29,9 +29,10 @@ marked **(gap)** are things the product already implies but does not do yet.
    for remote nodes, and a placement choice per project.
 7. **Email that actually receives mail (gap).** Either integrate a proper MTA (Stalwart or Mailu as
    a managed app) or narrow the feature to "DNS records + relay sending" and say so in the UI.
-8. **Backups you can trust.** Scheduled backups with retention rules, encrypted-at-rest archives
-   (age), and a periodic restore drill that proves the latest backup restores into a scratch
-   container, with alerts when it does not.
+8. **Backup notifications and verification depth.** Scheduled backups, retention, archive
+   verification, restore drills and opt-in encrypted archives now exist. Still missing: pushing
+   failures to email/Slack/webhooks, running a restore drill against a real Docker daemon in CI,
+   deeper verification of mongodump archives, per-backup key rotation, and MCP tools for schedules.
 9. **Verified catalog images.** A CI job that pulls every catalog image, records its digest and
    architectures, and flips `imageVerified` (currently 608 of ~2,500). Pin digests, and verify
    signatures with cosign where publishers provide them.

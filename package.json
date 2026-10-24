@@ -19,6 +19,8 @@
     "format": "prettier --write .",
     "hosterax": "node ./hosterax/cli/src/cli.mjs",
     "htx": "node ./hosterax/cli/src/cli.mjs",
+    "api:write": "node ./scripts/api-contract.mjs --write",
+    "api:check": "node ./scripts/api-contract.mjs --check",
     "test:engine": "node --test \"hosterax/engine/test/*.test.mjs\"",
     "catalog:sync": "node ./scripts/sync-catalog.mjs",
     "desktop:start": "electron ./hosterax/desktop",

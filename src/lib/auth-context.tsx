@@ -9,6 +9,7 @@ import {
 } from "react";
 import { toast } from "sonner";
 import { setEngineConfig } from "./engine";
+import { defaultEngineUrl } from "./engine-url";
 
 export type AuthUser = {
   id: string;
@@ -47,9 +48,8 @@ type WhoAmI = {
   user?: Account | null;
 };
 
-const DEFAULT_URL = "http://localhost:7777";
 const readUrl = () =>
-  (typeof window !== "undefined" && localStorage.getItem("hx.url")) || DEFAULT_URL;
+  (typeof window !== "undefined" && localStorage.getItem("hx.url")) || defaultEngineUrl();
 const readToken = () => (typeof window !== "undefined" && localStorage.getItem("hx.token")) || "";
 
 /**

@@ -105,7 +105,7 @@ Download the official standalone application packages from the **[GitHub Release
 - 📦 **1-Click Open-Source App Store**: Search and deploy from a catalog of **2,500+ open-source self-hosted applications** built from Awesome-Selfhosted & Selfh.st (Ghost, Nextcloud, Plausible, Vaultwarden, Grafana, N8N, etc.). Entries flagged `imageVerified` have a confirmed Docker image; for the rest the image is a best guess that is resolved when you deploy.
 - 🔄 **Blue/Green Deployments**: Builds from Git repositories, local folders/zip uploads, Dockerfiles, or Docker Hub images. A candidate container must pass its health check before traffic is swapped; otherwise the old one stays live.
 - 🛡️ **Self-Healing Supervisor**: Detects failed containers, restarts them with backoff, and offers a one-click rollback that re-deploys a previous release (its source, environment and image).
-- 🗄️ **Managed Databases & Backups**: Provisions PostgreSQL, MySQL, MariaDB, MongoDB and Redis containers. Backups are real dumps with a SHA-256 checksum; a failed dump is reported as failed. Optional sync to **AWS S3 / Cloudflare R2**.
+- 🗄️ **Managed Databases & Backups**: Provisions PostgreSQL, MySQL, MariaDB, MongoDB and Redis containers. Backups are real dumps with a SHA-256 checksum; a failed dump is reported as failed. Scheduled backups with retention, automatic verification and optional restore drills, optional encrypted archives, and optional sync to **AWS S3 / Cloudflare R2**.
 - 🌐 **Edge Proxy & Automated SSL**: Dynamic routing with OpenResty Lua & Caddy 2, custom domains, wildcard SSL, and Magic DNS integration (`nip.io`, `sslip.io`).
 - ✉️ **Email Configuration Manager**: Manages email domains with real DKIM keys plus SPF/DMARC records, mailboxes, aliases and sending through an external SMTP relay. HosteraX is **not** a mail server: it does not receive mail itself.
 - 🖥️ **Server Registry**: Register remote VPS hosts, check that they are reachable, and generate a Docker bootstrap script. Deploying to remote nodes over SSH is **not implemented yet** — projects run on the machine hosting the engine.
@@ -335,14 +335,41 @@ Works with any OIDC provider (Google, Microsoft Entra, Okta, Keycloak, Authentik
 
 The ID token's signature (RS256/ES256), issuer, audience, expiry and nonce are verified, and the email must be verified by the provider. A new SSO user starts with the default role; an owner promotes them in Users & access. If a local account already has the same (provider-verified) email, the SSO identity is linked to it and it keeps its role, so an owner who configures SSO can sign in with it. Anyone who can make your provider assert a verified address in an allowed domain can therefore sign in as that account — keep the allowed domains tight. If SSO is misconfigured the engine says why in its log and leaves it off. Two-factor for SSO users is the provider's job. **The SSO flow is tested against a simulated provider, not yet against a real one** — try it with a non-critical account first.
 
+## 💾 Scheduled backups
+
+```bash
+# every night at 02:00, keep the last 14 (and nothing older than 30 days), prove each one is intact
+htx backup:schedule my-db --cron "0 2 * * *" --keep 14 --days 30 --drill archive
+
+# also restore it into a throwaway container every 7th run, and encrypt the archives
+htx backup:schedule my-db --cron "0 2 * * *" --drill restore --encrypt
+
+htx backup:schedules            # last result and next run of every schedule
+htx backup:verify <backupId>    # re-check a backup now
+htx backup:drill <backupId>     # restore it into a scratch container to prove it works
+```
+
+- **Retention** applies only after a run succeeded, so a failing backup never costs you the good ones. The newest backup is always kept.
+- **Verification** (`--drill archive`, the default) re-reads the archive without Docker: the checksum still matches, the encryption authenticates, it decompresses end to end, and it ends the way a complete dump of its type does.
+- **Restore drills** (`--drill restore`) start a scratch container from the source's image (no network, 1 GB), restore the backup into it, check that the database answers, and delete the container. Your database is never touched. They need a working Docker daemon and are not available for volume backups. Drills are covered by tests against a simulated Docker; they have not been run against a real daemon yet, so treat the first drill result as part of your own acceptance test.
+- **Failures** are recorded on the schedule (`htx backup:schedules`, Dashboard → Backups → Schedules) and logged as `backup_failed` events. There is no email or chat notification yet.
+- **Encrypted archives** (`--encrypt`) use AES-256-GCM with the engine's key. Downloads are decrypted for you, but the files on disk and any copies in S3 are unreadable without `secret.key` (or `HOSTERAX_SECRET_KEY`): **keep a copy of that key somewhere else**.
+- Times use the engine host's clock and time zone. If the engine was down at a scheduled time, the missed run happens once when it starts again. Retention also removes the matching remote copy when S3 sync is on.
+
+## 📚 API
+
+The engine serves an OpenAPI 3.1 description of its routes at `GET /api/openapi.json` (paths and
+methods; response schemas are not modelled yet). It is generated from the engine source, and CI fails
+if the CLI or the dashboard call a route that is not in it.
+
 ---
 
 ## 🔐 Security & Configuration
 
 - API tokens are stored only as SHA-256 hashes and are shown once, when created. Scopes: `read` < `deploy` < `admin`.
 - Only requests from the engine's own machine (loopback, same origin) are trusted without a token. Everything else needs `Authorization: Bearer <token>`.
-- SSH keys, S3 credentials, DKIM private keys, SMTP relay passwords, TLS private keys and AI provider keys are encrypted at rest (AES-256-GCM); mailbox passwords are stored as salted scrypt hashes. The key lives in `$HOSTERAX_HOME/secret.key` (mode 0600) unless you set `HOSTERAX_SECRET_KEY`; back it up with your data.
-- Project environment variable values are **not** encrypted in the database. They are protected only by file permissions on `$HOSTERAX_HOME` and whatever disk encryption you use, they are masked in build/runtime logs, and `read`-scoped tokens cannot read them back.
+- Project environment variables, SSH keys, S3 credentials, DKIM private keys, SMTP relay passwords, TLS private keys and AI provider keys are encrypted at rest (AES-256-GCM); mailbox passwords are stored as salted scrypt hashes. Values written by older versions are encrypted automatically on the next start. The key lives in `$HOSTERAX_HOME/secret.key` (mode 0600) unless you set `HOSTERAX_SECRET_KEY`; back it up with your data.
+- Environment variable values are masked in build/runtime logs. They are never part of a project's JSON, and `read`-scoped tokens cannot read them; variables flagged secret are also masked for `deploy` tokens in `GET /api/projects/:name/env`. They are decrypted only when an app is deployed or when a `deploy`-level MCP/AI tool reads them.
 - Public endpoints: `/api/health` and the GitHub webhook receiver (`/webhooks/github`, HMAC-verified).
 
 | Variable                                     | Default       | Purpose                                                                                                                                                 |

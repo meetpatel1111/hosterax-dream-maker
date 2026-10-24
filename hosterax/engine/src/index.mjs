@@ -12,7 +12,7 @@ import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
 import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
-import { initSecrets } from "./secrets.mjs";
+import { initSecrets, encryptJson, decryptJson } from "./secrets.mjs";
 import { AccountManager, AccountError } from "./accounts.mjs";
 import { OidcClient, OidcError, loadOidcConfig } from "./oidc.mjs";
 import { ENGINE_VERSION } from "./version.mjs";
@@ -47,6 +47,7 @@ import { CronManager } from "./cron-manager.mjs";
 import { MCPServer } from "./mcp-server.mjs";
 import { ServerManager } from "./server-manager.mjs";
 import { createDashboard } from "./dashboard-server.mjs";
+import { BackupScheduler } from "./backup-scheduler.mjs";
 import { WebhookManager } from "./webhook-manager.mjs";
 import { OrgManager } from "./org-manager.mjs";
 import { EmailManager } from "./email-manager.mjs";
@@ -176,15 +177,6 @@ CREATE TABLE IF NOT EXISTS services (
   status TEXT NOT NULL DEFAULT 'idle',
   created_at INTEGER NOT NULL,
   UNIQUE (project, name)
-);
-CREATE TABLE IF NOT EXISTS backup_schedules (
-  id TEXT PRIMARY KEY,
-  database_id TEXT NOT NULL,
-  interval_minutes INTEGER NOT NULL DEFAULT 1440,
-  retention INTEGER NOT NULL DEFAULT 7,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  last_run_at INTEGER,
-  created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS routes (
   project TEXT PRIMARY KEY,
@@ -781,6 +773,14 @@ const tlsManager = new TLSManager(db, EDGEDIR, () => [
 ]);
 const edgeManager = new EdgeManager({ db, edgeDir: EDGEDIR, tlsManager, HOME });
 const backupManager = new BackupManager({ db, HOME });
+const backupScheduler = new BackupScheduler({
+  db,
+  backups: backupManager,
+  // selfHeal is created later in this file; events are only recorded once a run has failed
+  recordEvent: (project, type, details, status) =>
+    selfHeal?.logEvent?.(project, type, details, status),
+});
+const drillsInFlight = new Set();
 const cronManager = new CronManager({ db, backupManager });
 cronManager.startScheduler();
 const serverManager = new ServerManager({ db, HOME });
@@ -2110,7 +2110,7 @@ async function runDeployment(project, opts = {}) {
     workdir,
     environment,
   );
-  const env = { ...JSON.parse(p.env_json || "{}") };
+  const env = { ...decryptJson(p.env_json) };
   if (p.cpu_limit) env.HOSTERAX_CPU_LIMIT = String(p.cpu_limit);
   if (p.memory_mb_limit) env.HOSTERAX_MEMORY_LIMIT_MB = String(p.memory_mb_limit);
   env.HOSTERAX_ENVIRONMENT = environment;
@@ -2619,7 +2619,7 @@ async function restartService(project) {
         project,
         dep.workdir,
         p.start_cmd,
-        JSON.parse(p.env_json || "{}"),
+        decryptJson(p.env_json),
         p.target,
         p.port || 3000,
       );
@@ -2656,7 +2656,7 @@ async function restartService(project) {
         project,
         dep.workdir,
         p.start_cmd,
-        JSON.parse(p.env_json || "{}"),
+        decryptJson(p.env_json),
         p.target,
         p.port || 3000,
       );
@@ -3220,6 +3220,16 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (url.pathname === "/api/openapi.json" && req.method === "GET") {
+    try {
+      const spec = fs.readFileSync(path.join(__dirname, "openapi.json"), "utf8");
+      res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+      return res.end(spec);
+    } catch {
+      return json(res, 404, { error: "openapi.json is not bundled with this build" });
+    }
+  }
+
   if (await catalogApi(req, res, url.pathname)) return;
 
   if ((url.pathname === "/api/system" || url.pathname === "/api/stats") && req.method === "GET") {
@@ -3645,7 +3655,14 @@ const server = http.createServer(async (req, res) => {
 
     // ────────── projects (legacy engine surface) ──────────
     if (url.pathname === "/api/projects" && req.method === "GET")
-      return json(res, 200, db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all());
+      return json(
+        res,
+        200,
+        db
+          .prepare("SELECT * FROM projects ORDER BY created_at DESC")
+          .all()
+          .map(({ env_json: _env, ...row }) => row),
+      );
     if (url.pathname === "/api/projects" && req.method === "POST") {
       const b = await readBody(req);
       if (!b.name) return json(res, 400, { error: "name required" });
@@ -3657,7 +3674,7 @@ const server = http.createServer(async (req, res) => {
         b.source || "",
         b.buildCmd || "",
         b.startCmd || "",
-        JSON.stringify(b.env || {}),
+        encryptJson(b.env || {}),
         b.target || "process",
         current?.created_at ?? Date.now(),
         current?.cpu_limit ?? null,
@@ -3823,8 +3840,8 @@ const server = http.createServer(async (req, res) => {
       // load project env for each
       const p1 = db.prepare("SELECT env_json FROM projects WHERE name=?").get(d1.project);
       const p2 = db.prepare("SELECT env_json FROM projects WHERE name=?").get(d2.project);
-      const env1 = p1 ? JSON.parse(p1.env_json || "{}") : {};
-      const env2 = p2 ? JSON.parse(p2.env_json || "{}") : {};
+      const env1 = p1 ? decryptJson(p1.env_json) : {};
+      const env2 = p2 ? decryptJson(p2.env_json) : {};
       const allKeys = [...new Set([...Object.keys(env1), ...Object.keys(env2)])];
       const envDiff = allKeys
         .map((k) => ({
@@ -4045,7 +4062,13 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/backups/create" && req.method === "POST") {
       const b = await readBody(req);
       try {
-        const bkp = await backupManager.createBackup(b);
+        const bkp = await backupManager.createBackup({
+          databaseName: b.databaseName,
+          dbType: b.dbType,
+          projectName: b.projectName,
+          containerName: b.containerName,
+          encrypt: Boolean(b.encrypt),
+        });
         return json(res, 200, bkp);
       } catch (err) {
         return json(res, 500, { error: err.message });
@@ -4065,14 +4088,19 @@ const server = http.createServer(async (req, res) => {
       if (!bkp || !fs.existsSync(bkp.file_path)) {
         return json(res, 404, { error: "Backup file not found" });
       }
-      const stat = fs.statSync(bkp.file_path);
-      const filename = path.basename(bkp.file_path);
+      // Encrypted archives are served decrypted: the download is a normal .sql.gz/.tar.gz anyone can open.
+      let readStream;
+      try {
+        readStream = await backupManager.openBackupStream(bkp);
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
+      const filename = path.basename(bkp.file_path).replace(/\.enc$/, "");
       res.writeHead(200, {
         "Content-Type": "application/gzip",
-        "Content-Length": stat.size,
+        ...(bkp.encrypted ? {} : { "Content-Length": fs.statSync(bkp.file_path).size }),
         "Content-Disposition": `attachment; filename="${filename}"`,
       });
-      const readStream = fs.createReadStream(bkp.file_path);
       return readStream.pipe(res);
     }
     if (url.pathname === "/api/backups/s3-config" && req.method === "GET") {
@@ -4105,6 +4133,83 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         return json(res, 500, { error: err.message });
       }
+    }
+    // ── schedules, verification and restore drills ──
+    if (url.pathname === "/api/backups/schedules" && req.method === "GET") {
+      return json(res, 200, backupScheduler.list());
+    }
+    if (url.pathname === "/api/backups/schedules" && req.method === "POST") {
+      const b = await readBody(req);
+      if (b.managedDatabase) {
+        // "back up this managed database": fill in its engine, project and container
+        const mdb = db
+          .prepare("SELECT * FROM managed_dbs WHERE id=? OR name=?")
+          .get(b.managedDatabase, b.managedDatabase);
+        if (!mdb) return json(res, 404, { error: "database not found" });
+        Object.assign(b, {
+          databaseName: mdb.name,
+          dbType: mdb.engine,
+          projectName: mdb.project,
+          containerName: `hx_db_${mdb.name}`,
+        });
+      }
+      try {
+        return json(res, 201, backupScheduler.create(b));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if (
+      (m = url.pathname.match(/^\/api\/backups\/schedules\/([^/]+)$/)) &&
+      req.method === "PATCH"
+    ) {
+      const b = await readBody(req);
+      try {
+        const updated = backupScheduler.update(m[1], b);
+        return updated ? json(res, 200, updated) : json(res, 404, { error: "schedule not found" });
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if (
+      (m = url.pathname.match(/^\/api\/backups\/schedules\/([^/]+)$/)) &&
+      req.method === "DELETE"
+    ) {
+      return backupScheduler.remove(m[1])
+        ? json(res, 200, { ok: true })
+        : json(res, 404, { error: "schedule not found" });
+    }
+    if (
+      (m = url.pathname.match(/^\/api\/backups\/schedules\/([^/]+)\/run$/)) &&
+      req.method === "POST"
+    ) {
+      if (!backupScheduler.get(m[1])) return json(res, 404, { error: "schedule not found" });
+      if (backupScheduler.active.has(m[1]))
+        return json(res, 409, { error: "this schedule is already running" });
+      // Dumps and drills take minutes: start the run and let the caller poll the schedule's status.
+      backupScheduler.runNow(m[1]).catch(() => {});
+      return json(res, 202, { ok: true, started: true });
+    }
+    if ((m = url.pathname.match(/^\/api\/backups\/([^/]+)\/verify$/)) && req.method === "POST") {
+      if (!backupManager.getBackup(m[1])) return json(res, 404, { error: "Backup not found" });
+      try {
+        return json(res, 200, await backupManager.verifyBackup(m[1]));
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/backups\/([^/]+)\/drill$/)) && req.method === "POST") {
+      if (!backupManager.getBackup(m[1])) return json(res, 404, { error: "Backup not found" });
+      if (drillsInFlight.has(m[1]))
+        return json(res, 409, { error: "a restore drill is already running for this backup" });
+      drillsInFlight.add(m[1]);
+      backupManager
+        .restoreDrill(m[1])
+        .catch((err) =>
+          console.warn(`[backup] restore drill for ${m[1]} could not run: ${err.message}`),
+        )
+        .finally(() => drillsInFlight.delete(m[1]));
+      return json(res, 202, { ok: true, started: true });
     }
     if ((m = url.pathname.match(/^\/api\/backups\/([^/]+)$/)) && req.method === "GET") {
       const bkp = backupManager.getBackup(m[1]);
@@ -5228,6 +5333,7 @@ wss.on("connection", (ws, req) => {
 server.listen(PORT, () => {
   console.log(`HosteraX engine listening on http://localhost:${PORT}`);
   selfHeal.start();
+  backupScheduler.start();
 });
 
 // ── Global Process Resilience & Crash Traps ──
@@ -5245,6 +5351,7 @@ function handleGracefulShutdown(signal) {
   try {
     selfHeal?.stop?.();
     scaleToZeroManager?.stop?.();
+    backupScheduler.stop();
     dashboard.close();
     server.close(() => {
       console.log("[hosterax-engine] HTTP server closed.");

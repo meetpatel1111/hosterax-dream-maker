@@ -192,6 +192,13 @@ function help() {
     backup:create <databaseId|name>           Trigger database snapshot backup
     backup:list [name]                        List available database backups
     backup:restore <snapshotId>               Restore database snapshot
+    backup:schedules                          List scheduled backups and their last result
+    backup:schedule <database> --cron "0 2 * * *" [--keep 7] [--days 0] [--drill archive|restore|off] [--encrypt]
+                                              Back up a managed database on a schedule
+    backup:schedule:run <scheduleId>          Run a schedule now
+    backup:schedule:rm <scheduleId>           Delete a schedule (its existing backups are kept)
+    backup:verify <backupId>                  Check a backup's checksum, encryption and archive integrity
+    backup:drill <backupId>                   Restore a backup into a scratch container to prove it works
 
   Domains & Edge Routing:
     domains <name>                            List custom domains for project
@@ -757,6 +764,107 @@ try {
       }
       const r = await api("POST", `/api/backups/${snapId}/restore`);
       console.log(`✓ ${r.message || "Snapshot restored successfully"}`);
+      break;
+    }
+
+    case "backup:schedules": {
+      const list = await api("GET", "/api/backups/schedules");
+      if (list.length === 0) {
+        console.log(
+          'No backup schedules. Create one with: hosterax backup:schedule <database> --cron "0 2 * * *"',
+        );
+        break;
+      }
+      console.table(
+        list.map((s) => ({
+          ID: s.id,
+          Database: s.databaseName,
+          Cron: s.cron,
+          Keep: s.keepDays ? `${s.keepLast} / ${s.keepDays}d` : s.keepLast,
+          Drill: s.drill,
+          Encrypted: s.encrypt ? "yes" : "no",
+          Enabled: s.enabled ? "yes" : "no",
+          Last: s.lastStatus ?? "never",
+          Next: s.nextRunAt ? new Date(s.nextRunAt).toISOString() : "—",
+          Error: s.lastError ?? "",
+        })),
+      );
+      break;
+    }
+
+    case "backup:schedule": {
+      const target = args[0];
+      const cron = flag("cron");
+      if (!target || !cron) {
+        console.error(
+          'Usage: hosterax backup:schedule <databaseName|databaseId> --cron "0 2 * * *" [--keep 7] [--days 0] [--drill archive|restore|off] [--drill-every 7] [--encrypt]',
+        );
+        process.exit(1);
+      }
+      const body = { managedDatabase: target, cron };
+      if (flag("keep")) body.keepLast = Number(flag("keep"));
+      if (flag("days")) body.keepDays = Number(flag("days"));
+      if (flag("drill")) body.drill = flag("drill");
+      if (flag("drill-every")) body.drillEvery = Number(flag("drill-every"));
+      if (has("encrypt")) body.encrypt = true;
+      const s = await api("POST", "/api/backups/schedules", body);
+      console.log(`✓ Schedule ${s.id} created for ${s.databaseName} (${s.cron})`);
+      console.log(`  Next run: ${new Date(s.nextRunAt).toLocaleString()}`);
+      console.log(
+        `  Keeps the last ${s.keepLast}${s.keepDays ? ` and nothing older than ${s.keepDays} days` : ""}; verification: ${s.drill}`,
+      );
+      if (s.encrypt)
+        console.log(
+          "  Archives are encrypted — keep a copy of secret.key (or HOSTERAX_SECRET_KEY) elsewhere.",
+        );
+      break;
+    }
+
+    case "backup:schedule:run": {
+      const id = args[0];
+      if (!id) {
+        console.error("Usage: hosterax backup:schedule:run <scheduleId>");
+        process.exit(1);
+      }
+      await api("POST", `/api/backups/schedules/${id}/run`);
+      console.log("✓ Started. Check the result with: hosterax backup:schedules");
+      break;
+    }
+
+    case "backup:schedule:rm": {
+      const id = args[0];
+      if (!id) {
+        console.error("Usage: hosterax backup:schedule:rm <scheduleId>");
+        process.exit(1);
+      }
+      await api("DELETE", `/api/backups/schedules/${id}`);
+      console.log(`✓ Schedule ${id} deleted (backups it already took are kept)`);
+      break;
+    }
+
+    case "backup:verify": {
+      const id = args[0];
+      if (!id) {
+        console.error("Usage: hosterax backup:verify <backupId>");
+        process.exit(1);
+      }
+      const r = await api("POST", `/api/backups/${id}/verify`);
+      console.log(r.ok ? `✓ ${r.message}` : `✗ ${r.message}`);
+      if (!r.ok) process.exit(1);
+      break;
+    }
+
+    case "backup:drill": {
+      const id = args[0];
+      if (!id) {
+        console.error("Usage: hosterax backup:drill <backupId>");
+        process.exit(1);
+      }
+      await api("POST", `/api/backups/${id}/drill`);
+      console.log("✓ Restore drill started (it can take a few minutes).");
+      console.log(
+        `  Check the result with: hosterax backup:list   (look at the backup's verify status)`,
+      );
       break;
     }
 

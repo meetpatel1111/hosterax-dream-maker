@@ -11,13 +11,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scheduled backups:** per-database cron schedules with retention (`keepLast`, `keepDays`), run serially, catch-up after downtime, failure events, and REST/CLI/dashboard management (`/api/backups/schedules`, `htx backup:schedule*`, Backups → Schedules).
+- **Backup verification:** `POST /api/backups/:id/verify` / `htx backup:verify` check the checksum, authenticate encryption, read the archive end to end and look for a complete-dump footer. Every scheduled run is verified by default.
+- **Restore drills:** `POST /api/backups/:id/drill` / `htx backup:drill` restore a backup into an isolated, throwaway container from the source's image and confirm the database answers (Postgres, MySQL/MariaDB, MongoDB, Redis).
+- **Opt-in encrypted backup archives** (AES-256-GCM, streaming, authenticated before any restore); downloads are served decrypted.
+- **API contract:** `scripts/api-contract.mjs` extracts the engine's routes, generates `hosterax/engine/src/openapi.json` (served at `GET /api/openapi.json`) and fails the test suite when the CLI or dashboard call a route the engine does not serve or use the wrong method (`npm run api:check` / `api:write`).
 - **User accounts with enforced roles** (`owner`, `admin`, `developer`, `viewer`): sessions are bearer tokens (`hxs_…`) resolved into the same scope levels the engine already enforces, so every REST route, MCP tool and AI action respects the role, and role changes, disabling and deletion apply to live sessions immediately. First-run setup (`POST /api/auth/setup`) needs an admin credential; there is always at least one active owner; admins cannot create or change admins/owners.
 - **Two-factor authentication (TOTP, RFC 6238)** with single-use recovery codes, replay protection and admin reset; secrets are encrypted at rest.
 - **Single sign-on (OpenID Connect)** with authorization code + PKCE, full ID-token verification and least-privilege provisioning (never admin/owner).
 - Sign-in lockout (8 failures → 15 minutes, per email, uniform for unknown emails), a sign-in audit log (`GET /api/auth/events`), dashboard pages (sign-in, Users & access, Settings → Your account) and CLI commands (`htx users`, `user:add|role|disable|enable|2fa-reset|rm`).
 
+### Fixed
+
+- The dashboard assumed the engine was at `http://localhost:7777`, so a dashboard served by an engine on any other port could not find it. The engine now marks the pages it serves (`Server-Timing: hosterax`) and the dashboard uses its own origin.
+- Backups left `in_progress` by a crash are now marked failed on start; a stale unused `backup_schedules` table from an older version is set aside (`backup_schedules_legacy`).
+
 ### 🔒 Security
 
+- **Environment variables are encrypted at rest** (AES-256-GCM) in `project_env`, the derived `projects.env_json` cache and compose `services.env_json`. Plaintext written by older versions is encrypted on the next start; env that only lived in `env_json` is imported into `project_env` first. A wrong key now fails loudly instead of deploying without configuration.
+- **Fixed: `read`-scoped tokens could read every environment value** (including variables flagged secret) through `env_json` in `GET /api/projects` and `GET /api/projects/:name`. `env_json` is no longer part of any project response, and the project detail view returns service env keys only, masked.
 - **Authentication is no longer implicit.** Only genuine same-machine, same-origin requests skip the token; everything else needs `Authorization: Bearer`. `GET /api/auth/me` tells the dashboard who it is. New `HOSTERAX_REQUIRE_AUTH`, `HOSTERAX_TRUSTED_ORIGINS` and `HOSTERAX_DEV` switches.
 - **Tokens are stored hashed (SHA-256) and carry scopes** (`read` < `deploy` < `admin`), enforced globally, per MCP tool and for the AI copilot. The unauthenticated `/api/token` endpoint is removed; the first token is printed on first start.
 - **Injection and traversal fixes:** Docker calls use argument vectors, image references/hostnames/env keys are validated, git URLs follow `--`, WebSocket log paths are confined, the server bootstrap script no longer interpolates user input.

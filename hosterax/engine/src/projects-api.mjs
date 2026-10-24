@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { encryptSecret, decryptSecret, encryptJson, decryptJson, isEncrypted } from "./secrets.mjs";
 import { spawn } from "node:child_process";
 import { spawnSync } from "./safe-exec.mjs";
 
@@ -309,8 +310,9 @@ export function createProjectsApi(ctx) {
         return d;
       }
     };
+    const { env_json: _env, ...row } = p; // values are never part of a project's JSON
     return {
-      ...p,
+      ...row,
       id: p.id,
       name: p.name,
       slug: p.slug,
@@ -406,7 +408,8 @@ export function createProjectsApi(ctx) {
       }
     };
 
-    return projects.map((p) => {
+    return projects.map((full) => {
+      const { env_json: _env, ...p } = full; // values are never part of a project's JSON
       const isLive = running.has(p.name) || isDockerRunning(p.name, p.port);
       return {
         ...p,
@@ -547,7 +550,7 @@ export function createProjectsApi(ctx) {
     if (b.buildCmd !== undefined) set.build_cmd = b.buildCmd;
     if (b.startCmd !== undefined) set.start_cmd = b.startCmd;
     if (b.source !== undefined) set.source = b.source;
-    if (b.env && typeof b.env === "object") set.env_json = JSON.stringify(b.env);
+    if (b.env && typeof b.env === "object") set.env_json = encryptJson(b.env);
     if (b.port !== undefined && b.port !== null && (b.port < 1 || b.port > 65535))
       bad("port out of range", "port");
     // source resolution
@@ -594,8 +597,8 @@ export function createProjectsApi(ctx) {
       .prepare("SELECT key, value FROM project_env WHERE project=? AND environment='production'")
       .all(name);
     const obj = {};
-    for (const r of rows) obj[r.key] = r.value;
-    db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(JSON.stringify(obj), name);
+    for (const r of rows) obj[r.key] = decryptSecret(r.value);
+    db.prepare("UPDATE projects SET env_json=? WHERE name=?").run(encryptJson(obj), name);
   }
 
   /**
@@ -622,15 +625,17 @@ export function createProjectsApi(ctx) {
         );
       }
       for (const [k, v] of entries) {
+        // A variable that was ever marked secret stays secret until it is explicitly changed via PATCH.
         db.prepare(
           `INSERT INTO project_env (id, project, environment, key, value, is_secret, updated_at) VALUES (?,?,?,?,?,?,?)
-           ON CONFLICT(project, environment, key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+           ON CONFLICT(project, environment, key) DO UPDATE SET value=excluded.value,
+             is_secret=MAX(project_env.is_secret, excluded.is_secret), updated_at=excluded.updated_at`,
         ).run(
           "pev_" + crypto.randomBytes(6).toString("hex"),
           name,
           environment,
           k,
-          String(v ?? ""),
+          encryptSecret(String(v ?? "")),
           secret ? 1 : 0,
           now,
         );
@@ -655,7 +660,7 @@ export function createProjectsApi(ctx) {
           "SELECT key, value FROM project_env WHERE project=? AND environment=? ORDER BY key",
         )
         .all(name, environment)
-        .map((r) => [r.key, r.value]),
+        .map((r) => [r.key, decryptSecret(r.value)]),
     );
   }
 
@@ -884,7 +889,7 @@ export function createProjectsApi(ctx) {
               s.build_context ?? null,
               JSON.stringify(s.ports ?? []),
               JSON.stringify(s.volumes ?? []),
-              JSON.stringify(env),
+              encryptJson(env),
               JSON.stringify(s.depends ?? []),
               now,
             );
@@ -1135,7 +1140,14 @@ export function createProjectsApi(ctx) {
               image: proj.build_image,
             },
             lastDeployment: last ?? null,
-            services: db.prepare("SELECT * FROM services WHERE project=?").all(proj.name),
+            services: db
+              .prepare("SELECT * FROM services WHERE project=?")
+              .all(proj.name)
+              .map(({ env_json, ...svc }) => ({
+                ...svc,
+                // values never leave the engine through this view
+                env: Object.fromEntries(Object.keys(decryptJson(env_json)).map((k) => [k, MASK])),
+              })),
           }),
           true
         );
@@ -1247,7 +1259,7 @@ export function createProjectsApi(ctx) {
             200,
             rows.map((r) => ({
               key: r.key,
-              value: r.is_secret ? MASK : r.value,
+              value: r.is_secret ? MASK : decryptSecret(r.value),
               isSecret: r.is_secret === 1,
               environment: r.environment,
               updatedAt: r.updated_at,
@@ -1283,7 +1295,7 @@ export function createProjectsApi(ctx) {
               proj.name,
               env,
               u.key,
-              String(u.value ?? ""),
+              encryptSecret(String(u.value ?? "")),
               u.isSecret ? 1 : 0,
               now,
             );
@@ -1308,7 +1320,7 @@ export function createProjectsApi(ctx) {
             200,
             rows.map((r) => ({
               key: r.key,
-              value: r.is_secret ? MASK : r.value,
+              value: r.is_secret ? MASK : decryptSecret(r.value),
               isSecret: r.is_secret === 1,
             })),
           ),
@@ -1827,6 +1839,55 @@ export function createProjectsApi(ctx) {
       return (json(res, 500, { error: String(e) }), true);
     }
   }
+
+  /**
+   * One-time and idempotent: encrypts plaintext env written by older versions, and imports env that
+   * only lived in the derived `projects.env_json` cache into the source-of-truth table.
+   */
+  function migrateEnvEncryption() {
+    try {
+      db.transaction(() => {
+        const insert = db.prepare(
+          "INSERT OR IGNORE INTO project_env (id, project, environment, key, value, is_secret, updated_at) VALUES (?,?,'production',?,?,0,?)",
+        );
+        const hasEnv = db.prepare(
+          "SELECT 1 FROM project_env WHERE project=? AND environment='production' LIMIT 1",
+        );
+        for (const p of db.prepare("SELECT name, env_json FROM projects").all()) {
+          if (!p.env_json || p.env_json === "{}") continue;
+          if (hasEnv.get(p.name)) continue;
+          let env;
+          try {
+            env = decryptJson(p.env_json);
+          } catch {
+            continue;
+          }
+          for (const [k, v] of Object.entries(env)) {
+            if (isValidEnvKey(k))
+              insert.run(
+                "pev_" + crypto.randomBytes(6).toString("hex"),
+                p.name,
+                k,
+                encryptSecret(String(v ?? "")),
+                Date.now(),
+              );
+          }
+        }
+        const encryptColumn = (table, idCol, col) => {
+          const upd = db.prepare(`UPDATE ${table} SET ${col}=? WHERE ${idCol}=?`);
+          for (const r of db.prepare(`SELECT ${idCol} AS id, ${col} AS v FROM ${table}`).all()) {
+            if (r.v && r.v !== "{}" && !isEncrypted(r.v)) upd.run(encryptSecret(r.v), r.id);
+          }
+        };
+        encryptColumn("project_env", "id", "value");
+        encryptColumn("projects", "name", "env_json");
+        encryptColumn("services", "id", "env_json");
+      })();
+    } catch (e) {
+      console.error("[hosterax-engine] env encryption migration failed:", e.message);
+    }
+  }
+  migrateEnvEncryption();
 
   return { handle, scanDir, shape, putEnv, removeEnv, readEnv, applyBody, removeProject };
 }
