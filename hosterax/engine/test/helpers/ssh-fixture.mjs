@@ -11,6 +11,7 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
 export function sshToolsAvailable() {
   if (process.platform === "win32") return false;
@@ -70,36 +71,19 @@ export async function startSshFixture() {
   // call the Docker CLI with spawnSync, which would block a daemon living in the test process.
   const daemonSock = path.join(dir, "dockerd.sock");
   const requestLog = path.join(dir, "daemon-requests.log");
+  const portsFile = path.join(dir, "published-ports");
   fs.writeFileSync(requestLog, "");
-  const daemonScript = path.join(dir, "fake-dockerd.mjs");
-  fs.writeFileSync(
-    daemonScript,
-    `import http from "node:http";
-import fs from "node:fs";
-const sock = ${JSON.stringify(daemonSock)};
-const log = ${JSON.stringify(requestLog)};
-http.createServer((req, res) => {
-  fs.appendFileSync(log, req.method + " " + req.url + "\\n");
-  const url = req.url.replace(/^\\/v[0-9.]+/, "");
-  const headers = { "API-Version": "1.45", OSType: "linux", "Docker-Experimental": "false" };
-  if (url === "/_ping") {
-    res.writeHead(200, { ...headers, "Content-Type": "text/plain" });
-    return res.end(req.method === "HEAD" ? undefined : "OK");
-  }
-  if (url === "/version") {
-    res.writeHead(200, { ...headers, "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ Version: "27.0.1-fake", ApiVersion: "1.45", MinAPIVersion: "1.24", Os: "linux", Arch: "amd64", KernelVersion: "6.0.0-fake", GitCommit: "fake", GoVersion: "go1.22", BuildTime: "2024-01-01T00:00:00.000000000+00:00", Components: [{ Name: "Engine", Version: "27.0.1-fake", Details: {} }] }));
-  }
-  if (url.startsWith("/containers/json")) {
-    res.writeHead(200, { ...headers, "Content-Type": "application/json" });
-    return res.end("[]");
-  }
-  res.writeHead(404, { ...headers, "Content-Type": "application/json" });
-  res.end(JSON.stringify({ message: "fake daemon: no route for " + url }));
-}).listen(sock, () => console.log("ready"));
-`,
+  fs.writeFileSync(portsFile, "");
+  const daemon = spawn(
+    process.execPath,
+    [
+      fileURLToPath(new URL("./fake-dockerd.mjs", import.meta.url)),
+      daemonSock,
+      requestLog,
+      portsFile,
+    ],
+    { stdio: ["ignore", "pipe", "inherit"] },
   );
-  const daemon = spawn(process.execPath, [daemonScript], { stdio: ["ignore", "pipe", "inherit"] });
   await new Promise((resolve, reject) => {
     daemon.stdout.once("data", resolve);
     daemon.once("exit", () => reject(new Error("fake docker daemon failed to start")));
@@ -148,7 +132,8 @@ case "$1" in
       denied) echo "permission denied while trying to connect to the Docker daemon socket" >&2; exit 1 ;;
       *) echo "Cannot connect to the Docker daemon. Is the docker daemon running?" >&2; exit 1 ;;
     esac ;;
-  ps) printf 'aaa\\nbbb\\n' ;;
+  ps)
+    if [ "$2" = "--format" ]; then cat ${JSON.stringify(portsFile)}; else printf 'aaa\\nbbb\\n'; fi ;;
   *) echo "fake docker: unsupported: $*" >&2; exit 1 ;;
 esac
 `,

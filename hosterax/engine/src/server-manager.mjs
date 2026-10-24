@@ -19,14 +19,31 @@ const FAILURES_BEFORE_UNREACHABLE = 2;
 export class ServerManager {
   /**
    * @param {{ db: any, HOME: string, transport?: SshTransport, env?: NodeJS.ProcessEnv,
+   *   bindHost?: string,
+   *   listForwards?: (serverId: string) => Array<{ id: string, remotePort: number, localPort: number }>,
+   *   onForwardMoved?: (serverId: string, id: string, localPort: number) => void,
    *   onStatusChange?: (server: any, from: string, to: string, detail: string) => void }} opts
    */
-  constructor({ db, HOME, transport, env = process.env, onStatusChange }) {
+  constructor({
+    db,
+    HOME,
+    transport,
+    env = process.env,
+    bindHost = "127.0.0.1",
+    listForwards,
+    onForwardMoved,
+    onStatusChange,
+  }) {
     this.db = db;
     this.HOME = HOME;
     this.env = env;
     this.transport = transport || new SshTransport({ HOME, env });
     this.onStatusChange = onStatusChange || (() => {});
+    this.bindHost = bindHost;
+    this.listForwards = listForwards || (() => []);
+    this.onForwardMoved = onForwardMoved || (() => {});
+    // serverId -> Map(id -> { remotePort, localPort }): what must be listening whenever the bridge is up
+    this.forwards = new Map();
     this.pollMs = Number(env.HOSTERAX_SERVER_POLL_MS) || POLL_MS;
     this.timer = null;
     this.failures = new Map();
@@ -577,8 +594,97 @@ export class ServerManager {
   async _ensureBridge(id) {
     const target = this.getTarget(id);
     if (!target?.hostKey) return;
+    const had = this.transport.bridges.has(id);
     // A bridge that dies is brought back by the next check.
     await this.transport.ensureBridge(target);
+    if (!had) await this._restoreForwards(id);
+  }
+
+  // ── forwards: apps on the server, reachable from this machine ────────────────────────────────
+
+  _desired(serverId) {
+    if (!this.forwards.has(serverId)) {
+      const map = new Map();
+      for (const f of this.listForwards(serverId))
+        map.set(f.id, { remotePort: f.remotePort, localPort: f.localPort });
+      this.forwards.set(serverId, map);
+    }
+    return this.forwards.get(serverId);
+  }
+
+  /** Re-open every forward that should exist, after the bridge (re)started. Moves a forward if its port is taken. */
+  async _restoreForwards(serverId) {
+    for (const [id, f] of this._desired(serverId)) {
+      try {
+        await this.transport.forward(serverId, { id, ...f, bindHost: this.bindHost });
+      } catch {
+        try {
+          const moved = await this.transport.forward(serverId, {
+            id,
+            remotePort: f.remotePort,
+            localPort: 0,
+            bindHost: this.bindHost,
+          });
+          this._desired(serverId).set(id, { remotePort: f.remotePort, localPort: moved });
+          this.onForwardMoved(serverId, id, moved);
+        } catch {}
+      }
+    }
+  }
+
+  /**
+   * Make `remotePort` on the server (an app published on its loopback) reachable here on `localPort`.
+   * Returns the local port that is listening.
+   */
+  async forward(serverId, { id, remotePort, localPort }) {
+    await this.ensureReady(serverId);
+    const bound = await this.transport.forward(serverId, {
+      id,
+      remotePort,
+      localPort: localPort || 0,
+      bindHost: this.bindHost,
+    });
+    this._desired(serverId).set(id, { remotePort, localPort: bound });
+    return bound;
+  }
+
+  async unforward(serverId, id) {
+    this._desired(serverId).delete(id);
+    await this.transport.unforward(serverId, id);
+  }
+
+  /** Unix socket of a server's Docker bridge, for the HTTP Docker client. */
+  dockerSocket(serverId) {
+    return this.transport.bridges.get(serverId)?.socketPath || null;
+  }
+
+  /**
+   * A TCP port on the server that nothing is listening on and no Docker container publishes, chosen
+   * deterministically from the project name so redeploys keep their port when it is still free.
+   */
+  async allocateRemotePort(serverId, { seed = "", taken = [] } = {}) {
+    const target = this.getTarget(serverId);
+    if (!target) throw new Error(`Server "${serverId}" not found.`);
+    const script = `
+(ss -Hltn 2>/dev/null || netstat -ltn 2>/dev/null) | awk '{print $4}' | sed 's/.*://'
+docker ps --format '{{.Ports}}' 2>/dev/null | grep -o ':[0-9]*->' | tr -d ':>-'
+`;
+    const res = await this.transport.exec(target, "sh -s", { input: script, timeoutMs: 15000 });
+    if (res.failure) throw new Error(res.failure.message);
+    const used = new Set(taken.map(Number));
+    for (const line of String(res.stdout).split(/\r?\n/)) {
+      const n = Number(line.trim());
+      if (Number.isInteger(n) && n > 0) used.add(n);
+    }
+    const LOW = 20000;
+    const SPAN = 10000;
+    let h = 0;
+    for (const ch of String(seed)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    for (let i = 0; i < SPAN; i++) {
+      const port = LOW + ((h + i) % SPAN);
+      if (!used.has(port)) return port;
+    }
+    throw new Error("No free port is left in 20000-29999 on that server.");
   }
 
   /** The Docker CLI environment for a server: empty for the local node. Throws if it is not connected. */

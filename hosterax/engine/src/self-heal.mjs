@@ -1,14 +1,30 @@
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
-import { spawn, execSync, execFile } from "node:child_process";
+import { execSync } from "node:child_process";
+import { spawn, execFile } from "./docker-scope.mjs";
+import { runOnServer, currentServerId } from "./docker-scope.mjs";
 import { spawnSync } from "./safe-exec.mjs";
 import fs from "node:fs";
 import path from "node:path";
 
 export class SelfHealEngine {
-  constructor({ db, publish, restartService, rollbackService, HOME, dockerApi }) {
+  /**
+   * `servers` (optional) connects projects placed on remote servers:
+   *   statusOf(serverId) -> { name, ready, error }, dockerApiFor(serverId) -> Docker HTTP client,
+   *   readyRemoteIds() -> ids of connected remote servers.
+   */
+  constructor({ db, publish, restartService, rollbackService, HOME, dockerApi, servers }) {
+    this.servers = servers || null;
     this.db = db;
+    // Operations that name a project act on the server it lives on.
+    for (const op of ["runFullPipelineAudit", "simulateChaos", "autoRemediateCrashLoop"]) {
+      const inner = this[op].bind(this);
+      this[op] = (name, ...rest) => {
+        const row = this.db.prepare("SELECT server_id FROM projects WHERE name=?").get(name);
+        return runOnServer(row?.server_id, () => inner(name, ...rest));
+      };
+    }
     this.publish = publish;
     this.restartService = restartService;
     this.rollbackService = rollbackService;
@@ -242,9 +258,6 @@ export class SelfHealEngine {
     try {
       // 1. Verify Docker Daemon Socket Health First
       const daemonOk = await this.probeDockerDaemon();
-      if (!daemonOk) {
-        return;
-      }
 
       // Stopped, sleeping (scale-to-zero), disabled and archived projects must stay down.
       const projects = this.db
@@ -254,14 +267,59 @@ export class SelfHealEngine {
         .all();
       if (!projects || projects.length === 0) return;
 
+      // Projects on this machine need this machine's Docker; projects on another server do not.
       for (const proj of projects) {
-        await this.probeAndHealProject(proj);
+        if (this.isRemote(proj)) await this.probeRemoteProject(proj);
+        else if (daemonOk) await this.probeAndHealProject(proj);
       }
     } catch (err) {
       console.error("[self-heal] Error in reconciliation loop:", err.message);
     } finally {
       this.reconciling = false;
     }
+  }
+
+  isRemote(proj) {
+    return Boolean(proj.server_id && proj.server_id !== "local");
+  }
+
+  /** Check (and if needed heal) a project wherever it lives. */
+  probeProject(proj) {
+    return this.isRemote(proj) ? this.probeRemoteProject(proj) : this.probeAndHealProject(proj);
+  }
+
+  /** The Docker HTTP client for whichever server the current work is scoped to. */
+  _api() {
+    const sid = currentServerId();
+    return sid && this.servers?.dockerApiFor ? this.servers.dockerApiFor(sid) : this.dockerApi;
+  }
+
+  /**
+   * A project on another server is checked there, but only while that server is reachable: if it is not,
+   * nothing is restarted or rolled back (the app may be running fine behind a broken network path), and the
+   * project is shown as unreachable until the server answers again.
+   */
+  async probeRemoteProject(proj) {
+    const name = proj.name;
+    const srv = this.servers?.statusOf?.(proj.server_id);
+    if (!srv?.ready) {
+      const prev = this.healthMap.get(name);
+      const message = `Server ${srv?.name ?? proj.server_id} is unreachable${srv?.error ? `: ${srv.error}` : ""}. Nothing is restarted until it is back.`;
+      if (prev?.status !== "unreachable") {
+        this.logEvent(name, "server_unreachable", message, "error");
+      }
+      this.healthMap.set(name, {
+        status: "unreachable",
+        lastProbeTs: Date.now(),
+        message,
+        latencyMs: 0,
+        memoryPercent: 0,
+        circuitState: this.getCircuit(name).state,
+        tiers: { startup: "passed", readiness: "unknown", liveness: "unknown" },
+      });
+      return;
+    }
+    await runOnServer(proj.server_id, () => this.probeAndHealProject(proj));
   }
 
   getCircuit(name) {
@@ -339,7 +397,7 @@ export class SelfHealEngine {
     );
     const proj = this.db.prepare("SELECT * FROM projects WHERE name=?").get(name);
     if (proj) {
-      this.probeAndHealProject(proj);
+      this.probeProject(proj);
     }
     return { ok: true, message: `Circuit Breaker for "${name}" reset to CLOSED.` };
   }
@@ -506,10 +564,17 @@ export class SelfHealEngine {
     const startT = Date.now();
 
     if (target === "docker") {
+      const api = (() => {
+        try {
+          return this._api();
+        } catch {
+          return null; // the server just dropped; the CLI path below fails the same way and counts as not alive
+        }
+      })();
       try {
-        if (this.dockerApi) {
+        if (api) {
           try {
-            const inspectData = await this.dockerApi.inspectContainer(`hx_${cleanName}`);
+            const inspectData = await api.inspectContainer(`hx_${cleanName}`);
             if (inspectData && inspectData.State) {
               statusText = inspectData.State.Status || "unknown";
               oomKilled = Boolean(inspectData.State.OOMKilled);
@@ -566,8 +631,8 @@ export class SelfHealEngine {
             "warning",
           );
           try {
-            if (this.dockerApi) {
-              await this.dockerApi.removeContainer(`hx_${cleanName}`, { force: true });
+            if (api) {
+              await api.removeContainer(`hx_${cleanName}`, { force: true });
             } else {
               spawnSync("docker", ["rm", "-f", `hx_${cleanName}`]);
             }
@@ -909,7 +974,23 @@ export class SelfHealEngine {
     });
   }
 
+  /** Dangling images and old build cache on each connected remote server (never volumes or running containers). */
+  pruneRemoteServers() {
+    for (const serverId of this.servers?.readyRemoteIds?.() ?? []) {
+      try {
+        runOnServer(serverId, () => {
+          spawnSync("docker", ["image", "prune", "-f"], { encoding: "utf8", timeout: 30000 });
+          spawnSync("docker", ["builder", "prune", "-f", "--keep-storage", "2GB"], {
+            encoding: "utf8",
+            timeout: 30000,
+          });
+        });
+      } catch {}
+    }
+  }
+
   runAutoPrune() {
+    this.pruneRemoteServers();
     try {
       console.log("[self-heal] Running AutoPrune disk reclamation...");
       let reclaimedMb = 0;

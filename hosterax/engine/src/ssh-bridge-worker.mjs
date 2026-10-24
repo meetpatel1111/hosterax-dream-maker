@@ -17,6 +17,7 @@ const [configPath, alias, socketPath, sshBin] = process.argv.slice(2);
 const MAX_CONNECTIONS = 64;
 
 const active = new Set();
+const forwards = new Map(); // id -> { server, localPort, remotePort }
 let total = 0;
 let lastOkAt = null;
 const send = (msg) => {
@@ -82,7 +83,72 @@ const server = net.createServer({ allowHalfOpen: true }, (sock) => {
   });
 });
 
+// A forward makes an app that listens on the server's loopback reachable on a local port: each connection
+// is `ssh -W` over the same multiplexed connection. The app is never published on the server's network.
+function openForward({ id, remotePort, localPort = 0, bindHost = "127.0.0.1" }) {
+  return new Promise((resolve, reject) => {
+    closeForward(id);
+    const fwd = net.createServer({ allowHalfOpen: true }, (sock) => {
+      if (active.size >= MAX_CONNECTIONS) return sock.destroy();
+      let child;
+      try {
+        child = spawn(sshBin, ["-F", configPath, "-W", `127.0.0.1:${remotePort}`, "--", alias], {
+          stdio: ["pipe", "pipe", "ignore"],
+          windowsHide: true,
+        });
+      } catch {
+        return sock.destroy();
+      }
+      active.add(child);
+      child.stdin.on("error", () => {});
+      sock.on("error", () => child.kill("SIGKILL"));
+      sock.on("close", () => child.kill("SIGKILL"));
+      sock.on("end", () => child.stdin.end());
+      sock.pipe(child.stdin);
+      child.stdout.pipe(sock);
+      child.on("error", () => sock.destroy());
+      child.on("close", () => {
+        active.delete(child);
+        sock.end();
+      });
+    });
+    fwd.once("error", reject);
+    fwd.listen(localPort, bindHost, () => {
+      fwd.off("error", reject);
+      forwards.set(id, { server: fwd, localPort: fwd.address().port, remotePort });
+      resolve(fwd.address().port);
+    });
+  });
+}
+
+function closeForward(id) {
+  const f = forwards.get(id);
+  if (!f) return;
+  forwards.delete(id);
+  f.server.close();
+}
+
+process.on("message", async (m) => {
+  if (m?.type === "forward") {
+    try {
+      const localPort = await openForward(m);
+      send({ type: "forward-ready", id: m.id, requestId: m.requestId, localPort });
+    } catch (err) {
+      send({
+        type: "forward-error",
+        id: m.id,
+        requestId: m.requestId,
+        message: String(err.message),
+      });
+    }
+  } else if (m?.type === "unforward") {
+    closeForward(m.id);
+    send({ type: "forward-closed", id: m.id, requestId: m.requestId });
+  }
+});
+
 function shutdown() {
+  for (const f of forwards.values()) f.server.close();
   for (const c of active) c.kill("SIGKILL");
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1500).unref();

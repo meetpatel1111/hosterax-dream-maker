@@ -6,8 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile } from "./docker-scope.mjs";
 import { spawnSync } from "./safe-exec.mjs";
+import { runOnServer, currentServerId, configureDockerScope } from "./docker-scope.mjs";
 import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
@@ -208,6 +209,15 @@ try {
 } catch (e) {}
 try {
   db.exec("ALTER TABLE projects ADD COLUMN restart_policy TEXT DEFAULT 'on-failure'");
+} catch (e) {}
+// Where a project runs: NULL / 'local' is this machine; otherwise a remote server's id. For a remote
+// project `port` is the port on this machine that reaches it (an SSH forward) and `remote_port` is the
+// port the container publishes on the server's loopback.
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN server_id TEXT");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN remote_port INTEGER");
 } catch (e) {}
 try {
   db.exec("ALTER TABLE deployments ADD COLUMN snapshot_json TEXT");
@@ -771,6 +781,11 @@ export function allocateProjectPort(projectName, preferredPort = null) {
   }
 }
 
+// Interface that deployed apps publish on. Use 127.0.0.1 to force all traffic through the edge proxy.
+const BIND_HOST = /^[0-9.]+$|^::1?$/.test(process.env.HOSTERAX_BIND_HOST || "")
+  ? process.env.HOSTERAX_BIND_HOST
+  : "0.0.0.0";
+
 const tlsManager = new TLSManager(db, EDGEDIR, () => [
   getServerIp(),
   ...Object.values(os.networkInterfaces())
@@ -825,6 +840,20 @@ cronManager.startScheduler();
 const serverManager = new ServerManager({
   db,
   HOME,
+  // an app on a remote server is reached through a local forward, published like any local app
+  bindHost: BIND_HOST,
+  listForwards: (serverId) =>
+    db
+      .prepare(
+        "SELECT name, port, remote_port FROM projects WHERE server_id=? AND remote_port IS NOT NULL AND port IS NOT NULL",
+      )
+      .all(serverId)
+      .map((r) => ({ id: r.name, remotePort: r.remote_port, localPort: r.port })),
+  onForwardMoved: (serverId, project, localPort) => {
+    db.prepare("UPDATE projects SET port=? WHERE name=?").run(localPort, project);
+    const route = db.prepare("SELECT hostname FROM routes WHERE project=?").get(project);
+    applyRoute(project, localPort, route?.hostname ?? null, null);
+  },
   onStatusChange: (srv, from, to, detail) =>
     selfHeal?.logEvent?.(
       srv.name,
@@ -833,10 +862,35 @@ const serverManager = new ServerManager({
       to === "online" ? "info" : "error",
     ),
 });
+configureDockerScope({ dockerEnv: (serverId) => serverManager.dockerEnv(serverId) });
+serverManager.isInUse = (serverId) =>
+  db
+    .prepare("SELECT COUNT(*) c FROM projects WHERE server_id=? AND deleted_at IS NULL")
+    .get(serverId).c;
+const SCALE_TO_ZERO_REMOTE =
+  "Scale to zero is not available for projects on a remote server (it stops and starts containers on this machine).";
+/** The remote server a project is placed on, or null for this machine. */
+function serverOf(project) {
+  const row = db.prepare("SELECT server_id FROM projects WHERE name=?").get(project);
+  return row?.server_id && row.server_id !== "local" ? row.server_id : null;
+}
 const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
 const orgManager = new OrgManager({ db });
 const emailManager = new EmailManager({ db, HOME });
 const dockerApi = new DockerApiClient();
+const remoteDockerApis = new Map();
+/** Docker HTTP client for a project's server: this machine's daemon, or the remote one through its bridge. */
+function dockerApiForServer(serverId) {
+  if (!serverId || serverId === "local") return dockerApi;
+  const socketPath = serverManager.dockerSocket(serverId);
+  if (!socketPath) throw new Error(`Server ${serverId} is not connected.`);
+  let c = remoteDockerApis.get(serverId);
+  if (!c || c.socketPath !== socketPath) {
+    c = new DockerApiClient({ socketPath });
+    remoteDockerApis.set(serverId, c);
+  }
+  return c;
+}
 const gpuManager = new GpuManager(db);
 const scaleToZeroManager = new ScaleToZeroManager(db, dockerApi);
 scaleToZeroManager.start();
@@ -1279,11 +1333,19 @@ function renameContainer(from, to) {
 const staticServers = new Map(); // project -> http.Server
 
 function stopProject(project, reason = "manual stop") {
+  return runOnServer(serverOf(project), () => stopProjectHere(project, reason));
+}
+
+function stopProjectHere(project, reason) {
   const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
   try {
     const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
     child.on("error", () => {});
-  } catch {}
+  } catch (err) {
+    // A server that cannot be reached cannot have its container removed; say so rather than pretend.
+    if (currentServerId())
+      selfHeal?.logEvent?.(project, "remote_stop_failed", String(err.message), "error");
+  }
   const srv = staticServers.get(project);
   if (srv) {
     try {
@@ -1569,7 +1631,29 @@ function pickPrimaryHttpPort(exposedPorts) {
 
 async function startService(deploymentId, project, workdir, cmd, env, target, port) {
   stopProject(project, "superseded by new deploy");
-  if (target === "docker" || target === "compose") {
+  const remoteServerId = currentServerId();
+  if (remoteServerId) {
+    // Projects on another server run as a single Docker container; nothing else is placed there.
+    if (target !== "docker") {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[server] ❌ Only Docker projects can run on a remote server (this project's target is "${target}").`,
+      });
+      return 1;
+    }
+    try {
+      await serverManager.ensureReady(remoteServerId);
+    } catch (err) {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[server] ❌ ${err.message}`,
+      });
+      return 1;
+    }
+  }
+  if (!remoteServerId && (target === "docker" || target === "compose")) {
     const isDaemonUp = selfHeal ? await selfHeal.probeDockerDaemon() : true;
     if (!isDaemonUp) {
       publish(deploymentId, {
@@ -1790,11 +1874,39 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       containerInternalPort = projRow.port;
     }
 
-    // Allocate verified free host port
+    // Allocate verified free host port. For a remote project this is the port on THIS machine that
+    // reaches it (an SSH forward); the container itself publishes on the server's loopback only.
     const hostPort = allocateProjectPort(project, containerInternalPort);
     try {
       db.prepare("UPDATE projects SET port=? WHERE name=?").run(hostPort, project);
     } catch {}
+    let remotePort = null;
+    const allocateRemote = async (seed) => {
+      const taken = db
+        .prepare(
+          "SELECT remote_port FROM projects WHERE server_id=? AND name != ? AND remote_port IS NOT NULL",
+        )
+        .all(remoteServerId, project)
+        .map((r) => r.remote_port);
+      return serverManager.allocateRemotePort(remoteServerId, { seed, taken });
+    };
+    if (remoteServerId) {
+      try {
+        remotePort = await allocateRemote(project);
+      } catch (err) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "stderr",
+          text: `[server] ❌ Could not choose a port on the server: ${err.message}`,
+        });
+        return 1;
+      }
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "system",
+        text: `[server] container will publish on the server's loopback :${remotePort}, forwarded to :${hostPort} here`,
+      });
+    }
 
     // Persistent volume mappings (use reliable Docker Named Volumes for cross-platform stability)
     const volArgs = [];
@@ -1898,16 +2010,21 @@ pages:
       extraArgs = ["standalone"];
     }
 
-    const portArgs = ["-p", `${BIND_HOST}:${hostPort}:${containerInternalPort}`];
+    const portArgs = remoteServerId
+      ? ["-p", `127.0.0.1:${remotePort}:${containerInternalPort}`]
+      : ["-p", `${BIND_HOST}:${hostPort}:${containerInternalPort}`];
+    // Extra ports (admin consoles, …) stay on the loopback of whichever machine runs the container.
+    const secondaryPort = async (key, containerPort) =>
+      remoteServerId ? allocateRemote(key) : allocateProjectPort(key, containerPort);
     if (imageInspect.exposedPorts && imageInspect.exposedPorts.length > 1) {
       for (const p of imageInspect.exposedPorts) {
         if (p !== containerInternalPort) {
-          const secondaryHostPort = allocateProjectPort(`${project}_p${p}`, p);
+          const secondaryHostPort = await secondaryPort(`${project}_p${p}`, p);
           portArgs.push("-p", `127.0.0.1:${secondaryHostPort}:${p}`);
         }
       }
     } else if (tag.includes("minio")) {
-      const consoleHostPort = allocateProjectPort(`${project}_console`, 9001);
+      const consoleHostPort = await secondaryPort(`${project}_console`, 9001);
       portArgs.push("-p", `127.0.0.1:${consoleHostPort}:9001`);
     }
 
@@ -1988,14 +2105,39 @@ pages:
       return migrationRc;
     }
 
+    // A remote container is only reachable through the forward, so open it before probing.
+    let reachPort = hostPort;
+    if (remoteServerId) {
+      try {
+        const bound = await serverManager.forward(remoteServerId, {
+          id: project,
+          remotePort,
+          localPort: hostPort,
+        });
+        if (bound !== hostPort) {
+          db.prepare("UPDATE projects SET port=? WHERE name=?").run(bound, project);
+          reachPort = bound;
+        }
+        db.prepare("UPDATE projects SET remote_port=? WHERE name=?").run(remotePort, project);
+      } catch (err) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "stderr",
+          text: `[server] ❌ Could not open the connection to the app on the server: ${err.message}`,
+        });
+        stopContainer(greenName);
+        return 1;
+      }
+    }
+
     // Step 3: Readiness health probe on the green container
     setPhase(deploymentId, "health_check");
     publish(deploymentId, {
       ts: Date.now(),
       stream: "system",
-      text: `[health] Starting readiness probe on port ${hostPort} (path: ${healthPath})...`,
+      text: `[health] Starting readiness probe on port ${reachPort} (path: ${healthPath})...`,
     });
-    const health = await waitForHealthy(deploymentId, hostPort, { healthPath });
+    const health = await waitForHealthy(deploymentId, reachPort, { healthPath });
 
     if (!health.healthy) {
       publish(deploymentId, {
@@ -2138,6 +2280,10 @@ function rollbackOptions(dep, trigger = "rollback") {
 }
 
 async function runDeployment(project, opts = {}) {
+  return runOnServer(serverOf(project), () => runDeploymentHere(project, opts));
+}
+
+async function runDeploymentHere(project, opts = {}) {
   const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
   if (!p) throw new Error("no such project");
   const id = "d_" + crypto.randomBytes(8).toString("hex");
@@ -2450,6 +2596,10 @@ function getSystemMetrics() {
 }
 
 async function getContainerMetrics(projectName) {
+  return runOnServer(serverOf(projectName), () => getContainerMetricsHere(projectName));
+}
+
+async function getContainerMetricsHere(projectName) {
   const cleanName = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
   return new Promise((resolve) => {
     const cp = spawn("docker", [
@@ -2502,10 +2652,6 @@ function json(res, code, body) {
 
 const dashboard = createDashboard({ log: (m) => console.warn(m) });
 const PORT = Number(process.env.HOSTERAX_PORT || 7777);
-// Interface that deployed apps publish on. Use 127.0.0.1 to force all traffic through the edge proxy.
-const BIND_HOST = /^[0-9.]+$|^::1?$/.test(process.env.HOSTERAX_BIND_HOST || "")
-  ? process.env.HOSTERAX_BIND_HOST
-  : "0.0.0.0";
 function readBody(req, maxSizeBytes = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let s = "";
@@ -2648,6 +2794,7 @@ const projectsApi = createProjectsApi({
   json,
   readBody,
   stopProject,
+  serverManager,
   purgeDatabases: async (projectName) => {
     for (const row of db.prepare("SELECT * FROM managed_dbs WHERE project=?").all(projectName))
       await removeManagedDatabase(row);
@@ -2655,6 +2802,10 @@ const projectsApi = createProjectsApi({
 });
 
 async function restartService(project) {
+  return runOnServer(serverOf(project), () => restartServiceHere(project));
+}
+
+async function restartServiceHere(project) {
   const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
   if (!p) return;
   const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
@@ -2673,6 +2824,10 @@ async function restartService(project) {
         p.port || 3000,
       );
     } else {
+      // Without a deployment there is nothing to replay, and a bare `docker run` would publish on the
+      // server's public interface; remote projects always start from a deployment.
+      if (currentServerId())
+        throw new Error(`Deploy "${project}" first; it has never been deployed.`);
       const hostPort = p.port || 3002;
       const tag = p.source || `${project}:latest`;
       spawnSync("docker", ["rm", "-f", `hx_${cleanName}`]);
@@ -2731,13 +2886,22 @@ function readDeploymentLog(deploymentId, lines = 0) {
 
 function dockerCli(args, timeout = 60000) {
   return new Promise((resolve) => {
-    execFile(
-      "docker",
-      args,
-      { encoding: "utf8", timeout, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) =>
-        resolve({ ok: !err, stdout: stdout || "", stderr: (stderr || err?.message || "").trim() }),
-    );
+    try {
+      execFile(
+        "docker",
+        args,
+        { encoding: "utf8", timeout, maxBuffer: 8 * 1024 * 1024 },
+        (err, stdout, stderr) =>
+          resolve({
+            ok: !err,
+            stdout: stdout || "",
+            stderr: (stderr || err?.message || "").trim(),
+          }),
+      );
+    } catch (err) {
+      // e.g. the project's server is not connected: report it like any other failed command
+      resolve({ ok: false, stdout: "", stderr: String(err.message) });
+    }
   });
 }
 
@@ -2820,6 +2984,13 @@ const lifecycle = {
     return { ok: true, status: "running", restartedAt: Date.now() };
   },
 };
+
+// Every lifecycle action works on the server the project lives on.
+for (const action of ["runtimeLogs", "_exists", "stop", "start", "restart"]) {
+  const inner = lifecycle[action];
+  lifecycle[action] = (project, ...rest) =>
+    runOnServer(serverOf(project), () => inner.call(lifecycle, project, ...rest));
+}
 
 // ───────────── Managed databases ─────────────
 try {
@@ -2999,6 +3170,18 @@ const catalogApi = createCatalogApi({ db, HOME, readBody });
 const selfHeal = new SelfHealEngine({
   db,
   dockerApi,
+  servers: {
+    statusOf: (serverId) => {
+      const s = serverManager.getServer(serverId);
+      return s ? { name: s.name, ready: s.ready, error: s.last_error } : null;
+    },
+    dockerApiFor: (serverId) => dockerApiForServer(serverId),
+    readyRemoteIds: () =>
+      serverManager
+        .listServers()
+        .filter((s) => s.type === "remote" && s.ready)
+        .map((s) => s.id),
+  },
   publish: (project, msg) => {
     const dep = db
       .prepare("SELECT id FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
@@ -3404,7 +3587,11 @@ const server = http.createServer(async (req, res) => {
     const query = url.searchParams.get("query") || "";
     const level = url.searchParams.get("level") || "all";
     const limit = Number(url.searchParams.get("limit") || 100);
-    return json(res, 200, metricsManager.searchLogs(proj, { query, level, limit }));
+    return json(
+      res,
+      200,
+      runOnServer(serverOf(proj), () => metricsManager.searchLogs(proj, { query, level, limit })),
+    );
   }
 
   if (url.pathname === "/api/alerts" && req.method === "GET") {
@@ -3627,7 +3814,7 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/heal$/)) && req.method === "POST") {
       const p = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
       if (!p) return json(res, 404, { error: "project not found" });
-      await selfHeal.probeAndHealProject(p);
+      await selfHeal.probeProject(p);
       return json(res, 200, selfHeal.getStatusSummary().projects[m[1]] || { status: "unknown" });
     }
     if (
@@ -3734,14 +3921,18 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)$/)) && req.method === "DELETE") {
       const projName = m[1];
       const cleanName = projName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      const removedServer = serverOf(projName);
       db.prepare("DELETE FROM projects WHERE name=?").run(projName);
       db.prepare("DELETE FROM deployments WHERE project=?").run(projName);
       db.prepare("DELETE FROM domains WHERE project=?").run(projName);
       db.prepare("DELETE FROM managed_dbs WHERE project=?").run(projName);
       selfHeal.untrack(projName);
       try {
-        spawnSync("docker", ["rm", "-f", `hx_${cleanName}`], { timeout: 5000 });
+        runOnServer(removedServer, () =>
+          spawnSync("docker", ["rm", "-f", `hx_${cleanName}`], { timeout: 5000 }),
+        );
       } catch {}
+      if (removedServer) serverManager.unforward(removedServer, projName).catch(() => {});
       const r = running.get(projName);
       if (r) {
         try {
@@ -4851,9 +5042,11 @@ const server = http.createServer(async (req, res) => {
 
       let logs = "";
       try {
-        const logRes = spawnSync("docker", ["logs", "--tail", "60", `hx_${proj.name}`], {
-          encoding: "utf8",
-        });
+        const logRes = runOnServer(serverOf(proj.name), () =>
+          spawnSync("docker", ["logs", "--tail", "60", `hx_${proj.name}`], {
+            encoding: "utf8",
+          }),
+        );
         logs = (logRes.stdout || "") + (logRes.stderr || "");
       } catch {}
 
@@ -5414,6 +5607,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, cfg);
       }
       if (req.method === "POST") {
+        if (serverOf(projectName)) return json(res, 400, { error: SCALE_TO_ZERO_REMOTE });
         const b = await readBody(req);
         const cfg = scaleToZeroManager.setConfig(projectName, {
           enabled: Boolean(b.enabled),
@@ -5426,11 +5620,13 @@ const server = http.createServer(async (req, res) => {
     // Manual Sleep & Wake
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/sleep$/)) && req.method === "POST") {
       const projectName = decodeURIComponent(m[1]);
+      if (serverOf(projectName)) return json(res, 400, { error: SCALE_TO_ZERO_REMOTE });
       const r = await scaleToZeroManager.sleepProject(projectName);
       return json(res, r.ok ? 200 : 400, r);
     }
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/wake$/)) && req.method === "POST") {
       const projectName = decodeURIComponent(m[1]);
+      if (serverOf(projectName)) return json(res, 400, { error: SCALE_TO_ZERO_REMOTE });
       const r = await scaleToZeroManager.wakeProject(projectName);
       return json(res, r.ok ? 200 : 400, r);
     }

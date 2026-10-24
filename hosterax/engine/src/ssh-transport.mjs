@@ -536,6 +536,8 @@ export class SshTransport {
       stats: { active: 0, total: 0, lastOkAt: null },
       lastFailure: null,
       stopping: false,
+      pending: new Map(),
+      seq: 0,
     };
     const child = fork(WORKER, [configPath, alias, socketPath, this.sshBin], {
       env: this._childEnv(),
@@ -552,6 +554,13 @@ export class SshTransport {
       if (m?.type === "stats")
         bridge.stats = { active: m.active, total: m.total, lastOkAt: m.lastOkAt };
       else if (m?.type === "failure") bridge.lastFailure = m.failure;
+      else if (m?.requestId && bridge.pending.has(m.requestId)) {
+        const { resolve, reject, timer } = bridge.pending.get(m.requestId);
+        bridge.pending.delete(m.requestId);
+        clearTimeout(timer);
+        if (m.type === "forward-error") reject(new Error(m.message));
+        else resolve(m);
+      }
     });
     await new Promise((resolve, reject) => {
       const timer = setTimeout(
@@ -577,10 +586,58 @@ export class SshTransport {
     });
     this.bridges.set(target.id, bridge);
     child.on("exit", () => {
+      for (const { reject, timer } of bridge.pending.values()) {
+        clearTimeout(timer);
+        reject(new Error("the bridge stopped"));
+      }
+      bridge.pending.clear();
       if (this.bridges.get(target.id) === bridge) this.bridges.delete(target.id);
       if (!bridge.stopping) onExit?.(target.id);
     });
     return bridge;
+  }
+
+  _request(serverId, message) {
+    const bridge = this.bridges.get(serverId);
+    if (!bridge)
+      return Promise.reject(new Error(`The connection to server ${serverId} is not open.`));
+    return new Promise((resolve, reject) => {
+      const requestId = `r${++bridge.seq}`;
+      const timer = setTimeout(() => {
+        bridge.pending.delete(requestId);
+        reject(new Error("the bridge did not answer in time"));
+      }, 8000);
+      bridge.pending.set(requestId, { resolve, reject, timer });
+      bridge.child.send({ ...message, requestId }, (err) => {
+        if (err) {
+          clearTimeout(timer);
+          bridge.pending.delete(requestId);
+          reject(err);
+        }
+      });
+    });
+  }
+
+  /**
+   * Make a port on the server's loopback reachable on this machine. `localPort` 0 picks a free one.
+   * Resolves with the local port actually listening.
+   */
+  async forward(serverId, { id, remotePort, localPort = 0, bindHost = "127.0.0.1" }) {
+    if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535)
+      throw new Error("remotePort must be 1-65535");
+    const r = await this._request(serverId, {
+      type: "forward",
+      id,
+      remotePort,
+      localPort,
+      bindHost,
+    });
+    return r.localPort;
+  }
+
+  async unforward(serverId, id) {
+    if (!this.bridges.has(serverId)) return;
+    await this._request(serverId, { type: "unforward", id }).catch(() => {});
   }
 
   bridgeStatus(serverId) {

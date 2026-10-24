@@ -318,6 +318,51 @@ test(
   },
 );
 
+test(
+  "a forward reaches an app on the server's loopback without publishing it",
+  { skip },
+  async () => {
+    const app = http.createServer((req, res) => res.end(`hello from the app ${req.url}`));
+    await new Promise((r) => app.listen(0, "127.0.0.1", r));
+    const appPort = app.address().port;
+    const t = target();
+    try {
+      await transport.ensureBridge(t);
+      const get = (port, p = "/") =>
+        new Promise((resolve, reject) =>
+          http
+            .get({ host: "127.0.0.1", port, path: p, agent: false }, (res) => {
+              let b = "";
+              res.on("data", (d) => (b += d));
+              res.on("end", () => resolve(b));
+            })
+            .on("error", reject),
+        );
+      const local = await transport.forward(t.id, { id: "demo", remotePort: appPort });
+      assert.ok(local > 0 && local !== appPort);
+      assert.equal(await get(local, "/x"), "hello from the app /x");
+      // a second forward and an explicit local port
+      const again = await transport.forward(t.id, {
+        id: "demo",
+        remotePort: appPort,
+        localPort: local,
+      });
+      assert.equal(again, local, "re-forwarding the same id keeps its port");
+      assert.equal(await get(local), "hello from the app /");
+
+      // a port nobody listens on: the connection closes, it does not hang
+      const dead = await transport.forward(t.id, { id: "dead", remotePort: 1 });
+      await assert.rejects(get(dead), /ECONNRESET|socket hang up|EPIPE/);
+
+      await transport.unforward(t.id, "demo");
+      await assert.rejects(get(local), /ECONNREFUSED/);
+      await assert.rejects(transport.forward(t.id, { id: "bad", remotePort: 70000 }), /remotePort/);
+    } finally {
+      await new Promise((r) => app.close(r));
+    }
+  },
+);
+
 test("forgetting a server removes its key, config and socket", { skip }, async () => {
   const t = target();
   const { dir, keyPath } = transport.prepare(t);
