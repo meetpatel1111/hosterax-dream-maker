@@ -1,4 +1,4 @@
-import { test, after } from "node:test";
+import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -62,16 +62,8 @@ function crypto_random(n) {
 
 // ───────────────────────── accounts ─────────────────────────
 
-// Databases are closed explicitly: leaving them for the garbage collector can abort the whole test
-// process on some Node/macOS builds (a native assertion in better-sqlite3's destructor).
-const opened = [];
-after(() => {
-  for (const db of opened) if (db.open) db.close();
-});
-
 function setup() {
   const db = new Database(":memory:");
-  opened.push(db);
   let clock = Date.UTC(2026, 9, 23, 12, 0, 0);
   const accounts = new AccountManager({ db, now: () => clock });
   return {
