@@ -157,7 +157,15 @@ test(
     );
     assert.equal(r.ok, false);
     assert.equal((await api("GET", `/api/servers/${srv.id}`)).data.status, "error");
-    const scan = (await api("GET", `/api/servers/${srv.id}/host-key`)).data;
+    // sshd re-reads its key asynchronously; on a busy machine a scan can still see the old key for a moment
+    const scan = await h.until(
+      async () => {
+        const s = (await api("GET", `/api/servers/${srv.id}/host-key`)).data;
+        return s.changed ? s : null;
+      },
+      15000,
+      "the scan to see the changed key",
+    );
     assert.equal(scan.changed, true);
 
     const refused = await api("POST", `/api/servers/${srv.id}/host-key`, {
@@ -169,7 +177,11 @@ test(
       replace: true,
     });
     assert.equal(ok.status, 200, ok.text);
-    assert.equal((await api("POST", `/api/servers/${srv.id}/test`)).data.ok, true);
+    await h.until(
+      async () => (await api("POST", `/api/servers/${srv.id}/test`)).data.ok === true,
+      15000,
+      "the re-pinned server to accept the connection",
+    );
   },
 );
 

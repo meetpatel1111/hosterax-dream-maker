@@ -20,7 +20,12 @@ const port = await new Promise((resolve) => {
 
 const child = spawn(process.execPath, ["src/index.mjs"], {
   cwd: engineDir,
-  env: { ...process.env, HOSTERAX_PORT: String(port), HOSTERAX_HOME: home },
+  env: {
+    ...process.env,
+    HOSTERAX_PORT: String(port),
+    HOSTERAX_HOME: home,
+    HOSTERAX_EDGE_PROVIDER: "external", // never start a proxy container on the developer's Docker
+  },
   stdio: ["ignore", "pipe", "pipe"],
 });
 

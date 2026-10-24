@@ -16,6 +16,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import net from "node:net";
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHarness } from "./helpers/engine-harness.mjs";
@@ -71,6 +72,41 @@ const inspect = (docker, name, format) => docker("inspect", "--format", format, 
 const ids = (docker, name) =>
   docker("ps", "-a", "-q", "--filter", `name=^${name}$`).stdout.trim().split("\n").filter(Boolean);
 
+/**
+ * Whether a container published on the server's loopback can be fetched from here. Some machines cannot:
+ * a sandbox or security layer that answers HTTP itself on a Docker-published port makes every app look broken
+ * for reasons that have nothing to do with HosteraX, so those tests would fail for the wrong reason.
+ * Returns the reason, or "" when the port works.
+ */
+async function publishedPortsUnreachable() {
+  const name = "hx_realprobe";
+  const port = await new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const { port: free } = srv.address();
+      srv.close(() => resolve(free));
+    });
+  });
+  remote("rm", "-f", name);
+  const run = remote("run", "-d", "--name", name, "-p", `127.0.0.1:${port}:80`, IMAGE);
+  try {
+    if (run.status !== 0) return `cannot start a probe container: ${run.stderr.trim().slice(-200)}`;
+    let seen = "";
+    for (let i = 0; i < 20; i++) {
+      try {
+        seen = (await (await fetch(`http://127.0.0.1:${port}/`)).text()).slice(0, 120);
+        if (/Welcome to nginx/.test(seen)) return "";
+      } catch (e) {
+        seen = e.message;
+      }
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return `a container published on 127.0.0.1 is not reachable from this machine (${seen}); use a separate Docker daemon (HOSTERAX_TEST_SECOND_DOCKERD=1)`;
+  } finally {
+    remote("rm", "-f", name);
+  }
+}
+
 before(async () => {
   if (!sshToolsAvailable()) why = "OpenSSH client/server is not installed (or not Linux)";
   else if (local("info").status !== 0) why = "no Docker daemon is running on this machine";
@@ -85,16 +121,15 @@ before(async () => {
   if (!why && remote("info").status !== 0) why = "the remote Docker daemon does not answer";
   if (!why) {
     remote("rm", "-f", "hx_realdemo", "hx_realbuild", "hx_localdemo");
-    if (remote("image", "inspect", IMAGE).status === 0 && !isolated) {
-      // "remote" is this machine's own Docker and the image is someone's: leave it alone
-      startsWithoutImage = false;
-    } else {
+    // "remote" is this machine's own Docker and the image is someone's: leave it alone
+    startsWithoutImage = isolated || remote("image", "inspect", IMAGE).status !== 0;
+    if (startsWithoutImage) {
       // start from nothing on the server, so the engine really has to pull
       remote("rmi", "-f", IMAGE);
-      const pulled = remote("pull", IMAGE);
-      if (pulled.status !== 0) why = `cannot pull ${IMAGE} (no registry access?)`;
-      else remote("rmi", IMAGE);
+      if (remote("pull", IMAGE).status !== 0) why = `cannot pull ${IMAGE} (no registry access?)`;
     }
+    if (!why) why = await publishedPortsUnreachable();
+    if (!why && startsWithoutImage) remote("rmi", IMAGE);
   }
   if (why) return;
   fx = await startSshFixture({ remoteDockerHost: remoteHost });
@@ -240,7 +275,7 @@ real(
 
     // the app answers through the engine's forward
     const page = await get(p.port);
-    assert.equal(page.status, 200);
+    assert.equal(page.status, 200, `127.0.0.1:${p.port} answered: ${page.text.slice(0, 400)}`);
     assert.match(page.text, /Welcome to nginx!/);
     // and the environment really reached the container
     assert.equal(

@@ -31,7 +31,15 @@ export function createHarness(prefix = "hosterax-e2e-") {
     }
     const child = spawn(process.execPath, ["src/index.mjs"], {
       cwd: engineDir,
-      env: { ...base, HOSTERAX_PORT: String(port), HOSTERAX_HOME: home, ...env },
+      env: {
+        ...base,
+        HOSTERAX_PORT: String(port),
+        HOSTERAX_HOME: home,
+        // A test engine must not start a proxy container on the developer's Docker (it would take ports
+        // 80/443 and replace their own); a test that wants an edge says so.
+        HOSTERAX_EDGE_PROVIDER: "external",
+        ...env,
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";

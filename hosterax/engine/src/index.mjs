@@ -707,7 +707,7 @@ function syncComposeServices(project, workdir, id) {
 
 // ---------- dynamic port allocation ----------
 const portLock = new Set();
-export function allocateProjectPort(projectName, preferredPort = null) {
+export function allocateProjectPort(projectName, preferredPort = null, avoid = null) {
   const norm = (s) => (s || "").toLowerCase();
   const currentProjectName = norm(projectName);
   // Prevent concurrent allocation for the same project
@@ -723,7 +723,7 @@ export function allocateProjectPort(projectName, preferredPort = null) {
   portLock.add(currentProjectName);
   try {
     // Collect all ports currently assigned or in use by other projects
-    const usedPorts = new Set([7777, 8080]);
+    const usedPorts = new Set([7777, 8080, ...(avoid ?? [])]);
 
     // Ports in projects table for other projects
     try {
@@ -781,6 +781,28 @@ export function allocateProjectPort(projectName, preferredPort = null) {
   } finally {
     portLock.delete(currentProjectName);
   }
+}
+
+/**
+ * allocateProjectPort only knows the ports HosteraX itself has handed out. This also skips ports something
+ * else on this machine is listening on (a dev server on 3000, another engine, another app), which would
+ * otherwise fail the first deploy with "address already in use". It applies to a project that has not been
+ * deployed successfully yet; once it has been, the app listening on its port may be the project itself (a
+ * redeploy starts the new version before the old one is gone), so it keeps the port it has.
+ */
+async function allocateFreeProjectPort(projectName, preferredPort = null) {
+  const owned = db
+    .prepare(
+      "SELECT p.port FROM projects p WHERE LOWER(p.name)=LOWER(?) AND EXISTS (SELECT 1 FROM deployments d WHERE LOWER(d.project)=LOWER(?) AND d.phase='ready')",
+    )
+    .get(projectName, projectName)?.port;
+  const avoid = new Set();
+  for (let attempt = 0; attempt < 500; attempt++) {
+    const port = allocateProjectPort(projectName, preferredPort, avoid);
+    if (port === owned || (await isPortFree(port))) return port;
+    avoid.add(port);
+  }
+  throw new Error("no free port could be found on this machine");
 }
 
 // Interface that deployed apps publish on. Use 127.0.0.1 to force all traffic through the edge proxy.
@@ -1862,7 +1884,7 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
 
     // Allocate verified free host port. For a remote project this is the port on THIS machine that
     // reaches it (an SSH forward); the container itself publishes on the server's loopback only.
-    const hostPort = allocateProjectPort(project, containerInternalPort);
+    const hostPort = await allocateFreeProjectPort(project, containerInternalPort);
     try {
       db.prepare("UPDATE projects SET port=? WHERE name=?").run(hostPort, project);
     } catch {}
@@ -2005,7 +2027,7 @@ pages:
         ];
     // Extra ports (admin consoles, …) stay on the loopback of whichever machine runs the container.
     const secondaryPort = async (key, containerPort) =>
-      remoteServerId ? allocateRemote(key) : allocateProjectPort(key, containerPort);
+      remoteServerId ? allocateRemote(key) : allocateFreeProjectPort(key, containerPort);
     if (imageInspect.exposedPorts && imageInspect.exposedPorts.length > 1) {
       for (const p of imageInspect.exposedPorts) {
         if (p !== containerInternalPort) {
@@ -2347,7 +2369,7 @@ async function runDeploymentHere(project, opts = {}) {
 
         const det = detectStack(workdir, p, id);
         finalStartCmd = det.start_cmd || p.start_cmd;
-        finalPort = allocateProjectPort(project, p.port || det.port || 3000);
+        finalPort = await allocateFreeProjectPort(project, p.port || det.port || 3000);
         try {
           db.prepare("UPDATE projects SET port=? WHERE name=?").run(finalPort, project);
         } catch {}
