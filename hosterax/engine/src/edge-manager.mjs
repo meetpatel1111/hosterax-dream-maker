@@ -898,6 +898,9 @@ http {
     const caddyfilePath = path.join(this.edgeDir, "Caddyfile");
     const nginxConfPath = path.join(this.edgeDir, "nginx.conf");
 
+    // Host networking: the edge binds http/https directly on the host, reaches
+    // the engine API and all supervised app processes on 127.0.0.1, and reads
+    // the very certificate material Certbot writes on the host. No -p mappings.
     const dockerArgs = [
       "run",
       "-d",
@@ -905,18 +908,13 @@ http {
       "hx_edge",
       "--restart",
       "unless-stopped",
-      "--add-host",
-      "host.docker.internal:host-gateway",
-      "-p",
-      `${settings.http_port}:80`,
-      "-p",
-      `${settings.https_port}:443`,
+      "--network",
+      "host",
     ];
 
     if (isCaddy) {
+      // Caddy manages its own ACME state in named volumes; the Caddyfile drives ports.
       dockerArgs.push(
-        "-p",
-        `127.0.0.1:${settings.admin_port}:2019`,
         "-v",
         `${caddyfilePath}:/etc/caddy/Caddyfile`,
         "-v",
@@ -926,15 +924,21 @@ http {
         image,
       );
     } else {
+      // OpenResty only reads certificate material — bind the host Let's Encrypt
+      // directory and the bootstrap/custom cert dir in read-only, plus the Lua
+      // modules at the path nginx.conf's lua_package_path expects.
+      const certsDir = path.join(this.edgeDir, "certs");
       dockerArgs.push(
         "-v",
         `${nginxConfPath}:/etc/nginx/nginx.conf`,
         "-v",
         `${this.openrestySitesDir}:/etc/nginx/conf.d`,
         "-v",
-        `${this.acmeWebrootDir}:/var/www/acme-challenge`,
+        `${this.luaDir}:/usr/local/openresty/lualib/hosterax`,
         "-v",
-        `hx_edge_openresty_certs:/etc/letsencrypt`,
+        `${this.letsencryptDir}:/etc/letsencrypt:ro`,
+        "-v",
+        `${certsDir}:/etc/hosterax-certs:ro`,
         image,
       );
     }
