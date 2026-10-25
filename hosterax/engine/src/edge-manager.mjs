@@ -17,6 +17,9 @@ import http from "node:http";
 import { ACME_HTTP01_PORT, LETSENCRYPT_DIR } from "./tls-manager.mjs";
 
 export const EDGE_MGMT_PORT = Number(process.env.EDGE_MGMT_PORT || 9145);
+// The edge runs with --network host, so it reaches the engine control API and
+// every supervised app process directly on the host loopback.
+export const ENGINE_PORT = Number(process.env.HOSTERAX_PORT || 7777);
 
 const OPENRESTY_KNOWN_CONFS = [
   "/usr/local/openresty/nginx/conf/nginx.conf",
@@ -350,11 +353,13 @@ export class EdgeManager {
 
 {
   admin 0.0.0.0:${settings.admin_port}
+  http_port ${settings.http_port}
+  https_port ${settings.https_port}
   ${emailDirective}
   ${
     settings.on_demand_tls
       ? `on_demand_tls {
-    ask http://host.docker.internal:7777/api/edge/check-domain
+    ask http://127.0.0.1:${ENGINE_PORT}/api/edge/check-domain
   }`
       : ""
   }
