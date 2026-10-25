@@ -622,6 +622,21 @@ return _M
   }
 
   /**
+   * Translate a host certificate path to its path inside the edge container.
+   * The edge runs with --network host but still needs explicit bind mounts:
+   *   <letsencryptDir> -> /etc/letsencrypt      (read-only, written by Certbot)
+   *   <edgeDir>/certs  -> /etc/hosterax-certs   (read-only, bootstrap/custom certs)
+   */
+  toContainerPath(hostPath) {
+    const p = String(hostPath).replace(/\\/g, "/");
+    const le = this.letsencryptDir.replace(/\\/g, "/");
+    const certs = path.join(this.edgeDir, "certs").replace(/\\/g, "/");
+    if (le && p.startsWith(le)) return p.replace(le, "/etc/letsencrypt");
+    if (certs && p.startsWith(certs)) return p.replace(certs, "/etc/hosterax-certs");
+    return p;
+  }
+
+  /**
    * Generate OpenResty / Nginx configuration.
    * - :80  serves traffic and proxies /.well-known/acme-challenge/ to Certbot
    *        standalone on 127.0.0.1:<ACME_HTTP01_PORT> (no port-80 fight)
