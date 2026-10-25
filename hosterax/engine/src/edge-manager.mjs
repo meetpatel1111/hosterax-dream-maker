@@ -377,7 +377,7 @@ export class EdgeManager {
           content += `  encode zstd gzip\n`;
           content += `  header X-Forwarded-Proto http\n`;
           content += `  header X-Real-IP {remote_host}\n`;
-          content += `  reverse_proxy host.docker.internal:${r.port} {\n`;
+          content += `  reverse_proxy 127.0.0.1:${r.port} {\n`;
           content += `    header_up Host {upstream_hostport}\n`;
           content += `    header_up X-Forwarded-Host {host}\n`;
           content += `  }\n`;
@@ -391,7 +391,7 @@ export class EdgeManager {
           }
           content += `  header X-Forwarded-Proto https\n`;
           content += `  header X-Real-IP {remote_host}\n`;
-          content += `  reverse_proxy host.docker.internal:${r.port} {\n`;
+          content += `  reverse_proxy 127.0.0.1:${r.port} {\n`;
           content += `    header_up Host {upstream_hostport}\n`;
           content += `    header_up X-Forwarded-Host {host}\n`;
           content += `  }\n`;
@@ -408,7 +408,7 @@ export class EdgeManager {
           }
           content += `  header X-Forwarded-Proto {scheme}\n`;
           content += `  header X-Real-IP {remote_host}\n`;
-          content += `  reverse_proxy host.docker.internal:${r.port} {\n`;
+          content += `  reverse_proxy 127.0.0.1:${r.port} {\n`;
           content += `    header_up Host {upstream_hostport}\n`;
           content += `    header_up X-Forwarded-Host {host}\n`;
           content += `  }\n`;
@@ -689,7 +689,7 @@ http {
 
     const upstreamBlock = (port) =>
       `  location / {\n` +
-      `    proxy_pass http://host.docker.internal:${port};\n` +
+      `    proxy_pass http://127.0.0.1:${port};\n` +
       `    proxy_http_version 1.1;\n` +
       `    proxy_set_header Upgrade $http_upgrade;\n` +
       `    proxy_set_header Connection "upgrade";\n` +
