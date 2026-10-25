@@ -670,7 +670,7 @@ http {
     location / { content_by_lua_block { require("hosterax.mgmt_api").handle() } }
   }
 
-  include ${this.openrestySitesDir.replace(/\\/g, "/")}/*.conf;
+  include /etc/nginx/conf.d/*.conf;
 }
 `;
     fs.writeFileSync(nginxConfPath, mainConf, "utf8");
@@ -728,8 +728,8 @@ http {
         if (haveTls) {
           conf += `server {\n  listen ${settings.https_port} ssl;\n  http2 on;\n  server_name ${host};\n\n`;
           conf += `  # Certificates are issued by Certbot; OpenResty only reads them.\n`;
-          conf += `  ssl_certificate ${certs.cert.replace(/\\/g, "/")};\n`;
-          conf += `  ssl_certificate_key ${certs.key.replace(/\\/g, "/")};\n`;
+          conf += `  ssl_certificate ${this.toContainerPath(certs.cert)};\n`;
+          conf += `  ssl_certificate_key ${this.toContainerPath(certs.key)};\n`;
           conf += `  ssl_protocols TLSv1.2 TLSv1.3;\n  ssl_session_cache shared:SSL:10m;\n\n`;
           if (
             settings.hsts_enabled && dom ? Boolean(dom.hsts_enabled ?? 1) : settings.hsts_enabled
