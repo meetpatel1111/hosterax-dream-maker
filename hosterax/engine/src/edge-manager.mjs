@@ -153,7 +153,8 @@ export class EdgeManager {
     const current = this.getSettings();
     const updated = { ...current, ...newSettings };
 
-    // Validate: these values are written into generated proxy config and docker -p flags.
+    // Validate: these values are written into the generated proxy config (the edge
+    // binds them directly on the host via --network host).
     if (!["caddy", "openresty", "external"].includes(updated.provider)) {
       throw new Error("provider must be caddy, openresty or external");
     }
