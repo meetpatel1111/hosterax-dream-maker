@@ -346,8 +346,13 @@ real("a redeploy replaces the container (new id) and keeps the same address", as
   const after = { id: ids(remote, "hx_realdemo")[0], p: await project("realdemo") };
   assert.notEqual(after.id, before.id, "a new container replaced the old one");
   assert.equal(ids(remote, "hx_realdemo_green").length, 0, "no candidate container is left over");
-  assert.equal(after.p.port, before.p.port);
-  assert.equal(after.p.remote_port, before.p.remote_port);
+  assert.equal(after.p.port, before.p.port, "the address people use does not change");
+  // Blue/green runs the new container while the old one still holds its port, so the port on the server may
+  // move to its neighbour; what matters is that the new container is published on the one now recorded.
+  const binding = JSON.parse(
+    inspect(remote, "hx_realdemo", '{{json (index .HostConfig.PortBindings "80/tcp")}}'),
+  );
+  assert.deepEqual(binding, [{ HostIp: "127.0.0.1", HostPort: String(after.p.remote_port) }]);
   assert.equal((await get(after.p.port)).status, 200);
 });
 
