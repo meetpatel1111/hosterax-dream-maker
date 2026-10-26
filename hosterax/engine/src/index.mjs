@@ -725,7 +725,8 @@ export function allocateProjectPort(projectName, preferredPort = null, avoid = n
   portLock.add(currentProjectName);
   try {
     // Collect all ports currently assigned or in use by other projects
-    const usedPorts = new Set([7777, 8080, ...(avoid ?? [])]);
+    // 7777 and 8080 are HosteraX's own; so is whatever port this engine was told to listen on
+    const usedPorts = new Set([7777, 8080, PORT, ...(avoid ?? [])]);
 
     // Ports in projects table for other projects
     try {

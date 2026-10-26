@@ -127,6 +127,7 @@ test("a first deploy skips a port something else is listening on", async () => {
   await deployAndWait("portapp");
   const port = await portOf("portapp");
   assert.notEqual(port, squattedPort, "that port was already taken");
+  assert.notEqual(port, engine.port, "the engine's own port is never handed to an app");
   assert.ok((await pidOf(port)) > 0, "the app answers on the port it was given");
 });
 

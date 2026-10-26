@@ -70,3 +70,26 @@ test("it gives up with a clear error rather than looping when nothing is usable"
     /no free port/,
   );
 });
+
+/** A server that "binds" to anything, as macOS does next to a wildcard listener on the same port. */
+const alwaysBinds = () => ({
+  once() {},
+  listen(port, host, done) {
+    setImmediate(done);
+  },
+  close(done) {
+    done();
+  },
+});
+
+test("a port something listens on counts as in use even where binding next to it succeeds (macOS)", async () => {
+  const wild = net.createServer();
+  await new Promise((r) => wild.listen(0, "0.0.0.0", r));
+  const { port } = wild.address();
+  try {
+    assert.equal(await probePort(port, "127.0.0.1", alwaysBinds), "EADDRINUSE");
+  } finally {
+    await new Promise((r) => wild.close(r));
+  }
+  assert.equal(await probePort(port, "127.0.0.1", alwaysBinds), null, "free again once it closes");
+});

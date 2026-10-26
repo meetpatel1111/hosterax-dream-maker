@@ -2,12 +2,41 @@
 
 import net from "node:net";
 
-/** Tries to listen on `port`. Resolves null when it could, otherwise the error code (EADDRINUSE, EACCES, ...). */
-export function probePort(port, host = "127.0.0.1", createServer = net.createServer) {
-  return new Promise((resolve) => {
+/**
+ * Tries to listen on `port`. Resolves null when nothing uses it, otherwise the error code (EADDRINUSE, EACCES, ...).
+ *
+ * Binding is not enough to know a port is free: on macOS and the BSDs a socket can bind 127.0.0.1:P next to
+ * another process that listens on the wildcard address (0.0.0.0 or ::) of the same port, so the probe succeeds
+ * and the next listener silently takes over the loopback side of the other one's port (the engine's own, in a
+ * test). Connecting is what settles it: if anything accepts, the port is in use.
+ */
+export async function probePort(
+  port,
+  host = "127.0.0.1",
+  createServer = net.createServer,
+  connect = net.connect,
+) {
+  const bindError = await new Promise((resolve) => {
     const srv = createServer();
     srv.once("error", (err) => resolve(err?.code || "UNKNOWN"));
     srv.listen(port, host, () => srv.close(() => resolve(null)));
+  });
+  if (bindError) return bindError;
+  for (const where of ["127.0.0.1", "::1"])
+    if (await somethingAccepts(port, where, connect)) return "EADDRINUSE";
+  return null;
+}
+
+function somethingAccepts(port, host, connect) {
+  return new Promise((resolve) => {
+    const sock = connect({ port, host });
+    const done = (answer) => {
+      sock.destroy();
+      resolve(answer);
+    };
+    sock.setTimeout(500, () => done(false));
+    sock.once("connect", () => done(true));
+    sock.once("error", () => done(false));
   });
 }
 
