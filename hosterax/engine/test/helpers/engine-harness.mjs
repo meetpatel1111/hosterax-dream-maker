@@ -62,6 +62,11 @@ export function createHarness(prefix = "hosterax-e2e-") {
       pid: child.pid,
       bootstrap: /hxt_[0-9a-f]{48}/.exec(output)?.[0] ?? "",
       output: () => output,
+      /** How the engine ended, or null while it runs. */
+      exited: () =>
+        child.exitCode !== null || child.signalCode !== null
+          ? `exit code ${child.exitCode}, signal ${child.signalCode}`
+          : null,
       stop: () =>
         new Promise((resolve) => {
           if (child.exitCode !== null) return resolve();
@@ -81,11 +86,23 @@ export function createHarness(prefix = "hosterax-e2e-") {
   async function call(engine, token, method, path, body) {
     const headers = { "content-type": "application/json", "x-forwarded-for": "203.0.113.7" };
     if (token) headers.authorization = `Bearer ${token}`;
-    const r = await fetch(`${engine.base}${path}`, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let r;
+    try {
+      r = await fetch(`${engine.base}${path}`, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (e) {
+      // "fetch failed" says nothing; say what happened to the engine
+      const ended = engine.exited?.();
+      throw new Error(
+        `${method} ${path}: ${e.message} (${e.cause?.code ?? "no code"}); the engine ${
+          ended ? `ended with ${ended}` : "is still running"
+        }. Its last output:\n${String(engine.output?.() ?? "").slice(-2000)}`,
+        { cause: e },
+      );
+    }
     const text = await r.text();
     let data = null;
     try {
