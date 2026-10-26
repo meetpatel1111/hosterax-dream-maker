@@ -3,8 +3,8 @@
 //
 // What HosteraX is made of, and under which licences:
 //
-//   docs/THIRD_PARTY.md  generated from the installed production dependencies of the engine and the
-//                        dashboard, plus a hand-maintained list of the programs HosteraX starts or pulls
+//   docs/THIRD_PARTY.md  generated from the engine's lockfile and the dashboard's installed production
+//                        dependencies, plus a hand-maintained list of the programs HosteraX starts or pulls
 //   policy               no strong copyleft (GPL, AGPL, SSPL, …) and no unspecified licence in what we ship
 //
 //   node scripts/licenses.mjs --write   regenerate docs/THIRD_PARTY.md
@@ -48,6 +48,14 @@ export function collect(dir) {
     }
     if (!manifest) continue; // not installed: a peer or platform-specific package
     const pkg = JSON.parse(fs.readFileSync(manifest, "utf8"));
+    // A package that is really another project linked into this install (a junction or symlink to the repo
+    // root, or the project itself) is not one of its dependencies and drags that project's whole tree along.
+    if (pkg.name === root.name) continue;
+    try {
+      const real = fs.realpathSync(path.dirname(manifest));
+      const inside = path.relative(fs.realpathSync(dir), real);
+      if (inside.startsWith("..") || path.isAbsolute(inside)) continue;
+    } catch {}
     const key = `${pkg.name}@${pkg.version}`;
     if (found.has(key)) continue;
     let license = pkg.license;
@@ -66,6 +74,26 @@ export function collect(dir) {
   return [...found.values()].sort(
     (a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version),
   );
+}
+
+/**
+ * The packages `dir` ships, as its committed package-lock.json records them (null when it has none). This is
+ * exactly the set `npm ci` installs, so it reads the same on every platform and however the install was done,
+ * which walking whatever is on disk does not.
+ */
+export function collectFromLockfile(dir) {
+  const file = path.join(dir, "package-lock.json");
+  if (!fs.existsSync(file)) return null;
+  const lock = JSON.parse(fs.readFileSync(file, "utf8"));
+  const out = [];
+  for (const [key, entry] of Object.entries(lock.packages || {})) {
+    if (!key || entry.dev || entry.optional || entry.peer || entry.link) continue;
+    const name = key.slice(key.lastIndexOf("node_modules/") + "node_modules/".length);
+    let license = entry.license;
+    if (license && typeof license === "object") license = license.type;
+    out.push({ name, version: entry.version, license: license || "UNSPECIFIED" });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version));
 }
 
 /** Programs HosteraX starts or pulls. Hand-maintained: check a licence at its source before relying on it. */
@@ -247,7 +275,9 @@ export function describeDifference(have, want) {
 
 export function gather() {
   return {
-    engine: collect(path.join(ROOT, "hosterax", "engine")),
+    engine:
+      collectFromLockfile(path.join(ROOT, "hosterax", "engine")) ??
+      collect(path.join(ROOT, "hosterax", "engine")),
     dashboard: collect(ROOT),
   };
 }
@@ -274,17 +304,12 @@ async function main() {
     if (have !== text) {
       console.error(`${path.relative(ROOT, OUTPUT)} is out of date. Run: npm run licenses:write`);
       console.error(describeDifference(have, text));
-      // where the engine's packages were found tells a stray tree from a real difference
-      const inside = (p) =>
-        p.location.startsWith(path.join(ROOT, "hosterax", "engine", "node_modules"));
-      const outside = data.engine.filter((p) => !inside(p));
+      // counts, and where the first dashboard packages were found, tell a stray tree from a real difference
       console.error(
-        `  engine packages: ${data.engine.length} (${outside.length} found outside hosterax/engine/node_modules)`,
+        `  engine packages: ${data.engine.length}, dashboard packages: ${data.dashboard.length}`,
       );
-      for (const p of data.engine.slice(0, 6))
+      for (const p of data.dashboard.slice(0, 3))
         console.error(`    ${p.name}@${p.version}  ${p.location}`);
-      for (const p of outside.slice(0, 4))
-        console.error(`    outside: ${p.name}@${p.version}  ${p.location}`);
       process.exit(1);
     }
     console.log("licences are in policy and the inventory is up to date");

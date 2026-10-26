@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   OUTPUT,
   collect,
+  collectFromLockfile,
   gather,
   isForbidden,
   render,
@@ -150,6 +151,69 @@ test("the inventory of one package never reads another install above it", () => 
     assert.deepEqual(
       collect(app).map((p) => `${p.name}@${p.version}`),
       ["a@1.0.0", "b@1.0.0"],
+    );
+  } finally {
+    fs.rmSync(top, { recursive: true, force: true });
+  }
+});
+
+test("the engine's inventory comes from its lockfile, whatever happens to be installed", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hx-lock-"));
+  try {
+    fs.writeFileSync(
+      path.join(dir, "package-lock.json"),
+      JSON.stringify({
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "app", version: "1.0.0" },
+          "node_modules/zeta": { version: "2.0.0", license: "MIT" },
+          "node_modules/alpha": { version: "1.0.0", license: "ISC" },
+          "node_modules/alpha/node_modules/nested": { version: "3.0.0", license: "MIT" },
+          "node_modules/tool": { version: "1.0.0", license: "MIT", dev: true },
+          "node_modules/native-win32": { version: "1.0.0", license: "MIT", optional: true },
+          "node_modules/nolicence": { version: "1.0.0" },
+        },
+      }),
+    );
+    // a stray tree on disk (a junction to another project, say) must not matter
+    fs.mkdirSync(path.join(dir, "node_modules", "hosterax", "node_modules", "@babel"), {
+      recursive: true,
+    });
+    assert.deepEqual(
+      collectFromLockfile(dir).map((p) => `${p.name}@${p.version} ${p.license}`),
+      ["alpha@1.0.0 ISC", "nested@3.0.0 MIT", "nolicence@1.0.0 UNSPECIFIED", "zeta@2.0.0 MIT"],
+    );
+    assert.equal(
+      collectFromLockfile(path.join(dir, "node_modules")),
+      null,
+      "no lockfile: not used",
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a package that is really another project linked into the install is not one of its dependencies", () => {
+  const top = fs.mkdtempSync(path.join(os.tmpdir(), "hx-link-"));
+  const put = (dir, pkg) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(pkg));
+  };
+  try {
+    const other = path.join(top, "other");
+    put(other, { name: "other", version: "1.0.0", license: "MIT", dependencies: { big: "1" } });
+    put(path.join(other, "node_modules", "big"), {
+      name: "big",
+      version: "1.0.0",
+      license: "GPL-3.0",
+    });
+    const app = path.join(top, "app");
+    put(app, { name: "app", dependencies: { other: "1", real: "1" } });
+    put(path.join(app, "node_modules", "real"), { name: "real", version: "1.0.0", license: "MIT" });
+    fs.symlinkSync(other, path.join(app, "node_modules", "other"), "junction");
+    assert.deepEqual(
+      collect(app).map((p) => p.name),
+      ["real"],
     );
   } finally {
     fs.rmSync(top, { recursive: true, force: true });
