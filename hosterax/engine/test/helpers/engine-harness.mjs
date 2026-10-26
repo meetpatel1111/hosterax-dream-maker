@@ -140,10 +140,33 @@ export function createHarness(prefix = "hosterax-e2e-") {
     }
   }
 
+  /**
+   * Deletes the scratch directory. Windows keeps a directory locked for a moment after the process that had it as
+   * its working directory has ended, and Node 22's rmSync gives up on that (EBUSY) at once instead of retrying.
+   * A directory that stays locked is reported, not thrown: the hooks that call this go on to close servers of their
+   * own, and one left open would keep the whole test run from finishing. A leaked app is caught by the tests that
+   * wait for their apps to end.
+   */
+  async function removeScratch(ms = 15000) {
+    for (const end = Date.now() + ms; ;) {
+      try {
+        rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+        return;
+      } catch (e) {
+        if (!["EBUSY", "EPERM", "ENOTEMPTY"].includes(e.code)) throw e;
+        if (Date.now() > end) {
+          console.warn(`could not remove ${scratch}: ${e.message}`);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }
+  }
+
   async function cleanup() {
     for (const e of engines) await e.stop();
     await settle();
-    rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    await removeScratch();
   }
 
   return { scratch, startEngine, call, until, cleanup };

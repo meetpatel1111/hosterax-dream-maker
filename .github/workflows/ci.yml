@@ -10,6 +10,8 @@ jobs:
   test:
     name: Test & Typecheck (${{ matrix.os }} - Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
+    # the slowest leg takes about five minutes; a hung test must not hold the run for the default six hours
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:

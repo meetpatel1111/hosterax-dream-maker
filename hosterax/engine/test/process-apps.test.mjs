@@ -43,12 +43,32 @@ before(async () => {
   admin = engine.bootstrap;
 });
 after(async () => {
-  // a project that is still around keeps its app running after the engine is gone
-  if (engine && admin)
-    for (const name of PROJECTS)
-      await api("DELETE", `/api/projects/${name}?permanent=true`).catch(() => {});
-  await h.cleanup();
+  // Whatever goes wrong here, the engine and the listening socket must still be ended: either one left running
+  // keeps this file's process, and so the whole test run, from ever finishing.
+  let problem;
+  try {
+    // a project that is still around keeps its app running after the engine is gone
+    if (engine && admin)
+      for (const name of PROJECTS)
+        await api("DELETE", `/api/projects/${name}?permanent=true`).catch(() => {});
+    // The engine ends an app in the background; its directory stays locked on Windows until it is gone.
+    await h.until(() => [...seen].every((pid) => !alive(pid)), 15000, "the apps to end");
+  } catch (e) {
+    problem = new Error(
+      `${e.message}: still running: ${[...seen].filter(alive).join(", ") || "-"}`,
+      {
+        cause: e,
+      },
+    );
+    for (const pid of seen) if (alive(pid)) forceKill(pid);
+  }
+  try {
+    await h.cleanup();
+  } catch (e) {
+    problem ??= e;
+  }
   await new Promise((r) => (squatter.listening ? squatter.close(r) : r()));
+  if (problem) throw problem;
 });
 
 async function deployAndWait(name) {
@@ -100,6 +120,13 @@ const alive = (pid) => {
     return e.code === "EPERM";
   }
 };
+/** Every app process seen answering, so the cleanup can wait for each of them to be gone. */
+const seen = new Set();
+const forceKill = (pid) => {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {}
+};
 const pidOf = (port) =>
   new Promise((resolve, reject) =>
     http
@@ -108,7 +135,10 @@ const pidOf = (port) =>
         res.on("data", (d) => (text += d));
         res.on("end", () => {
           const pid = Number(text);
-          if (Number.isInteger(pid) && pid > 0) return resolve(pid);
+          if (Number.isInteger(pid) && pid > 0) {
+            seen.add(pid);
+            return resolve(pid);
+          }
           reject(
             new Error(
               `port ${port} answered ${res.statusCode} with ${JSON.stringify(text.slice(0, 200))}, not the app's process id`,
