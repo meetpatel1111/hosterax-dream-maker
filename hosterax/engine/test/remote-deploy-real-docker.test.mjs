@@ -94,7 +94,8 @@ async function publishedPortsUnreachable() {
     let seen = "";
     for (let i = 0; i < 20; i++) {
       try {
-        seen = (await (await fetch(`http://127.0.0.1:${port}/`)).text()).slice(0, 120);
+        const res = await fetch(`http://127.0.0.1:${port}/`, { headers: { connection: "close" } });
+        seen = (await res.text()).slice(0, 120);
         if (/Welcome to nginx/.test(seen)) return "";
       } catch (e) {
         seen = e.message;
@@ -197,7 +198,8 @@ async function deploy(name) {
   return { dep, log };
 }
 const get = async (port, path = "/") => {
-  const r = await fetch(`http://127.0.0.1:${port}${path}`);
+  // connection: close, as in the harness: this test blocks its own event loop in spawnSync
+  const r = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { connection: "close" } });
   return { status: r.status, text: await r.text() };
 };
 const project = async (name) => (await api("GET", `/api/projects/${name}`)).data;

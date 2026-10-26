@@ -84,7 +84,14 @@ export function createHarness(prefix = "hosterax-e2e-") {
 
   // `x-forwarded-for` stops the engine from mistaking the test for the local machine.
   async function call(engine, token, method, path, body) {
-    const headers = { "content-type": "application/json", "x-forwarded-for": "203.0.113.7" };
+    // `connection: close`: these tests block their own event loop for seconds at a time (spawnSync of `docker`),
+    // during which a pooled keep-alive connection is closed by the engine's side (5 s idle) without this
+    // process noticing, and the next request on it fails with "other side closed".
+    const headers = {
+      "content-type": "application/json",
+      "x-forwarded-for": "203.0.113.7",
+      connection: "close",
+    };
     if (token) headers.authorization = `Bearer ${token}`;
     let r;
     try {
