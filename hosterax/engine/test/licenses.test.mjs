@@ -122,3 +122,36 @@ test("an out-of-date inventory says which packages differ", async () => {
   assert.match(said, /only in the committed file: .*13\.0\.3/);
   assert.doesNotMatch(said, /alpha|gamma/, "what both have is not mentioned");
 });
+
+test("the inventory of one package never reads another install above it", () => {
+  const top = fs.mkdtempSync(path.join(os.tmpdir(), "hx-lic-"));
+  const put = (dir, pkg) => {
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify(pkg));
+  };
+  try {
+    const app = path.join(top, "app");
+    put(app, { name: "app", dependencies: { a: "1", missing: "1" } });
+    put(path.join(app, "node_modules", "a"), {
+      name: "a",
+      version: "1.0.0",
+      license: "MIT",
+      dependencies: { b: "1" },
+    });
+    put(path.join(app, "node_modules", "b"), { name: "b", version: "1.0.0", license: "ISC" });
+    // installed in the directory ABOVE the app (a sibling install): must be invisible to it
+    put(path.join(top, "node_modules", "missing"), {
+      name: "missing",
+      version: "9.9.9",
+      license: "GPL-3.0",
+      dependencies: { huge: "1" },
+    });
+    put(path.join(top, "node_modules", "huge"), { name: "huge", version: "1.0.0", license: "MIT" });
+    assert.deepEqual(
+      collect(app).map((p) => `${p.name}@${p.version}`),
+      ["a@1.0.0", "b@1.0.0"],
+    );
+  } finally {
+    fs.rmSync(top, { recursive: true, force: true });
+  }
+});

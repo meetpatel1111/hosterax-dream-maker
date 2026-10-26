@@ -103,10 +103,18 @@ const alive = (pid) => {
 const pidOf = (port) =>
   new Promise((resolve, reject) =>
     http
-      .get({ host: "127.0.0.1", port, path: "/" }, (res) => {
+      .get({ host: "127.0.0.1", port, path: "/", headers: { connection: "close" } }, (res) => {
         let text = "";
         res.on("data", (d) => (text += d));
-        res.on("end", () => resolve(Number(text)));
+        res.on("end", () => {
+          const pid = Number(text);
+          if (Number.isInteger(pid) && pid > 0) return resolve(pid);
+          reject(
+            new Error(
+              `port ${port} answered ${res.statusCode} with ${JSON.stringify(text.slice(0, 200))}, not the app's process id`,
+            ),
+          );
+        });
       })
       .on("error", reject),
   );

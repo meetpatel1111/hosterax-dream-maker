@@ -39,6 +39,9 @@ export function collect(dir) {
         manifest = candidate;
         break;
       }
+      // Never look above the package being inventoried: the engine and the dashboard are separate installs,
+      // and a dependency missing from one must not be found in (and drag in the whole tree of) the other.
+      if (search === dir) break;
       const up = path.dirname(search);
       if (up === search) break;
       search = up;
