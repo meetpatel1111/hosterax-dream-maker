@@ -87,8 +87,11 @@ export function collectFromLockfile(dir) {
   const lock = JSON.parse(fs.readFileSync(file, "utf8"));
   const out = [];
   for (const [key, entry] of Object.entries(lock.packages || {})) {
-    if (!key || entry.dev || entry.optional || entry.peer || entry.link) continue;
-    const name = key.slice(key.lastIndexOf("node_modules/") + "node_modules/".length);
+    // only what sits under a node_modules directory is installed from the registry: the root ("") and the
+    // projects a link points at ("../..", "packages/x") are not dependencies
+    const at = key.lastIndexOf("node_modules/");
+    if (at < 0 || entry.dev || entry.optional || entry.peer || entry.link) continue;
+    const name = key.slice(at + "node_modules/".length);
     let license = entry.license;
     if (license && typeof license === "object") license = license.type;
     out.push({ name, version: entry.version, license: license || "UNSPECIFIED" });

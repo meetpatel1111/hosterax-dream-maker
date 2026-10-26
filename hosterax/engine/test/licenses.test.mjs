@@ -172,6 +172,10 @@ test("the engine's inventory comes from its lockfile, whatever happens to be ins
           "node_modules/tool": { version: "1.0.0", license: "MIT", dev: true },
           "node_modules/native-win32": { version: "1.0.0", license: "MIT", optional: true },
           "node_modules/nolicence": { version: "1.0.0" },
+          // what npm 10 writes on Windows when it links the repository root into the install: a link entry,
+          // and the project it points at under a path outside node_modules. Neither is a dependency.
+          "node_modules/hosterax": { resolved: "../..", link: true },
+          "../..": { name: "hosterax", version: "1.1.0", license: "MIT" },
         },
       }),
     );
