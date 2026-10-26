@@ -54,16 +54,26 @@ after(async () => {
 async function deployAndWait(name) {
   const r = await api("POST", `/api/projects/${name}/deploy`, {});
   assert.equal(r.status, 200, r.text);
-  const dep = await h.until(
-    async () => {
-      const d = (await api("GET", `/api/deployments/${r.data.id}`)).data;
-      return d && ["ready", "failed", "cancelled"].includes(d.phase) ? d : null;
-    },
-    60000,
-    "the deployment to finish",
-  );
-  const log = (await api("GET", `/api/deployments/${r.data.id}/logs`)).text;
-  assert.equal(dep.phase, "ready", String(log).slice(-1500));
+  const logOf = async () => String((await api("GET", `/api/deployments/${r.data.id}/logs`)).text);
+  let dep;
+  try {
+    dep = await h.until(
+      async () => {
+        const d = (await api("GET", `/api/deployments/${r.data.id}`)).data;
+        return d && ["ready", "failed", "cancelled"].includes(d.phase) ? d : null;
+      },
+      60000,
+      "the deployment to finish",
+    );
+  } catch (e) {
+    // a bare "timed out" says nothing about where the deployment stopped
+    const now = (await api("GET", `/api/deployments/${r.data.id}`)).data;
+    throw new Error(
+      `${e.message}; it was in phase "${now?.phase}"\n${(await logOf()).slice(-2500)}\n--- engine output:\n${engine.output().slice(-1500)}`,
+      { cause: e },
+    );
+  }
+  assert.equal(dep.phase, "ready", (await logOf()).slice(-1500));
 }
 /** A port nothing is listening on, to ask for as the project's preferred port. */
 const aFreePort = () =>
@@ -104,7 +114,8 @@ const portOf = async (name) => (await api("GET", `/api/projects/${name}`)).data.
 const gone = (pid) => h.until(() => !alive(pid), 10000, `process ${pid} to be gone`);
 
 test("a first deploy skips a port something else is listening on", async () => {
-  assert.equal((await create("portapp", squattedPort)).status, 201);
+  const made = await create("portapp", squattedPort);
+  assert.equal(made.status, 201, made.text);
   await deployAndWait("portapp");
   const port = await portOf("portapp");
   assert.notEqual(port, squattedPort, "that port was already taken");
@@ -119,7 +130,8 @@ test("a project that has already deployed keeps its port when it is deployed aga
 });
 
 test("redeploying replaces the running app: the old process is gone, not left beside the new one", async () => {
-  assert.equal((await create("procapp")).status, 201);
+  const made = await create("procapp");
+  assert.equal(made.status, 201, made.text);
   await deployAndWait("procapp");
   const port = await portOf("procapp");
   const first = await pidOf(port);
@@ -140,7 +152,8 @@ test("stopping a project ends its app", async () => {
 });
 
 test("deleting a project ends its app", async () => {
-  assert.equal((await create("procgone")).status, 201);
+  const made = await create("procgone");
+  assert.equal(made.status, 201, made.text);
   await deployAndWait("procgone");
   const pid = await pidOf(await portOf("procgone"));
   assert.equal((await api("DELETE", "/api/projects/procgone")).status, 200);
