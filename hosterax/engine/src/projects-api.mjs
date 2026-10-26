@@ -7,7 +7,8 @@ import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
 import { encryptSecret, decryptSecret, encryptJson, decryptJson, isEncrypted } from "./secrets.mjs";
-import { spawn } from "node:child_process";
+import { spawn } from "./docker-scope.mjs";
+import { runOnServer } from "./docker-scope.mjs";
 import { spawnSync } from "./safe-exec.mjs";
 
 const PM_ENUM = [
@@ -163,6 +164,9 @@ class HttpError extends Error {
 const bad = (msg, field) => {
   throw new HttpError(400, msg, field);
 };
+const conflict = (msg) => {
+  throw new HttpError(409, msg);
+};
 const notFound = (msg = "not found") => {
   throw new HttpError(404, msg);
 };
@@ -190,6 +194,8 @@ export function createProjectsApi(ctx) {
     readBody,
     stopProject,
     purgeDatabases,
+    serverManager,
+    gateManager,
   } = ctx;
   const UPLOADS = path.join(HOME, "uploads");
   fs.mkdirSync(UPLOADS, { recursive: true });
@@ -267,6 +273,21 @@ export function createProjectsApi(ctx) {
     return p;
   }
 
+  /** Whether a project placed on a remote server is up, judged from its last deployment and the server. */
+  function isRemoteRunning(p) {
+    const srv = serverManager?.getServer(p.server_id);
+    if (!srv || srv.status !== "online") return false;
+    if (p.status === "stopped") return false;
+    const last = db
+      .prepare("SELECT phase FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
+      .get(p.name);
+    return last?.phase === "ready";
+  }
+
+  const isRemote = (p) => Boolean(p.server_id && p.server_id !== "local");
+  const liveness = (p) =>
+    isRemote(p) ? isRemoteRunning(p) : running.has(p.name) || isDockerRunning(p.name, p.port);
+
   function isDockerRunning(name, port) {
     const clean = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
     try {
@@ -302,7 +323,7 @@ export function createProjectsApi(ctx) {
 
   function shape(p) {
     if (!p) return null;
-    const isLive = running.has(p.name) || isDockerRunning(p.name, p.port);
+    const isLive = liveness(p);
     const parse = (v, d) => {
       try {
         return v ? JSON.parse(v) : d;
@@ -319,6 +340,10 @@ export function createProjectsApi(ctx) {
       enabled: p.enabled !== 0,
       location: p.location || "local",
       projectType: p.project_type || "app",
+      serverId: isRemote(p) ? p.server_id : "local",
+      serverName: isRemote(p)
+        ? (serverManager?.getServer(p.server_id)?.name ?? null)
+        : "Local Master Node",
       source: p.source,
       localPath: p.local_path,
       git: p.git_repo
@@ -410,7 +435,7 @@ export function createProjectsApi(ctx) {
 
     return projects.map((full) => {
       const { env_json: _env, ...p } = full; // values are never part of a project's JSON
-      const isLive = running.has(p.name) || isDockerRunning(p.name, p.port);
+      const isLive = liveness(p);
       return {
         ...p,
         id: p.id,
@@ -419,6 +444,10 @@ export function createProjectsApi(ctx) {
         enabled: p.enabled !== 0,
         location: p.location || "local",
         projectType: p.project_type || "app",
+        serverId: isRemote(p) ? p.server_id : "local",
+        serverName: isRemote(p)
+          ? (serverManager?.getServer(p.server_id)?.name ?? null)
+          : "Local Master Node",
         source: p.source,
         localPath: p.local_path,
         git: p.git_repo
@@ -559,6 +588,35 @@ export function createProjectsApi(ctx) {
       (b.gitOwner && b.gitRepo ? `https://github.com/${b.gitOwner}/${b.gitRepo}` : b.source);
     if (source) set.source = source;
     set.updated_at = Date.now();
+
+    // Where the project runs. NULL means this machine.
+    const wanted = b.serverId ?? b.server_id ?? b.server;
+    const current = isCreate ? null : db.prepare("SELECT * FROM projects WHERE name=?").get(name);
+    const effectiveServer =
+      wanted !== undefined
+        ? wanted && wanted !== "local"
+          ? String(wanted)
+          : null
+        : current?.server_id || null;
+    const effectiveTarget = b.target ?? current?.target ?? "process";
+    if (effectiveServer) {
+      const srv = serverManager?.getServer(effectiveServer);
+      if (!srv || srv.type !== "remote")
+        bad(`server "${effectiveServer}" does not exist`, "serverId");
+      if (effectiveTarget !== "docker")
+        bad(
+          `projects on a remote server must use the "docker" target (this one is "${effectiveTarget}")`,
+          "target",
+        );
+    }
+    if (wanted !== undefined && !isCreate && (current?.server_id || null) !== effectiveServer) {
+      const deployed = db.prepare("SELECT 1 FROM deployments WHERE project=? LIMIT 1").get(name);
+      if (deployed)
+        conflict(
+          "A deployed project cannot be moved to another server. Create it again on the new server.",
+        );
+    }
+    if (wanted !== undefined) set.server_id = effectiveServer;
 
     if (isCreate) {
       const id = "proj_" + crypto.randomBytes(8).toString("hex");
@@ -712,10 +770,14 @@ export function createProjectsApi(ctx) {
     const cleanName = targetName.toLowerCase().replace(/[^a-z0-9]/g, "_");
 
     stopProject?.(targetName, isPermanent ? "project purged" : "project archived");
+    const placedOn = proj && isRemote(proj) ? proj.server_id : null;
     try {
-      const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
-      child.on("error", () => {});
+      runOnServer(placedOn, () => {
+        const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
+        child.on("error", () => {});
+      });
     } catch {}
+    if (placedOn) await serverManager?.unforward(placedOn, targetName).catch(() => {});
 
     // Clean up cloned project working directories on disk (always frees 100% disk space)
     try {
@@ -746,6 +808,8 @@ export function createProjectsApi(ctx) {
     }
 
     if (isPermanent) {
+      // a gate left behind would keep a listener and a password for a project that no longer exists
+      await gateManager?.disable(targetName).catch(() => {});
       // database containers/volumes would otherwise be orphaned with their data
       try {
         await purgeDatabases?.(targetName);

@@ -244,6 +244,31 @@ test("a restore drill restores into an isolated scratch container and always rem
   );
 });
 
+test("drill containers belong to their engine: cleanup never touches another engine's drill", async () => {
+  const { m, id } = await drillSetup();
+  assert.equal((await m.restoreDrill(id)).ok, true);
+  const run = m.calls.find((a) => a[0] === "run");
+  assert.ok(
+    run.includes(`hosterax.engine=${m.instanceId}`),
+    "the scratch container names its engine",
+  );
+
+  m.calls.length = 0;
+  await m.cleanupDrillContainers();
+  const ps = m.calls.find((a) => a[0] === "ps");
+  assert.ok(ps.includes("label=hosterax.drill=1"));
+  assert.ok(ps.includes(`label=hosterax.engine=${m.instanceId}`), "only this engine's containers");
+
+  // Another engine (another data directory) on the same Docker daemon has a different identity, so its
+  // restart cannot remove a drill that is running here.
+  const elsewhere = new FakeDockerManager({
+    db: new Database(":memory:"),
+    HOME: fs.mkdtempSync(path.join(os.tmpdir(), "hosterax-backups-other-")),
+  });
+  assert.notEqual(elsewhere.instanceId, m.instanceId);
+  assert.match(m.instanceId, /^[0-9a-f]{12}$/);
+});
+
 test("a drill whose restored database gives no usable answer does not pass", async () => {
   const { m, id } = await drillSetup({
     answer: (args) =>

@@ -20,7 +20,12 @@ const port = await new Promise((resolve) => {
 
 const child = spawn(process.execPath, ["src/index.mjs"], {
   cwd: engineDir,
-  env: { ...process.env, HOSTERAX_PORT: String(port), HOSTERAX_HOME: home },
+  env: {
+    ...process.env,
+    HOSTERAX_PORT: String(port),
+    HOSTERAX_HOME: home,
+    HOSTERAX_EDGE_PROVIDER: "external", // never start a proxy container on the developer's Docker
+  },
   stdio: ["ignore", "pipe", "pipe"],
 });
 
@@ -515,26 +520,46 @@ test("multi-node server management CRUD and connection test", async () => {
   assert.equal(local.type, "local");
   assert.equal(local.status, "online");
 
-  const created = await api("POST", "/api/servers", {
+  const draft = {
     name: "Production VPS Node #1",
     type: "remote",
     host: "192.168.1.100",
     port: 22,
     username: "ubuntu",
+  };
+  const res = await fetch(`${baseUrl}/api/servers`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json" },
+    body: JSON.stringify(draft),
   });
-  assert.ok(created.id.startsWith("srv_"));
-  assert.equal(created.name, "Production VPS Node #1");
+  if (process.platform === "win32") {
+    // Remote servers need OpenSSH config files and unix sockets, so they are refused rather than half-working.
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error, /Windows/);
+  } else {
+    assert.equal(res.status, 201);
+    const created = await res.json();
+    assert.ok(created.id.startsWith("srv_"));
+    assert.equal(created.name, "Production VPS Node #1");
+    assert.equal(created.host_key_pinned, false);
+    assert.match(created.public_key, /^ssh-ed25519 /);
 
-  const bootstrap = await fetch(`${baseUrl}/api/servers/${created.id}/bootstrap`, {
-    headers: { authorization: `Bearer ${bearer}` },
-  }).then((r) => r.text());
-  assert.ok(bootstrap.includes("HosteraX Autonomous Node Provisioner"));
+    const bootstrap = await fetch(`${baseUrl}/api/servers/${created.id}/bootstrap`, {
+      headers: { authorization: `Bearer ${bearer}` },
+    }).then((r) => r.text());
+    assert.ok(bootstrap.includes("HosteraX Autonomous Node Provisioner"));
+
+    // A remote server is never contacted before its host key has been confirmed.
+    const untrusted = await api("POST", `/api/servers/${created.id}/test`);
+    assert.equal(untrusted.ok, false);
+    assert.equal(untrusted.code, "no_host_key");
+
+    const del = await api("DELETE", `/api/servers/${created.id}`);
+    assert.equal(del.ok, true);
+  }
 
   const testConn = await api("POST", `/api/servers/local/test`);
   assert.equal(testConn.ok, true);
-
-  const del = await api("DELETE", `/api/servers/${created.id}`);
-  assert.equal(del.ok, true);
 });
 
 test("github webhooks and ephemeral pr previews lifecycle", async () => {

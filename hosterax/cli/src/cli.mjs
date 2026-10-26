@@ -168,6 +168,7 @@ function help() {
   Workflow & Initialization:
     init                                      Auto-detect project stack & create .hosterax.json
     up [--port 7777]                          Launch engine daemon & open dashboard
+    engine:start [--port 7777]                Run the engine in this terminal, without opening the dashboard
     login <token> [--url http://host:7777]    Save engine URL & authorization token
     status                                    Engine & host machine health
 
@@ -200,6 +201,14 @@ function help() {
     backup:verify <backupId>                  Check a backup's checksum, encryption and archive integrity
     backup:drill <backupId>                   Restore a backup into a scratch container to prove it works
 
+  Public access (free tunnels, no public IP or router setup needed):
+    expose <project|edge> [--provider auto]   Give an app a public https address (see expose:providers)
+    expose:list                               Public addresses and their status
+    expose:providers                          Free options and which ones this machine can run
+    expose:logs|stop|start|restart|rm <id|project>   Manage one tunnel
+    expose:ip [--save]                        This machine's public IP; --save uses it for Magic DNS
+    expose:auto [on|off] [--provider auto]    Automatically expose every deployed project (off by default)
+
   Domains & Edge Routing:
     domains <name>                            List custom domains for project
     domain:add <name> <hostname> [--primary]  Add custom domain to project
@@ -208,9 +217,32 @@ function help() {
     domain:primary <domainId>                 Set domain as primary
     edge:status                               Inspect edge proxy (OpenResty/Caddy)
 
-  Multi-Node Fleet & Cron:
-    servers                                   List connected remote SSH server nodes
-    server:test <serverId>                    Ping & test SSH connectivity to remote node
+  Remote Servers (deploy over SSH):
+    servers                                   List servers and whether each is ready
+    server:add <name> --host H [--port 22] [--user root] [--key-file path]
+                                              Add a server (a key is generated unless --key-file)
+    server:trust <serverId> [--fingerprint SHA256:...] [--replace]
+                                              Confirm the server's host key; nothing connects before this
+    server:test <serverId>                    Connect, log in, and check Docker on the server
+    server:bootstrap <serverId>               Print the script that installs Docker and authorises the key
+    server:rm <serverId>                      Remove a server (it must not run any project)
+    create <name> --server <serverId>         Place a Docker project on a server (also: deploy <path> --server)
+
+  Password protection:
+    gate <project>                            Show whether the app asks visitors for a password
+    gate <project> --password-stdin           Turn it on / change it (password read from stdin, not shown)
+    gate <project> --off                      Remove the password
+
+  Notifications:
+    notify:list                               Channels, what they listen to, and whether the last send worked
+    notify:add <name> --type webhook|slack|discord|ntfy|email --url <url> | --to a@b.com
+               [--secret <s>] [--events deploy.failed,server.down,...]
+                                              Be told when a deploy fails, an app crashes, a server goes away,
+                                              a backup fails (events default to everything important)
+    notify:test <id>                          Send a test message
+    notify:rm <id>                            Remove a channel
+
+  Cron & Backups:
     cron:list                                 List scheduled background cron jobs
     cron:run <jobId>                          Trigger immediate execution of cron job
     s3:status                                 Check remote S3/R2 backup sync status
@@ -256,7 +288,29 @@ function help() {
     user:rm <email|id>                        Delete a user
     tokens                                    List personal access tokens
     token:new <label>                         Mint personal access token
+    token:revoke <id>                         Revoke a token (anything using it stops working)
 `);
+}
+
+/** Finds a tunnel by its id, or by the project it exposes when that is unambiguous. */
+async function findTunnel(ref) {
+  if (!ref) {
+    console.error("Give a tunnel id or project name (see: hosterax expose:list)");
+    process.exit(1);
+  }
+  const list = await api("GET", "/api/tunnels");
+  const hits = list.filter((t) => t.id === ref || t.target === ref);
+  if (hits.length === 0) {
+    console.error(`No tunnel matches "${ref}" (see: hosterax expose:list)`);
+    process.exit(1);
+  }
+  if (hits.length > 1) {
+    console.error(
+      `"${ref}" has ${hits.length} tunnels; use one of these ids: ${hits.map((t) => t.id).join(", ")}`,
+    );
+    process.exit(1);
+  }
+  return hits[0];
 }
 
 function flag(name) {
@@ -415,6 +469,7 @@ try {
           Name: p.name,
           Status: p.status || (p.enabled ? "active" : "stopped"),
           Target: p.target || "docker",
+          Server: p.serverName && p.serverId !== "local" ? p.serverName : "local",
           Port: p.port ?? "—",
           HealthPath: p.health_path || "/",
           SleepMode: p.sleep_mode || "auto_sleep",
@@ -438,8 +493,9 @@ try {
         startCmd: start,
         port,
         target,
+        serverId: flag("server"),
       });
-      console.log("✓ created project", name);
+      console.log("✓ created project", name, flag("server") ? `on server ${flag("server")}` : "");
       break;
     }
 
@@ -455,7 +511,11 @@ try {
       } else if (name && fs.existsSync(name)) {
         source = path.resolve(name);
         name = path.basename(source);
-        await api("POST", "/api/projects", { name, source });
+        await api("POST", "/api/projects", {
+          name,
+          source,
+          ...(flag("server") ? { serverId: flag("server"), target: "docker" } : {}),
+        });
       }
 
       if (!name) {
@@ -842,6 +902,182 @@ try {
       break;
     }
 
+    case "expose": {
+      const target = args[0];
+      if (!target || target.startsWith("--")) {
+        console.error(
+          "Usage: hosterax expose <project|edge> [--provider auto|cloudflare|localhost-run|pinggy|localtunnel|serveo|ngrok|tailscale|bore|cloudflare-token|custom] [--no-wait]\n" +
+            "  ngrok:             --authtoken <token> (or NGROK_AUTHTOKEN) [--domain you.ngrok-free.app]\n" +
+            "  cloudflare-token:  edge --token <token> (or CLOUDFLARE_TUNNEL_TOKEN) [--hostname apps.example.com]\n" +
+            "  bore:              [--server host[:port]] [--secret <secret>]\n" +
+            '  custom:            --command "zrok share public --headless {host}:{port}" --url-pattern "(https://\\\\S+)"\n' +
+            "See what this machine can run with: hosterax expose:providers",
+        );
+        process.exit(1);
+      }
+      const provider = flag("provider") || "auto";
+      const options = {};
+      const token = flag("token") || process.env.CLOUDFLARE_TUNNEL_TOKEN;
+      const authtoken = flag("authtoken") || process.env.NGROK_AUTHTOKEN;
+      if (provider === "cloudflare-token" && token) options.token = token;
+      if (provider === "ngrok" && authtoken) options.authtoken = authtoken;
+      for (const [f, k] of [
+        ["hostname", "hostname"],
+        ["domain", "domain"],
+        ["server", "server"],
+        ["secret", "secret"],
+        ["command", "command"],
+        ["url-pattern", "urlPattern"],
+      ])
+        if (flag(f)) options[k] = flag(f);
+      const created = await api("POST", "/api/tunnels", { target, provider, options });
+      console.log(`Making ${target} public (${provider})…`);
+      if (has("no-wait")) {
+        console.log(`✓ Started tunnel ${created.id}. Check it with: hosterax expose:list`);
+        break;
+      }
+      let t = created;
+      const deadline = Date.now() + 180000;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        t = await api("GET", `/api/tunnels/${created.id}`);
+        if (["running", "failed", "waiting"].includes(t.status)) break;
+      }
+      if (t.status === "running") {
+        console.log(`✓ ${target} is public${t.providerUsed ? ` through ${t.providerUsed}` : ""}:`);
+        console.log(`  ${t.publicUrl || "(the address is set in your Cloudflare dashboard)"}`);
+        if (t.kind === "tcp") console.log("  This is a raw TCP address, not a web page.");
+        console.log(`  It restarts by itself and comes back after the engine restarts.`);
+        console.log(`  Stop it with: hosterax expose:stop ${t.id}`);
+      } else if (t.status === "waiting") {
+        console.log(`… ${t.lastError}. It will go public by itself once the project is running.`);
+      } else {
+        console.error(
+          `✗ Could not make ${target} public:\n${t.lastError || "no address after waiting"}`,
+        );
+        console.error(
+          `  Details: hosterax expose:logs ${t.id}   ·   Options: hosterax expose:providers`,
+        );
+        process.exit(1);
+      }
+      break;
+    }
+
+    case "expose:list": {
+      const list = await api("GET", "/api/tunnels");
+      if (list.length === 0) {
+        console.log("Nothing is public. Try: hosterax expose <project>");
+        break;
+      }
+      console.table(
+        list.map((t) => ({
+          ID: t.id,
+          Target: t.target,
+          Provider: t.providerUsed || t.provider,
+          Status: t.status,
+          Address: t.publicUrl || "—",
+          Answers: t.reachable === null ? "—" : t.reachable ? `yes (${t.checkStatus})` : "no",
+          Restarts: t.restarts,
+          Note: (t.lastError || "").split("\n")[0].slice(0, 70),
+        })),
+      );
+      break;
+    }
+
+    case "expose:providers": {
+      const list = await api("GET", "/api/tunnels/providers");
+      console.table(
+        list.map((p) => ({
+          Provider: p.id,
+          Account: p.needsAccount ? "needed" : "none",
+          Kind: p.kind,
+          "Ready here": p.ready ? `yes (${p.runsWith})` : "no",
+          Auto: p.inAuto ? "yes" : "",
+          Needs: (p.missing || "").replace(/ \([^)]*\)/g, ""),
+        })),
+      );
+      console.log(
+        "\nauto tries the providers marked Auto, in this order, and uses the first that works.\n" +
+          "Details and limits of each: GET /api/tunnels/providers",
+      );
+      break;
+    }
+
+    case "expose:logs": {
+      const t = await findTunnel(args[0]);
+      const r = await api("GET", `/api/tunnels/${t.id}/logs`);
+      console.log(r.lines.join("\n") || "(no output yet)");
+      break;
+    }
+
+    case "expose:stop": {
+      const t = await findTunnel(args[0]);
+      await api("POST", `/api/tunnels/${t.id}/stop`);
+      console.log(
+        `✓ ${t.target} is no longer public (tunnel ${t.id} stopped; start it again with expose:start)`,
+      );
+      break;
+    }
+
+    case "expose:start": {
+      const t = await findTunnel(args[0]);
+      await api("POST", `/api/tunnels/${t.id}/start`);
+      console.log(`✓ Tunnel ${t.id} starting. Watch it with: hosterax expose:list`);
+      break;
+    }
+
+    case "expose:restart": {
+      const t = await findTunnel(args[0]);
+      await api("POST", `/api/tunnels/${t.id}/restart`);
+      console.log(`✓ Tunnel ${t.id} restarting (its address may change)`);
+      break;
+    }
+
+    case "expose:rm": {
+      const t = await findTunnel(args[0]);
+      await api("DELETE", `/api/tunnels/${t.id}`);
+      console.log(`✓ Tunnel ${t.id} removed`);
+      break;
+    }
+
+    case "expose:ip": {
+      const r = await api("GET", "/api/expose/public-ip");
+      if (!r.ip) {
+        console.error(`✗ ${r.error}`);
+        process.exit(1);
+      }
+      console.log(`Public IP: ${r.ip}   (HosteraX is using: ${r.configured})`);
+      console.log(r.advice);
+      if (has("save")) {
+        await api("POST", "/api/expose/public-ip", { ip: r.ip });
+        console.log(`✓ ${r.ip} saved. Magic DNS names will now use it.`);
+      } else if (!r.configuredMatches) {
+        console.log("Use it for Magic DNS names with: hosterax expose:ip --save");
+      }
+      break;
+    }
+
+    case "expose:auto": {
+      const word = args[0];
+      if (word === "on" || word === "off" || flag("provider")) {
+        const body = {};
+        if (word === "on") body.enabled = true;
+        if (word === "off") body.enabled = false;
+        if (flag("provider")) body.provider = flag("provider");
+        const r = await api("PUT", "/api/expose/auto", body);
+        console.log(
+          r.enabled
+            ? `✓ Every deployed project is now made public automatically (${r.provider}). Anyone with the address can open them.`
+            : "✓ Automatic exposure is off. Existing tunnels keep running until you stop them.",
+        );
+      } else {
+        const r = await api("GET", "/api/expose/auto");
+        console.log(`Automatic exposure: ${r.enabled ? "on" : "off"} (provider: ${r.provider})`);
+        console.log("Change it with: hosterax expose:auto on|off [--provider auto]");
+      }
+      break;
+    }
+
     case "backup:verify": {
       const id = args[0];
       if (!id) {
@@ -958,7 +1194,7 @@ try {
     case "servers": {
       const srvs = await api("GET", "/api/servers");
       if (!srvs || srvs.length === 0) {
-        console.log("No remote servers connected.");
+        console.log("No servers.");
         break;
       }
       console.table(
@@ -966,11 +1202,91 @@ try {
           ID: s.id,
           Name: s.name,
           Type: s.type,
-          Host: s.host,
+          Host: s.type === "local" ? "this machine" : `${s.username}@${s.host}:${s.port}`,
           Status: s.status,
-          "Last ping": s.last_ping_at ? new Date(s.last_ping_at).toISOString() : "—",
+          "Host key": s.type === "local" ? "—" : s.host_key_pinned ? "confirmed" : "NOT CONFIRMED",
+          Docker: s.docker_version || "—",
+          Problem: s.last_error ? s.last_error.slice(0, 60) : "",
         })),
       );
+      break;
+    }
+
+    case "server:add": {
+      const name = args[0];
+      const host = flag("host");
+      if (!name || name.startsWith("--") || !host) {
+        console.error(
+          "Usage: hosterax server:add <name> --host <host> [--port 22] [--user root] [--key-file <private key>]",
+        );
+        process.exit(1);
+      }
+      const keyFile = flag("key-file");
+      const body = {
+        name,
+        type: "remote",
+        host,
+        port: flag("port") ? Number(flag("port")) : 22,
+        username: flag("user") || "root",
+      };
+      if (keyFile) body.private_key = fs.readFileSync(keyFile, "utf8");
+      const srv = await api("POST", "/api/servers", body);
+      console.log(`✓ Added ${srv.name} (${srv.id})`);
+      console.log(
+        `\nStep 1: let HosteraX log in. Add this public key to ~${srv.username}/.ssh/authorized_keys`,
+      );
+      console.log(
+        `        on the server, or run: hosterax server:bootstrap ${srv.id}  (as root there)\n`,
+      );
+      console.log(`  ${srv.public_key}\n`);
+      console.log(`Step 2: confirm the server's identity:  hosterax server:trust ${srv.id}`);
+      console.log(`Step 3: check it:                      hosterax server:test ${srv.id}`);
+      break;
+    }
+
+    case "server:trust": {
+      const id = args[0];
+      if (!id || id.startsWith("--")) {
+        console.error(
+          "Usage: hosterax server:trust <serverId> [--fingerprint SHA256:...] [--replace]",
+        );
+        process.exit(1);
+      }
+      const scan = await api("GET", `/api/servers/${id}/host-key`);
+      console.log(`${scan.host}:${scan.port} presents:`);
+      for (const k of scan.keys) console.log(`  ${k.type.padEnd(22)} ${k.fingerprint}`);
+      if (scan.pinned) {
+        console.log(
+          scan.changed
+            ? `\n⚠ The pinned key (${scan.pinned.fingerprint}) is NOT among them. The server was reinstalled, or the connection is being intercepted.`
+            : `\nAlready confirmed: ${scan.pinned.fingerprint}`,
+        );
+        if (!has("replace")) break;
+      }
+      let want = flag("fingerprint");
+      if (!want) {
+        console.log(
+          "\nCompare with your provider's console, or run on the server:\n  ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub",
+        );
+        const { createInterface } = await import("node:readline");
+        const rl = createInterface({ input: process.stdin, output: process.stdout });
+        const answer = await new Promise((resolve) => {
+          rl.on("close", () => resolve("")); // no terminal attached: that is a "no"
+          rl.question(`Trust ${scan.keys[0].fingerprint}? [y/N] `, resolve);
+        });
+        rl.close();
+        if (!/^y(es)?$/i.test(answer.trim())) {
+          console.log("Not confirmed.");
+          process.exitCode = 1;
+          break;
+        }
+        want = scan.keys[0].fingerprint;
+      }
+      await api("POST", `/api/servers/${id}/host-key`, {
+        fingerprint: want,
+        replace: has("replace"),
+      });
+      console.log(`✓ Host key confirmed. Next: hosterax server:test ${id}`);
       break;
     }
 
@@ -981,12 +1297,131 @@ try {
         process.exit(1);
       }
       const r = await api("POST", `/api/servers/${srvId}/test`);
-      console.log(
-        r.ok
-          ? `✓ ${r.message || "Server reachable"} (${r.latencyMs}ms)`
-          : `✗ Connection failed: ${r.message}`,
-      );
+      console.log(r.ok ? `✓ ${r.message}` : `✗ ${r.message}${r.code ? ` (${r.code})` : ""}`);
       if (!r.ok) process.exitCode = 1;
+      break;
+    }
+
+    case "server:bootstrap": {
+      const srvId = args[0];
+      if (!srvId) {
+        console.error(
+          "Usage: hosterax server:bootstrap <serverId>   (pipe the output to bash on the server)",
+        );
+        process.exit(1);
+      }
+      console.log(await api("GET", `/api/servers/${srvId}/bootstrap`));
+      break;
+    }
+
+    case "server:rm": {
+      const srvId = args[0];
+      if (!srvId) {
+        console.error("Usage: hosterax server:rm <serverId>");
+        process.exit(1);
+      }
+      await api("DELETE", `/api/servers/${srvId}`);
+      console.log(`✓ Removed ${srvId}`);
+      break;
+    }
+
+    case "gate": {
+      const name = args[0];
+      if (!name || name.startsWith("--")) {
+        console.error("Usage: hosterax gate <project> [--password-stdin | --off]");
+        process.exit(1);
+      }
+      if (has("off")) {
+        await api("DELETE", `/api/projects/${name}/gate`);
+        console.log(`✓ ${name} no longer asks for a password.`);
+        break;
+      }
+      if (has("password-stdin")) {
+        const password = fs.readFileSync(0, "utf8").replace(/\r?\n$/, "");
+        const r = await api("PUT", `/api/projects/${name}/gate`, { password });
+        console.log(`✓ ${name} now asks visitors for a password (gate on port ${r.port}).`);
+        if (r.note) console.log(`  ${r.note}`);
+        break;
+      }
+      const st = await api("GET", `/api/projects/${name}/gate`);
+      console.log(
+        st.enabled
+          ? `${name}: password protection is ON (gate port ${st.port}).`
+          : `${name}: no password. Turn it on with: echo 'a long password' | hosterax gate ${name} --password-stdin`,
+      );
+      break;
+    }
+
+    case "notify:list": {
+      const r = await api("GET", "/api/notifications");
+      if (!r.channels.length) {
+        console.log(
+          "No notification channels. Add one with: hosterax notify:add <name> --type slack --url <webhook url>",
+        );
+        console.log(`Events: ${Object.keys(r.events).join(", ")}`);
+        break;
+      }
+      console.table(
+        r.channels.map((c) => ({
+          ID: c.id,
+          Name: c.name,
+          Type: c.type,
+          Target: c.target,
+          Events: c.events.length ? c.events.join(",") : "all important",
+          Enabled: c.enabled ? "✓" : "✗",
+          "Last send": c.lastStatus
+            ? `${c.lastStatus}${c.lastError ? `: ${c.lastError.slice(0, 40)}` : ""}`
+            : "never",
+        })),
+      );
+      break;
+    }
+
+    case "notify:add": {
+      const name = args[0];
+      const type = flag("type");
+      if (!name || name.startsWith("--") || !type) {
+        console.error(
+          "Usage: hosterax notify:add <name> --type webhook|slack|discord|ntfy|email (--url <url> | --to <email,...>) [--secret <s>] [--events a,b]",
+        );
+        process.exit(1);
+      }
+      const body = { name, type };
+      if (flag("url")) body.url = flag("url");
+      if (flag("to")) body.to = flag("to");
+      if (flag("secret")) body.secret = flag("secret");
+      if (flag("events"))
+        body.events = flag("events")
+          .split(",")
+          .map((e) => e.trim());
+      const c = await api("POST", "/api/notifications", body);
+      console.log(`✓ Added ${c.name} (${c.id}). Sending a test message…`);
+      const t = await api("POST", `/api/notifications/${c.id}/test`);
+      console.log(
+        t.ok ? "✓ The test message was delivered." : `✗ The test message failed: ${t.error}`,
+      );
+      if (!t.ok) process.exitCode = 1;
+      break;
+    }
+
+    case "notify:test": {
+      if (!args[0]) {
+        console.error("Usage: hosterax notify:test <id>");
+        process.exit(1);
+      }
+      const t = await api("POST", `/api/notifications/${args[0]}/test`);
+      console.log(t.ok ? "✓ Delivered." : `✗ Failed: ${t.error}`);
+      if (!t.ok) process.exitCode = 1;
+      break;
+    }
+
+    case "notify:rm": {
+      if (!args[0]) {
+        console.error("Usage: hosterax notify:rm <id>");
+        process.exit(1);
+      }
+      await api("DELETE", `/api/notifications/${args[0]}`);
+      console.log(`✓ Removed ${args[0]}`);
       break;
     }
 

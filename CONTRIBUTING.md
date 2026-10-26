@@ -65,6 +65,30 @@ npm run lint
 npm run format
 ```
 
+### Tests against real Docker
+
+Most tests run against stand-ins so they work anywhere. Two files use a **real Docker daemon** and fake
+nothing, because stand-ins cannot catch the bugs that matter most (a restore that restores nothing, a
+deploy that lands on the wrong image). They skip, and say why, when there is no daemon or no registry
+access, so `npm run test:engine` stays safe on any machine:
+
+- `remote-deploy-real-docker.test.mjs`: a real engine deploys images and a Dockerfile project through the real
+  SSH bridge to a real daemon, then stops, restarts, redeploys, rolls back and deletes them.
+- `backups-real-docker.test.mjs`: real PostgreSQL, MySQL, MariaDB, MongoDB and Redis containers: dump, verify, restore drill, restore
+  over live data, encryption, tampering, scheduled backups with retention.
+
+To make the "remote server" a genuinely separate Docker (as root, with `dockerd` installed):
+
+```bash
+HOSTERAX_TEST_SECOND_DOCKERD=1 node --test hosterax/engine/test/remote-deploy-real-docker.test.mjs
+# or point at a daemon you started yourself
+HOSTERAX_TEST_REMOTE_DOCKER_HOST=unix:///path/to/docker.sock node --test hosterax/engine/test/remote-deploy-real-docker.test.mjs
+```
+
+Without either, "remote" and local are the same Docker. Images are pulled from Docker Hub, so anonymous
+rate limits can make a run skip. Test engines never start the proxy container (`HOSTERAX_EDGE_PROVIDER=external`),
+so they do not take ports 80/443 on your machine.
+
 ### The API contract
 
 The engine, CLI and dashboard are written separately, so `scripts/api-contract.mjs` checks them

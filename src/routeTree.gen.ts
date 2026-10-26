@@ -19,10 +19,12 @@ import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
 import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
 import { Route as AppDockerhubRouteImport } from './routes/_app.dockerhub'
 import { Route as AppDomainsRouteImport } from './routes/_app.domains'
+import { Route as AppExposeRouteImport } from './routes/_app.expose'
 import { Route as AppJobsRouteImport } from './routes/_app.jobs'
 import { Route as AppLocalRouteImport } from './routes/_app.local'
 import { Route as AppMailRouteImport } from './routes/_app.mail'
 import { Route as AppNewRouteImport } from './routes/_app.new'
+import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
 import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
@@ -80,6 +82,11 @@ const AppDomainsRoute = AppDomainsRouteImport.update({
   path: '/domains',
   getParentRoute: () => AppRoute,
 } as any)
+const AppExposeRoute = AppExposeRouteImport.update({
+  id: '/expose',
+  path: '/expose',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppJobsRoute = AppJobsRouteImport.update({
   id: '/jobs',
   path: '/jobs',
@@ -98,6 +105,11 @@ const AppMailRoute = AppMailRouteImport.update({
 const AppNewRoute = AppNewRouteImport.update({
   id: '/new',
   path: '/new',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => AppRoute,
 } as any)
 const AppOauthRoute = AppOauthRouteImport.update({
@@ -146,10 +158,12 @@ export interface FileRoutesByFullPath {
   '/deployments': typeof AppDeploymentsRoute
   '/dockerhub': typeof AppDockerhubRoute
   '/domains': typeof AppDomainsRoute
+  '/expose': typeof AppExposeRoute
   '/jobs': typeof AppJobsRoute
   '/local': typeof AppLocalRoute
   '/mail': typeof AppMailRoute
   '/new': typeof AppNewRoute
+  '/notifications': typeof AppNotificationsRoute
   '/oauth': typeof AppOauthRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
@@ -168,10 +182,12 @@ export interface FileRoutesByTo {
   '/deployments': typeof AppDeploymentsRoute
   '/dockerhub': typeof AppDockerhubRoute
   '/domains': typeof AppDomainsRoute
+  '/expose': typeof AppExposeRoute
   '/jobs': typeof AppJobsRoute
   '/local': typeof AppLocalRoute
   '/mail': typeof AppMailRoute
   '/new': typeof AppNewRoute
+  '/notifications': typeof AppNotificationsRoute
   '/oauth': typeof AppOauthRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
@@ -192,10 +208,12 @@ export interface FileRoutesById {
   '/_app/deployments': typeof AppDeploymentsRoute
   '/_app/dockerhub': typeof AppDockerhubRoute
   '/_app/domains': typeof AppDomainsRoute
+  '/_app/expose': typeof AppExposeRoute
   '/_app/jobs': typeof AppJobsRoute
   '/_app/local': typeof AppLocalRoute
   '/_app/mail': typeof AppMailRoute
   '/_app/new': typeof AppNewRoute
+  '/_app/notifications': typeof AppNotificationsRoute
   '/_app/oauth': typeof AppOauthRoute
   '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -216,10 +234,12 @@ export interface FileRouteTypes {
     | '/deployments'
     | '/dockerhub'
     | '/domains'
+    | '/expose'
     | '/jobs'
     | '/local'
     | '/mail'
     | '/new'
+    | '/notifications'
     | '/oauth'
     | '/servers'
     | '/settings'
@@ -238,10 +258,12 @@ export interface FileRouteTypes {
     | '/deployments'
     | '/dockerhub'
     | '/domains'
+    | '/expose'
     | '/jobs'
     | '/local'
     | '/mail'
     | '/new'
+    | '/notifications'
     | '/oauth'
     | '/servers'
     | '/settings'
@@ -261,10 +283,12 @@ export interface FileRouteTypes {
     | '/_app/deployments'
     | '/_app/dockerhub'
     | '/_app/domains'
+    | '/_app/expose'
     | '/_app/jobs'
     | '/_app/local'
     | '/_app/mail'
     | '/_app/new'
+    | '/_app/notifications'
     | '/_app/oauth'
     | '/_app/servers'
     | '/_app/settings'
@@ -352,6 +376,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppDomainsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/expose': {
+      id: '/_app/expose'
+      path: '/expose'
+      fullPath: '/expose'
+      preLoaderRoute: typeof AppExposeRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/jobs': {
       id: '/_app/jobs'
       path: '/jobs'
@@ -378,6 +409,13 @@ declare module '@tanstack/react-router' {
       path: '/new'
       fullPath: '/new'
       preLoaderRoute: typeof AppNewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/notifications': {
+      id: '/_app/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/oauth': {
@@ -440,10 +478,12 @@ interface AppRouteChildren {
   AppDeploymentsRoute: typeof AppDeploymentsRoute
   AppDockerhubRoute: typeof AppDockerhubRoute
   AppDomainsRoute: typeof AppDomainsRoute
+  AppExposeRoute: typeof AppExposeRoute
   AppJobsRoute: typeof AppJobsRoute
   AppLocalRoute: typeof AppLocalRoute
   AppMailRoute: typeof AppMailRoute
   AppNewRoute: typeof AppNewRoute
+  AppNotificationsRoute: typeof AppNotificationsRoute
   AppOauthRoute: typeof AppOauthRoute
   AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -461,10 +501,12 @@ const AppRouteChildren: AppRouteChildren = {
   AppDeploymentsRoute: AppDeploymentsRoute,
   AppDockerhubRoute: AppDockerhubRoute,
   AppDomainsRoute: AppDomainsRoute,
+  AppExposeRoute: AppExposeRoute,
   AppJobsRoute: AppJobsRoute,
   AppLocalRoute: AppLocalRoute,
   AppMailRoute: AppMailRoute,
   AppNewRoute: AppNewRoute,
+  AppNotificationsRoute: AppNotificationsRoute,
   AppOauthRoute: AppOauthRoute,
   AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,

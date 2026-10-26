@@ -29,7 +29,13 @@ async function startEngine(extraEnv = {}, port = null) {
   port ??= await freePort();
   const child = spawn(process.execPath, ["src/index.mjs"], {
     cwd: engineDir,
-    env: { ...process.env, HOSTERAX_PORT: String(port), HOSTERAX_HOME: home, ...extraEnv },
+    env: {
+      ...process.env,
+      HOSTERAX_PORT: String(port),
+      HOSTERAX_HOME: home,
+      HOSTERAX_EDGE_PROVIDER: "external", // never start a proxy container on the developer's Docker
+      ...extraEnv,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";

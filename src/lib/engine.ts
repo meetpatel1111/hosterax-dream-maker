@@ -702,7 +702,18 @@ export type ServerNode = {
   port: number;
   username: string;
   auth_type: string;
-  status: "online" | "offline" | "provisioning" | "unreachable";
+  /** error = reachable or configured wrongly (host key changed, login rejected, Docker down); see last_error */
+  status: "online" | "offline" | "provisioning" | "unreachable" | "error";
+  /** SSH public key to add to the server's authorized_keys (remote servers). */
+  public_key?: string | null;
+  host_key_pinned?: boolean;
+  host_key_type?: string | null;
+  host_key_fingerprint?: string | null;
+  host_key_pinned_at?: number | null;
+  last_error?: string | null;
+  last_error_code?: string | null;
+  /** Connected, key confirmed and Docker answering: projects can be placed here. */
+  ready?: boolean;
   docker_version?: string;
   os_info?: string;
   cpu_cores: number;
@@ -715,6 +726,14 @@ export type ServerNode = {
   last_ping_at?: number;
   created_at: number;
   updated_at: number;
+};
+
+export type HostKeyScan = {
+  host: string;
+  port: number;
+  keys: { type: string; fingerprint: string }[];
+  pinned: { type: string; fingerprint: string; pinnedAt: number } | null;
+  changed: boolean;
 };
 
 export function useServerNodes() {

@@ -6,8 +6,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile } from "./docker-scope.mjs";
 import { spawnSync } from "./safe-exec.mjs";
+import { runOnServer, currentServerId, configureDockerScope } from "./docker-scope.mjs";
 import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
@@ -39,15 +40,26 @@ import {
   detectWorkspace,
 } from "./stack-registry.mjs";
 import { SelfHealEngine } from "./self-heal.mjs";
-import { pullWithUniversalHealing } from "./image-resolver.mjs";
+import { pullWithUniversalHealing, normalizeImageSource } from "./image-resolver.mjs";
+import { killTree, waitForTreeExit } from "./process-tree.mjs";
+import { choosePort } from "./port-check.mjs";
 import { TLSManager } from "./tls-manager.mjs";
 import { EdgeManager } from "./edge-manager.mjs";
 import { BackupManager } from "./backup-manager.mjs";
 import { CronManager } from "./cron-manager.mjs";
 import { MCPServer } from "./mcp-server.mjs";
 import { ServerManager } from "./server-manager.mjs";
+import { GateManager } from "./gate-manager.mjs";
+import { NotificationManager, EVENT_KINDS, CHANNEL_TYPES } from "./notification-manager.mjs";
 import { createDashboard } from "./dashboard-server.mjs";
 import { BackupScheduler } from "./backup-scheduler.mjs";
+import {
+  TunnelManager,
+  PROVIDERS as TUNNEL_PROVIDERS,
+  detectPublicIp,
+  isPrivateAddress,
+  tunnelTargetHost,
+} from "./tunnel-manager.mjs";
 import { WebhookManager } from "./webhook-manager.mjs";
 import { OrgManager } from "./org-manager.mjs";
 import { EmailManager } from "./email-manager.mjs";
@@ -201,6 +213,15 @@ try {
 } catch (e) {}
 try {
   db.exec("ALTER TABLE projects ADD COLUMN restart_policy TEXT DEFAULT 'on-failure'");
+} catch (e) {}
+// Where a project runs: NULL / 'local' is this machine; otherwise a remote server's id. For a remote
+// project `port` is the port on this machine that reaches it (an SSH forward) and `remote_port` is the
+// port the container publishes on the server's loopback.
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN server_id TEXT");
+} catch (e) {}
+try {
+  db.exec("ALTER TABLE projects ADD COLUMN remote_port INTEGER");
 } catch (e) {}
 try {
   db.exec("ALTER TABLE deployments ADD COLUMN snapshot_json TEXT");
@@ -688,7 +709,7 @@ function syncComposeServices(project, workdir, id) {
 
 // ---------- dynamic port allocation ----------
 const portLock = new Set();
-export function allocateProjectPort(projectName, preferredPort = null) {
+export function allocateProjectPort(projectName, preferredPort = null, avoid = null) {
   const norm = (s) => (s || "").toLowerCase();
   const currentProjectName = norm(projectName);
   // Prevent concurrent allocation for the same project
@@ -704,7 +725,8 @@ export function allocateProjectPort(projectName, preferredPort = null) {
   portLock.add(currentProjectName);
   try {
     // Collect all ports currently assigned or in use by other projects
-    const usedPorts = new Set([7777, 8080]);
+    // 7777 and 8080 are HosteraX's own; so is whatever port this engine was told to listen on
+    const usedPorts = new Set([7777, 8080, PORT, ...(avoid ?? [])]);
 
     // Ports in projects table for other projects
     try {
@@ -764,6 +786,36 @@ export function allocateProjectPort(projectName, preferredPort = null) {
   }
 }
 
+/**
+ * allocateProjectPort only knows the ports HosteraX itself has handed out. This also skips ports something
+ * else on this machine is listening on (a dev server on 3000, another engine, another app), which would
+ * otherwise fail the first deploy with "address already in use". It applies to a project that has not been
+ * deployed successfully yet; once it has been, the app listening on its port may be the project itself (a
+ * redeploy starts the new version before the old one is gone), so it keeps the port it has.
+ */
+async function allocateFreeProjectPort(
+  projectName,
+  preferredPort = null,
+  { bindable = false } = {},
+) {
+  const owned = db
+    .prepare(
+      "SELECT p.port FROM projects p WHERE LOWER(p.name)=LOWER(?) AND EXISTS (SELECT 1 FROM deployments d WHERE LOWER(d.project)=LOWER(?) AND d.phase='ready')",
+    )
+    .get(projectName, projectName)?.port;
+  return choosePort({
+    pick: (wanted, avoid) => allocateProjectPort(projectName, wanted, avoid),
+    wanted: preferredPort,
+    bindable,
+    owned,
+  });
+}
+
+// Interface that deployed apps publish on. Use 127.0.0.1 to force all traffic through the edge proxy.
+const BIND_HOST = /^[0-9.]+$|^::1?$/.test(process.env.HOSTERAX_BIND_HOST || "")
+  ? process.env.HOSTERAX_BIND_HOST
+  : "0.0.0.0";
+
 const tlsManager = new TLSManager(db, EDGEDIR, () => [
   getServerIp(),
   ...Object.values(os.networkInterfaces())
@@ -780,14 +832,113 @@ const backupScheduler = new BackupScheduler({
   recordEvent: (project, type, details, status) =>
     selfHeal?.logEvent?.(project, type, details, status),
 });
+// What a tunnel may point at: a deployed project's port, or the edge proxy. Never the engine itself.
+function resolveTunnelTarget(target) {
+  const host = tunnelTargetHost({ bindHost: BIND_HOST });
+  let port;
+  if (target === "edge") {
+    port = Number(edgeManager.getSettings().http_port) || 80;
+  } else {
+    const p = db.prepare("SELECT port FROM projects WHERE name=?").get(target);
+    if (!p) return { missing: true };
+    if (!p.port) return { waiting: "the project has not been deployed yet" };
+    // a project with a password is exposed through its gate, never around it
+    port = gateManager.portFor(target) ?? p.port;
+  }
+  if (port === PORT || port === dashboard.ssrPort())
+    throw new Error(`port ${port} belongs to the HosteraX engine and is never made public`);
+  return { host, port };
+}
+const tunnelManager = new TunnelManager({
+  db,
+  HOME,
+  resolveTarget: resolveTunnelTarget,
+  recordEvent: (project, type, details, status) =>
+    selfHeal?.logEvent?.(project, type, details, status),
+  // opt-in: every deployed project gets a public address on its own
+  autoTargets: () =>
+    getSetting("tunnels_auto_expose", "0") === "1"
+      ? db
+          .prepare("SELECT name FROM projects WHERE port IS NOT NULL")
+          .all()
+          .map((r) => r.name)
+      : [],
+  autoProvider: () => getSetting("tunnels_auto_provider", "auto"),
+});
 const drillsInFlight = new Set();
 const cronManager = new CronManager({ db, backupManager });
 cronManager.startScheduler();
-const serverManager = new ServerManager({ db, HOME });
+const serverManager = new ServerManager({
+  db,
+  HOME,
+  // an app on a remote server is reached through a local forward, published like any local app
+  bindHost: BIND_HOST,
+  listForwards: (serverId) =>
+    db
+      .prepare(
+        "SELECT name, port, remote_port FROM projects WHERE server_id=? AND remote_port IS NOT NULL AND port IS NOT NULL",
+      )
+      .all(serverId)
+      .map((r) => ({ id: r.name, remotePort: r.remote_port, localPort: r.port })),
+  onForwardMoved: (serverId, project, localPort) => {
+    db.prepare("UPDATE projects SET port=? WHERE name=?").run(localPort, project);
+    const route = db.prepare("SELECT hostname FROM routes WHERE project=?").get(project);
+    applyRoute(project, localPort, route?.hostname ?? null, null);
+  },
+  onStatusChange: (srv, from, to, detail) =>
+    selfHeal?.logEvent?.(
+      srv.name,
+      "server_status",
+      `Server ${srv.name} went from ${from} to ${to}${detail ? `: ${detail}` : ""}`,
+      to === "online" ? "info" : "error",
+    ),
+});
+configureDockerScope({ dockerEnv: (serverId) => serverManager.dockerEnv(serverId) });
+serverManager.isInUse = (serverId) =>
+  db
+    .prepare("SELECT COUNT(*) c FROM projects WHERE server_id=? AND deleted_at IS NULL")
+    .get(serverId).c;
+const SCALE_TO_ZERO_REMOTE =
+  "Scale to zero is not available for projects on a remote server (it stops and starts containers on this machine).";
+/** The remote server a project is placed on, or null for this machine. */
+function serverOf(project) {
+  const row = db.prepare("SELECT server_id FROM projects WHERE name=?").get(project);
+  return row?.server_id && row.server_id !== "local" ? row.server_id : null;
+}
+const gateManager = new GateManager({
+  db,
+  bindHost: BIND_HOST,
+  upstream: (project) =>
+    db.prepare("SELECT port FROM projects WHERE name=?").get(project)?.port ?? null,
+  onPortChange: (project) => {
+    const p = db.prepare("SELECT port FROM projects WHERE name=?").get(project);
+    if (!p?.port) return;
+    const route = db.prepare("SELECT hostname FROM routes WHERE project=?").get(project);
+    applyRoute(project, p.port, route?.hostname ?? null, null);
+  },
+});
 const webhookManager = new WebhookManager({ db, runDeployment, applyRoute, HOME });
 const orgManager = new OrgManager({ db });
 const emailManager = new EmailManager({ db, HOME });
+const notifier = new NotificationManager({
+  db,
+  sendEmail: (m) => emailManager.sendSystemMail(m),
+  baseUrl: () => process.env.HOSTERAX_PUBLIC_URL || "",
+});
 const dockerApi = new DockerApiClient();
+const remoteDockerApis = new Map();
+/** Docker HTTP client for a project's server: this machine's daemon, or the remote one through its bridge. */
+function dockerApiForServer(serverId) {
+  if (!serverId || serverId === "local") return dockerApi;
+  const socketPath = serverManager.dockerSocket(serverId);
+  if (!socketPath) throw new Error(`Server ${serverId} is not connected.`);
+  let c = remoteDockerApis.get(serverId);
+  if (!c || c.socketPath !== socketPath) {
+    c = new DockerApiClient({ socketPath });
+    remoteDockerApis.set(serverId, c);
+  }
+  return c;
+}
 const gpuManager = new GpuManager(db);
 const scaleToZeroManager = new ScaleToZeroManager(db, dockerApi);
 scaleToZeroManager.start();
@@ -811,8 +962,10 @@ setInterval(
 // Initial route synchronization and edge container check
 edgeManager.syncRoutes().catch((e) => console.error("[edge] initial sync:", e.message));
 
-function applyRoute(project, port, hostname, id) {
+function applyRoute(project, appPort, hostname, id) {
   const now = Date.now();
+  // The edge talks to the gate when the project has a password; the gate talks to the app.
+  const port = appPort ? (gateManager.portFor(project) ?? appPort) : appPort;
   const upsert = (status, detail, configPath) =>
     db
       .prepare(
@@ -915,7 +1068,16 @@ function runStep(deploymentId, cwd, cmd, env) {
 }
 
 /** Runs `bin args...` WITHOUT a shell, so no argument can be interpreted as shell syntax. */
-function runStepArgv(deploymentId, cwd, bin, args, env = {}) {
+/**
+ * `opts.capture`, if given, is an array that receives the tail of what the command printed (stdout and
+ * stderr, bounded), so a caller can tell why it failed instead of only that it did.
+ */
+function runStepArgv(deploymentId, cwd, bin, args, env = {}, opts = {}) {
+  const keep = (b) => {
+    if (!opts.capture) return;
+    opts.capture.push(b.toString());
+    while (opts.capture.join("").length > 8192) opts.capture.shift();
+  };
   return new Promise((resolve) => {
     publish(deploymentId, {
       ts: Date.now(),
@@ -923,17 +1085,20 @@ function runStepArgv(deploymentId, cwd, bin, args, env = {}) {
       text: `$ ${displayArgv(bin, args)}`,
     });
     const child = spawn(bin, args, { cwd, env: { ...process.env, ...env } });
-    child.stdout.on("data", (b) =>
-      publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() }),
-    );
-    child.stderr.on("data", (b) =>
-      publish(deploymentId, { ts: Date.now(), stream: "stderr", text: b.toString().trimEnd() }),
-    );
+    child.stdout.on("data", (b) => {
+      keep(b);
+      publish(deploymentId, { ts: Date.now(), stream: "stdout", text: b.toString().trimEnd() });
+    });
+    child.stderr.on("data", (b) => {
+      keep(b);
+      publish(deploymentId, { ts: Date.now(), stream: "stderr", text: b.toString().trimEnd() });
+    });
     child.on("close", (code) => {
       publish(deploymentId, { ts: Date.now(), stream: "system", text: `exit ${code}` });
       resolve(code ?? 0);
     });
     child.on("error", (e) => {
+      keep(String(e));
       publish(deploymentId, { ts: Date.now(), stream: "stderr", text: String(e) });
       resolve(1);
     });
@@ -1230,11 +1395,19 @@ function renameContainer(from, to) {
 const staticServers = new Map(); // project -> http.Server
 
 function stopProject(project, reason = "manual stop") {
+  return runOnServer(serverOf(project), () => stopProjectHere(project, reason));
+}
+
+function stopProjectHere(project, reason) {
   const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
   try {
     const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
     child.on("error", () => {});
-  } catch {}
+  } catch (err) {
+    // A server that cannot be reached cannot have its container removed; say so rather than pretend.
+    if (currentServerId())
+      selfHeal?.logEvent?.(project, "remote_stop_failed", String(err.message), "error");
+  }
   const srv = staticServers.get(project);
   if (srv) {
     try {
@@ -1250,11 +1423,7 @@ function stopProject(project, reason = "manual stop") {
       rec.server.close();
     } catch {}
   }
-  if (rec.child?.pid && rec.child.pid !== process.pid) {
-    try {
-      process.kill(rec.child.pid);
-    } catch {}
-  }
+  if (rec.child?.pid && rec.child.pid !== process.pid) killTree(rec.child.pid, rec.child);
   publishRuntime(project, { ts: Date.now(), stream: "system", text: `stopped (${reason})` });
   running.delete(project);
   return true;
@@ -1519,8 +1688,33 @@ function pickPrimaryHttpPort(exposedPorts) {
 }
 
 async function startService(deploymentId, project, workdir, cmd, env, target, port) {
+  // The old version has to be gone, not just signalled, before the new one can bind the same port.
+  const previousPid = running.get(project)?.child?.pid;
   stopProject(project, "superseded by new deploy");
-  if (target === "docker" || target === "compose") {
+  if (previousPid && previousPid !== process.pid) await waitForTreeExit(previousPid);
+  const remoteServerId = currentServerId();
+  if (remoteServerId) {
+    // Projects on another server run as a single Docker container; nothing else is placed there.
+    if (target !== "docker") {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[server] ❌ Only Docker projects can run on a remote server (this project's target is "${target}").`,
+      });
+      return 1;
+    }
+    try {
+      await serverManager.ensureReady(remoteServerId);
+    } catch (err) {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "stderr",
+        text: `[server] ❌ ${err.message}`,
+      });
+      return 1;
+    }
+  }
+  if (!remoteServerId && (target === "docker" || target === "compose")) {
     const isDaemonUp = selfHeal ? await selfHeal.probeDockerDaemon() : true;
     if (!isDaemonUp) {
       publish(deploymentId, {
@@ -1540,59 +1734,11 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
     const projRow = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
     const isDirectImage =
       projRow?.source && !fs.existsSync(projRow.source) && !isGitSource(projRow.source);
-    const WELL_KNOWN_IMAGES = {
-      ollama: "ollama/ollama:latest",
-      "ollama/ollama": "ollama/ollama:latest",
-      vaultwarden: "vaultwarden/server:latest",
-      bitwarden: "vaultwarden/server:latest",
-      nginx: "nginx:alpine",
-      caddy: "caddy:latest",
-      redis: "redis:alpine",
-      postgres: "postgres:alpine",
-      postgresql: "postgres:alpine",
-      mariadb: "mariadb:latest",
-      mysql: "mysql:8.4",
-      grafana: "grafana/grafana:latest",
-      prometheus: "prom/prometheus:latest",
-      uptimekuma: "louislam/uptime-kuma:latest",
-      "uptime-kuma": "louislam/uptime-kuma:latest",
-      n8n: "n8nio/n8n:latest",
-      portainer: "portainer/portainer-ce:latest",
-      dockge: "louislam/dockge:latest",
-      traefik: "traefik:v3.1",
-      jellyfin: "jellyfin/jellyfin:latest",
-      immich: "ghcr.io/immich-app/immich-server:latest",
-      paperless: "ghcr.io/paperless-ngx/paperless-ngx:latest",
-      "paperless-ngx": "ghcr.io/paperless-ngx/paperless-ngx:latest",
-      plausible: "plausible/analytics:latest",
-      umami: "ghcr.io/umami-software/umami:postgresql-latest",
-      ghost: "ghost:alpine",
-      searxng: "searxng/searxng:latest",
-      calibre: "linuxserver/calibre-web:latest",
-      audiobookshelf: "ghcr.io/advplyr/audiobookshelf:latest",
-      "it-tools": "corentinth/it-tools:latest",
-      ittools: "corentinth/it-tools:latest",
-    };
 
     let tag = isDirectImage ? projRow.source : `hosterax/${cleanName}:latest`;
 
-    // Smart image tag normalization
-    if (isDirectImage) {
-      const rawTrimmed = tag.trim();
-      const cleanKey = rawTrimmed.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-      const baseName = rawTrimmed.split(":")[0];
-      const baseKey = baseName.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-
-      if (WELL_KNOWN_IMAGES[cleanKey]) {
-        tag = WELL_KNOWN_IMAGES[cleanKey];
-      } else if (WELL_KNOWN_IMAGES[baseKey]) {
-        tag = WELL_KNOWN_IMAGES[baseKey];
-      } else if (tag.endsWith(`:${cleanName}`) || tag.endsWith(`:${project.toLowerCase()}`)) {
-        tag = `${tag.split(":")[0]}:latest`;
-      } else if (!tag.includes(":")) {
-        tag = `${tag}:latest`;
-      }
-    }
+    // A bare name ("nginx", "uptime-kuma") becomes its usual image; a tag the user chose is kept as given.
+    if (isDirectImage) tag = normalizeImageSource(tag, project);
 
     let imageInspect = { exposedPorts: [], volumes: [], env: [] };
 
@@ -1741,11 +1887,42 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       containerInternalPort = projRow.port;
     }
 
-    // Allocate verified free host port
-    const hostPort = allocateProjectPort(project, containerInternalPort);
+    // Allocate verified free host port. For a remote project this is the port on THIS machine that
+    // reaches it (an SSH forward); the container itself publishes on the server's loopback only.
+    // (for a remote project this is the port the engine itself listens on for the forward)
+    const hostPort = await allocateFreeProjectPort(project, containerInternalPort, {
+      bindable: Boolean(remoteServerId),
+    });
     try {
       db.prepare("UPDATE projects SET port=? WHERE name=?").run(hostPort, project);
     } catch {}
+    let remotePort = null;
+    const allocateRemote = async (seed) => {
+      const taken = db
+        .prepare(
+          "SELECT remote_port FROM projects WHERE server_id=? AND name != ? AND remote_port IS NOT NULL",
+        )
+        .all(remoteServerId, project)
+        .map((r) => r.remote_port);
+      return serverManager.allocateRemotePort(remoteServerId, { seed, taken });
+    };
+    if (remoteServerId) {
+      try {
+        remotePort = await allocateRemote(project);
+      } catch (err) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "stderr",
+          text: `[server] ❌ Could not choose a port on the server: ${err.message}`,
+        });
+        return 1;
+      }
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "system",
+        text: `[server] container will publish on the server's loopback :${remotePort}, forwarded to :${hostPort} here`,
+      });
+    }
 
     // Persistent volume mappings (use reliable Docker Named Volumes for cross-platform stability)
     const volArgs = [];
@@ -1849,16 +2026,25 @@ pages:
       extraArgs = ["standalone"];
     }
 
-    const portArgs = ["-p", `${BIND_HOST}:${hostPort}:${containerInternalPort}`];
+    const portArgs = remoteServerId
+      ? ["-p", `127.0.0.1:${remotePort}:${containerInternalPort}`]
+      : [
+          "-p",
+          // a gated app is only reachable through its gate, so keep its own port off the network
+          `${gateManager.isEnabled(project) ? "127.0.0.1" : BIND_HOST}:${hostPort}:${containerInternalPort}`,
+        ];
+    // Extra ports (admin consoles, …) stay on the loopback of whichever machine runs the container.
+    const secondaryPort = async (key, containerPort) =>
+      remoteServerId ? allocateRemote(key) : allocateFreeProjectPort(key, containerPort);
     if (imageInspect.exposedPorts && imageInspect.exposedPorts.length > 1) {
       for (const p of imageInspect.exposedPorts) {
         if (p !== containerInternalPort) {
-          const secondaryHostPort = allocateProjectPort(`${project}_p${p}`, p);
+          const secondaryHostPort = await secondaryPort(`${project}_p${p}`, p);
           portArgs.push("-p", `127.0.0.1:${secondaryHostPort}:${p}`);
         }
       }
     } else if (tag.includes("minio")) {
-      const consoleHostPort = allocateProjectPort(`${project}_console`, 9001);
+      const consoleHostPort = await secondaryPort(`${project}_console`, 9001);
       portArgs.push("-p", `127.0.0.1:${consoleHostPort}:9001`);
     }
 
@@ -1939,14 +2125,40 @@ pages:
       return migrationRc;
     }
 
+    // A remote container is only reachable through the forward, so open it before probing.
+    let reachPort = hostPort;
+    if (remoteServerId) {
+      try {
+        const bound = await serverManager.forward(remoteServerId, {
+          id: project,
+          remotePort,
+          localPort: hostPort,
+          allowAnyPort: true, // taken since it was chosen: any free port will do, and it is recorded below
+        });
+        if (bound !== hostPort) {
+          db.prepare("UPDATE projects SET port=? WHERE name=?").run(bound, project);
+          reachPort = bound;
+        }
+        db.prepare("UPDATE projects SET remote_port=? WHERE name=?").run(remotePort, project);
+      } catch (err) {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "stderr",
+          text: `[server] ❌ Could not open the connection to the app on the server: ${err.message}`,
+        });
+        stopContainer(greenName);
+        return 1;
+      }
+    }
+
     // Step 3: Readiness health probe on the green container
     setPhase(deploymentId, "health_check");
     publish(deploymentId, {
       ts: Date.now(),
       stream: "system",
-      text: `[health] Starting readiness probe on port ${hostPort} (path: ${healthPath})...`,
+      text: `[health] Starting readiness probe on port ${reachPort} (path: ${healthPath})...`,
     });
-    const health = await waitForHealthy(deploymentId, hostPort, { healthPath });
+    const health = await waitForHealthy(deploymentId, reachPort, { healthPath });
 
     if (!health.healthy) {
       publish(deploymentId, {
@@ -2059,6 +2271,31 @@ const ALLOWED_PHASE_COLUMNS = new Set([
   "trigger",
   "version",
 ]);
+const notifiedDeployments = new Set();
+/** Tell the notification channels how a deployment ended (once per deployment). */
+function notifyDeployOutcome(id, phase) {
+  if (!["failed", "ready"].includes(phase) || notifiedDeployments.has(id)) return;
+  const d = db.prepare("SELECT project, version, trigger FROM deployments WHERE id=?").get(id);
+  if (!d) return;
+  notifiedDeployments.add(id);
+  if (notifiedDeployments.size > 500)
+    notifiedDeployments.delete(notifiedDeployments.values().next().value);
+  const failed = phase === "failed";
+  const tail = failed
+    ? readDeploymentLog(id, 40)
+        .split("\n")
+        .filter((l) => /error|✗|❌|failed|cannot|denied/i.test(l))
+        .slice(-3)
+        .join("\n")
+    : "";
+  notifier.notify(failed ? "deploy.failed" : "deploy.succeeded", {
+    title: `Deploy of ${d.project} ${failed ? "failed" : "finished"} (${d.version})`,
+    text: failed ? tail || "See the deployment log for details." : `Triggered by ${d.trigger}.`,
+    project: d.project,
+    severity: failed ? "error" : "info",
+  });
+}
+
 function setPhase(id, phase, extra = {}) {
   const fields = ["phase = ?"];
   const values = [phase];
@@ -2069,6 +2306,7 @@ function setPhase(id, phase, extra = {}) {
   }
   values.push(id);
   db.prepare(`UPDATE deployments SET ${fields.join(",")} WHERE id=?`).run(...values);
+  notifyDeployOutcome(id, phase);
 }
 
 /** Options that make runDeployment replay an earlier deployment (workdir + frozen snapshot). */
@@ -2089,6 +2327,10 @@ function rollbackOptions(dep, trigger = "rollback") {
 }
 
 async function runDeployment(project, opts = {}) {
+  return runOnServer(serverOf(project), () => runDeploymentHere(project, opts));
+}
+
+async function runDeploymentHere(project, opts = {}) {
   const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
   if (!p) throw new Error("no such project");
   const id = "d_" + crypto.randomBytes(8).toString("hex");
@@ -2136,7 +2378,9 @@ async function runDeployment(project, opts = {}) {
 
         const det = detectStack(workdir, p, id);
         finalStartCmd = det.start_cmd || p.start_cmd;
-        finalPort = allocateProjectPort(project, p.port || det.port || 3000);
+        finalPort = await allocateFreeProjectPort(project, p.port || det.port || 3000, {
+          bindable: true,
+        });
         try {
           db.prepare("UPDATE projects SET port=? WHERE name=?").run(finalPort, project);
         } catch {}
@@ -2401,6 +2645,10 @@ function getSystemMetrics() {
 }
 
 async function getContainerMetrics(projectName) {
+  return runOnServer(serverOf(projectName), () => getContainerMetricsHere(projectName));
+}
+
+async function getContainerMetricsHere(projectName) {
   const cleanName = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
   return new Promise((resolve) => {
     const cp = spawn("docker", [
@@ -2453,10 +2701,6 @@ function json(res, code, body) {
 
 const dashboard = createDashboard({ log: (m) => console.warn(m) });
 const PORT = Number(process.env.HOSTERAX_PORT || 7777);
-// Interface that deployed apps publish on. Use 127.0.0.1 to force all traffic through the edge proxy.
-const BIND_HOST = /^[0-9.]+$|^::1?$/.test(process.env.HOSTERAX_BIND_HOST || "")
-  ? process.env.HOSTERAX_BIND_HOST
-  : "0.0.0.0";
 function readBody(req, maxSizeBytes = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let s = "";
@@ -2599,6 +2843,8 @@ const projectsApi = createProjectsApi({
   json,
   readBody,
   stopProject,
+  serverManager,
+  gateManager,
   purgeDatabases: async (projectName) => {
     for (const row of db.prepare("SELECT * FROM managed_dbs WHERE project=?").all(projectName))
       await removeManagedDatabase(row);
@@ -2606,6 +2852,10 @@ const projectsApi = createProjectsApi({
 });
 
 async function restartService(project) {
+  return runOnServer(serverOf(project), () => restartServiceHere(project));
+}
+
+async function restartServiceHere(project) {
   const p = db.prepare("SELECT * FROM projects WHERE name=?").get(project);
   if (!p) return;
   const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
@@ -2624,6 +2874,10 @@ async function restartService(project) {
         p.port || 3000,
       );
     } else {
+      // Without a deployment there is nothing to replay, and a bare `docker run` would publish on the
+      // server's public interface; remote projects always start from a deployment.
+      if (currentServerId())
+        throw new Error(`Deploy "${project}" first; it has never been deployed.`);
       const hostPort = p.port || 3002;
       const tag = p.source || `${project}:latest`;
       spawnSync("docker", ["rm", "-f", `hx_${cleanName}`]);
@@ -2682,13 +2936,22 @@ function readDeploymentLog(deploymentId, lines = 0) {
 
 function dockerCli(args, timeout = 60000) {
   return new Promise((resolve) => {
-    execFile(
-      "docker",
-      args,
-      { encoding: "utf8", timeout, maxBuffer: 8 * 1024 * 1024 },
-      (err, stdout, stderr) =>
-        resolve({ ok: !err, stdout: stdout || "", stderr: (stderr || err?.message || "").trim() }),
-    );
+    try {
+      execFile(
+        "docker",
+        args,
+        { encoding: "utf8", timeout, maxBuffer: 8 * 1024 * 1024 },
+        (err, stdout, stderr) =>
+          resolve({
+            ok: !err,
+            stdout: stdout || "",
+            stderr: (stderr || err?.message || "").trim(),
+          }),
+      );
+    } catch (err) {
+      // e.g. the project's server is not connected: report it like any other failed command
+      resolve({ ok: false, stdout: "", stderr: String(err.message) });
+    }
   });
 }
 
@@ -2771,6 +3034,13 @@ const lifecycle = {
     return { ok: true, status: "running", restartedAt: Date.now() };
   },
 };
+
+// Every lifecycle action works on the server the project lives on.
+for (const action of ["runtimeLogs", "_exists", "stop", "start", "restart"]) {
+  const inner = lifecycle[action];
+  lifecycle[action] = (project, ...rest) =>
+    runOnServer(serverOf(project), () => inner.call(lifecycle, project, ...rest));
+}
 
 // ───────────── Managed databases ─────────────
 try {
@@ -2950,6 +3220,18 @@ const catalogApi = createCatalogApi({ db, HOME, readBody });
 const selfHeal = new SelfHealEngine({
   db,
   dockerApi,
+  servers: {
+    statusOf: (serverId) => {
+      const s = serverManager.getServer(serverId);
+      return s ? { name: s.name, ready: s.ready, error: s.last_error } : null;
+    },
+    dockerApiFor: (serverId) => dockerApiForServer(serverId),
+    readyRemoteIds: () =>
+      serverManager
+        .listServers()
+        .filter((s) => s.type === "remote" && s.ready)
+        .map((s) => s.id),
+  },
   publish: (project, msg) => {
     const dep = db
       .prepare("SELECT id FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
@@ -2964,6 +3246,8 @@ const selfHeal = new SelfHealEngine({
   },
   HOME,
 });
+
+selfHeal.onEvent = (e) => notifier.fromEvent(e);
 
 let s3Storage = null;
 try {
@@ -3355,7 +3639,11 @@ const server = http.createServer(async (req, res) => {
     const query = url.searchParams.get("query") || "";
     const level = url.searchParams.get("level") || "all";
     const limit = Number(url.searchParams.get("limit") || 100);
-    return json(res, 200, metricsManager.searchLogs(proj, { query, level, limit }));
+    return json(
+      res,
+      200,
+      runOnServer(serverOf(proj), () => metricsManager.searchLogs(proj, { query, level, limit })),
+    );
   }
 
   if (url.pathname === "/api/alerts" && req.method === "GET") {
@@ -3578,7 +3866,7 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/heal$/)) && req.method === "POST") {
       const p = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
       if (!p) return json(res, 404, { error: "project not found" });
-      await selfHeal.probeAndHealProject(p);
+      await selfHeal.probeProject(p);
       return json(res, 200, selfHeal.getStatusSummary().projects[m[1]] || { status: "unknown" });
     }
     if (
@@ -3685,21 +3973,20 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)$/)) && req.method === "DELETE") {
       const projName = m[1];
       const cleanName = projName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      const removedServer = serverOf(projName);
       db.prepare("DELETE FROM projects WHERE name=?").run(projName);
       db.prepare("DELETE FROM deployments WHERE project=?").run(projName);
       db.prepare("DELETE FROM domains WHERE project=?").run(projName);
       db.prepare("DELETE FROM managed_dbs WHERE project=?").run(projName);
       selfHeal.untrack(projName);
       try {
-        spawnSync("docker", ["rm", "-f", `hx_${cleanName}`], { timeout: 5000 });
+        runOnServer(removedServer, () =>
+          spawnSync("docker", ["rm", "-f", `hx_${cleanName}`], { timeout: 5000 }),
+        );
       } catch {}
-      const r = running.get(projName);
-      if (r) {
-        try {
-          process.kill(r.pid);
-        } catch {}
-        running.delete(projName);
-      }
+      if (removedServer) serverManager.unforward(removedServer, projName).catch(() => {});
+      gateManager.disable(projName).catch(() => {});
+      stopProject(projName, "project deleted");
       return json(res, 200, { ok: true });
     }
 
@@ -3949,6 +4236,176 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ────────── Magic DNS settings ──────────
+    // ── public access: tunnels ──
+    if (url.pathname === "/api/tunnels/providers" && req.method === "GET") {
+      return json(res, 200, tunnelManager.providers());
+    }
+    // ────────── Password gate ──────────
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/gate$/))) {
+      const gateProject = decodeURIComponent(m[1]);
+      if (!db.prepare("SELECT 1 FROM projects WHERE name=?").get(gateProject))
+        return json(res, 404, { error: "project not found" });
+      if (req.method === "GET") return json(res, 200, gateManager.status(gateProject));
+      if (req.method === "PUT") {
+        const b = await readBody(req);
+        try {
+          await gateManager.enable(gateProject, b.password);
+        } catch (err) {
+          return json(res, 400, { error: err.message });
+        }
+        return json(res, 200, {
+          ...gateManager.status(gateProject),
+          note: "Routes and public addresses now go through the password page. If the app is already running, redeploy it so its own port stops being reachable from the network.",
+        });
+      }
+      if (req.method === "DELETE") {
+        await gateManager.disable(gateProject);
+        return json(res, 200, { enabled: false });
+      }
+    }
+
+    // ────────── Notifications ──────────
+    if (url.pathname === "/api/notifications" && req.method === "GET") {
+      return json(res, 200, {
+        channels: notifier.list(),
+        events: EVENT_KINDS,
+        types: CHANNEL_TYPES,
+        recent: notifier.recentLog(30),
+      });
+    }
+    if (url.pathname === "/api/notifications" && req.method === "POST") {
+      try {
+        return json(res, 201, notifier.create(await readBody(req)));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if (
+      (m = url.pathname.match(/^\/api\/notifications\/([^/]+)\/test$/)) &&
+      req.method === "POST"
+    ) {
+      try {
+        return json(res, 200, await notifier.test(m[1]));
+      } catch (err) {
+        return json(res, 404, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/notifications\/([^/]+)$/)) && req.method === "PATCH") {
+      try {
+        return json(res, 200, notifier.update(m[1], await readBody(req)));
+      } catch (err) {
+        return json(res, /not found/.test(err.message) ? 404 : 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/notifications\/([^/]+)$/)) && req.method === "DELETE") {
+      return notifier.remove(m[1])
+        ? json(res, 200, { ok: true })
+        : json(res, 404, { error: "Notification channel not found" });
+    }
+
+    if (url.pathname === "/api/tunnels" && req.method === "GET") {
+      return json(res, 200, tunnelManager.list());
+    }
+    if (url.pathname === "/api/tunnels" && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return json(res, 201, tunnelManager.create(b));
+      } catch (err) {
+        return json(res, 400, { error: err.message });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/tunnels\/([^/]+)$/)) && req.method === "GET") {
+      const t = tunnelManager.get(m[1]);
+      return t ? json(res, 200, t) : json(res, 404, { error: "tunnel not found" });
+    }
+    if ((m = url.pathname.match(/^\/api\/tunnels\/([^/]+)$/)) && req.method === "DELETE") {
+      return tunnelManager.remove(m[1])
+        ? json(res, 200, { ok: true })
+        : json(res, 404, { error: "tunnel not found" });
+    }
+    if ((m = url.pathname.match(/^\/api\/tunnels\/([^/]+)\/logs$/)) && req.method === "GET") {
+      const lines = tunnelManager.logs(m[1]);
+      return lines ? json(res, 200, { lines }) : json(res, 404, { error: "tunnel not found" });
+    }
+    if (
+      (m = url.pathname.match(/^\/api\/tunnels\/([^/]+)\/(start|stop|restart)$/)) &&
+      req.method === "POST"
+    ) {
+      const t =
+        m[2] === "start"
+          ? tunnelManager.enable(m[1])
+          : m[2] === "stop"
+            ? tunnelManager.disable(m[1])
+            : tunnelManager.restart(m[1]);
+      return t ? json(res, 200, t) : json(res, 404, { error: "tunnel not found" });
+    }
+    // what this machine's public address is, and whether it can be reached without a tunnel
+    if (url.pathname === "/api/expose/public-ip" && req.method === "GET") {
+      const configured = getServerIp();
+      const found = await detectPublicIp();
+      if (!found)
+        return json(res, 200, {
+          ip: null,
+          configured,
+          error: "could not reach any address-lookup service (is this machine offline?)",
+        });
+      const assignedToThisMachine = edgeManager.getLocalIps().includes(found.ip);
+      return json(res, 200, {
+        ip: found.ip,
+        source: found.source,
+        configured,
+        configuredMatches: configured === found.ip,
+        assignedToThisMachine,
+        advice: assignedToThisMachine
+          ? "This machine has a public address of its own. Apps are reachable on it once ports 80 and 443 are open in the firewall."
+          : "This machine is behind a router or carrier NAT, so people on the internet cannot reach this address directly. Use a tunnel, or forward ports 80 and 443 on your router.",
+      });
+    }
+    if (url.pathname === "/api/expose/public-ip" && req.method === "POST") {
+      const b = await readBody(req);
+      let ip = b.ip ? String(b.ip).trim() : "";
+      if (!ip) {
+        const found = await detectPublicIp();
+        if (!found) return json(res, 502, { error: "could not detect the public address" });
+        ip = found.ip;
+      }
+      const octets = ip.split(".").map(Number);
+      if (octets.length !== 4 || octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255))
+        return json(res, 400, { error: "give an IPv4 address such as 203.0.113.9" });
+      if (isPrivateAddress(ip))
+        return json(res, 400, {
+          error: `${ip} is a private address; the internet cannot reach it`,
+        });
+      setSetting("server_public_ip", ip);
+      return json(res, 200, { ok: true, ip });
+    }
+    // expose every deployed project automatically (off by default)
+    if (url.pathname === "/api/expose/auto" && req.method === "GET") {
+      return json(res, 200, {
+        enabled: getSetting("tunnels_auto_expose", "0") === "1",
+        provider: getSetting("tunnels_auto_provider", "auto"),
+      });
+    }
+    if (url.pathname === "/api/expose/auto" && req.method === "PUT") {
+      const b = await readBody(req);
+      if (b.provider !== undefined) {
+        const def = TUNNEL_PROVIDERS[b.provider];
+        const ok =
+          b.provider === "auto" ||
+          (def && !def.custom && !def.targetOnly && !def.options.some((o) => o.required));
+        if (!ok)
+          return json(res, 400, {
+            error:
+              "automatic exposure needs auto or a provider that requires no account or settings",
+          });
+        setSetting("tunnels_auto_provider", b.provider);
+      }
+      if (b.enabled !== undefined) setSetting("tunnels_auto_expose", b.enabled ? "1" : "0");
+      return json(res, 200, {
+        enabled: getSetting("tunnels_auto_expose", "0") === "1",
+        provider: getSetting("tunnels_auto_provider", "auto"),
+      });
+    }
     if (url.pathname === "/api/settings/magic-dns" && req.method === "GET") {
       const activeProvider = getSetting("magic_dns_provider", "sslip.io");
       const list = Object.entries(MAGIC_DNS_PROVIDERS).map(([id, p]) => ({
@@ -4315,6 +4772,34 @@ const server = http.createServer(async (req, res) => {
         return json(res, 500, { error: err.message });
       }
     }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)\/host-key$/)) && req.method === "GET") {
+      try {
+        return json(res, 200, await serverManager.scanHostKey(m[1]));
+      } catch (err) {
+        return json(res, err.code === "no_ssh_client" ? 501 : 502, {
+          error: err.message,
+          code: err.code,
+        });
+      }
+    }
+    if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)\/host-key$/)) && req.method === "POST") {
+      const b = await readBody(req);
+      try {
+        return json(
+          res,
+          200,
+          await serverManager.pinHostKey(m[1], {
+            fingerprint: b.fingerprint,
+            replace: b.replace === true,
+          }),
+        );
+      } catch (err) {
+        return json(res, err.code === "fingerprint_mismatch" ? 409 : 400, {
+          error: err.message,
+          code: err.code,
+        });
+      }
+    }
     if ((m = url.pathname.match(/^\/api\/servers\/([^/]+)\/bootstrap$/)) && req.method === "GET") {
       const script = serverManager.getBootstrapScript(m[1]);
       res.writeHead(200, { "Content-Type": "text/plain" });
@@ -4667,9 +5152,11 @@ const server = http.createServer(async (req, res) => {
 
       let logs = "";
       try {
-        const logRes = spawnSync("docker", ["logs", "--tail", "60", `hx_${proj.name}`], {
-          encoding: "utf8",
-        });
+        const logRes = runOnServer(serverOf(proj.name), () =>
+          spawnSync("docker", ["logs", "--tail", "60", `hx_${proj.name}`], {
+            encoding: "utf8",
+          }),
+        );
         logs = (logRes.stdout || "") + (logRes.stderr || "");
       } catch {}
 
@@ -5230,6 +5717,7 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, cfg);
       }
       if (req.method === "POST") {
+        if (serverOf(projectName)) return json(res, 400, { error: SCALE_TO_ZERO_REMOTE });
         const b = await readBody(req);
         const cfg = scaleToZeroManager.setConfig(projectName, {
           enabled: Boolean(b.enabled),
@@ -5242,11 +5730,13 @@ const server = http.createServer(async (req, res) => {
     // Manual Sleep & Wake
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/sleep$/)) && req.method === "POST") {
       const projectName = decodeURIComponent(m[1]);
+      if (serverOf(projectName)) return json(res, 400, { error: SCALE_TO_ZERO_REMOTE });
       const r = await scaleToZeroManager.sleepProject(projectName);
       return json(res, r.ok ? 200 : 400, r);
     }
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/wake$/)) && req.method === "POST") {
       const projectName = decodeURIComponent(m[1]);
+      if (serverOf(projectName)) return json(res, 400, { error: SCALE_TO_ZERO_REMOTE });
       const r = await scaleToZeroManager.wakeProject(projectName);
       return json(res, r.ok ? 200 : 400, r);
     }
@@ -5334,6 +5824,9 @@ server.listen(PORT, () => {
   console.log(`HosteraX engine listening on http://localhost:${PORT}`);
   selfHeal.start();
   backupScheduler.start();
+  tunnelManager.start();
+  serverManager.start();
+  gateManager.start().catch(() => {});
 });
 
 // ── Global Process Resilience & Crash Traps ──
@@ -5352,6 +5845,9 @@ function handleGracefulShutdown(signal) {
     selfHeal?.stop?.();
     scaleToZeroManager?.stop?.();
     backupScheduler.stop();
+    tunnelManager.stop();
+    serverManager.stop().catch(() => {});
+    gateManager.stop().catch(() => {});
     dashboard.close();
     server.close(() => {
       console.log("[hosterax-engine] HTTP server closed.");
