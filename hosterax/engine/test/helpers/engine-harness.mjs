@@ -1,5 +1,5 @@
 // Starts real engines (child processes with a private HOME) for end-to-end tests.
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import net from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -104,8 +104,21 @@ export function createHarness(prefix = "hosterax-e2e-") {
     }
   }
 
+  /**
+   * Waits until no process still mentions the scratch directory. An engine that is killed leaves behind what it
+   * had started (a certificate being generated, say), and that keeps writing into the directory being deleted.
+   */
+  async function settle(ms = 15000) {
+    if (process.platform === "win32") return;
+    for (const end = Date.now() + ms; Date.now() < end;) {
+      if (spawnSync("pgrep", ["-f", scratch]).status !== 0) return;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
   async function cleanup() {
     for (const e of engines) await e.stop();
+    await settle();
     rmSync(scratch, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   }
 

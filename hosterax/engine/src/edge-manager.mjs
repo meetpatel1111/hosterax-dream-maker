@@ -331,9 +331,11 @@ export class EdgeManager {
       await this.generateOpenRestyConfigs(routeList, settings);
       await this.reloadOpenResty(settings);
     } else {
-      // External mode: generate both exports
+      // External mode: generate both exports, and stop the proxy HosteraX itself started (if it did) so its
+      // ports are free for the one you run
       await this.generateCaddyfile(routeList, settings);
       await this.generateOpenRestyConfigs(routeList, settings);
+      await this.ensureEdgeContainerRunning("external", settings);
     }
 
     this.db.prepare("UPDATE edge_settings SET last_sync_at=? WHERE id=1").run(Date.now());
@@ -856,14 +858,21 @@ http {
    */
   async ensureEdgeContainerRunning(provider, settings) {
     if (provider === "external") {
-      try {
-        await new Promise((resolve) => {
-          const child = spawn("docker", ["rm", "-f", "hx_edge"], { encoding: "utf8" });
-          child.on("close", resolve);
-          child.on("error", resolve);
-        });
-      } catch {}
-      this.db.prepare("UPDATE edge_settings SET is_running=0 WHERE id=1").run();
+      // Stop the proxy this engine started when it was switched to "external"; never remove an `hx_edge` it
+      // did not start (another HosteraX on the same Docker daemon owns that one).
+      const startedHere = this.db
+        .prepare("SELECT is_running FROM edge_settings WHERE id=1")
+        .get()?.is_running;
+      if (startedHere) {
+        try {
+          await new Promise((resolve) => {
+            const child = spawn("docker", ["rm", "-f", "hx_edge"], { encoding: "utf8" });
+            child.on("close", resolve);
+            child.on("error", resolve);
+          });
+        } catch {}
+        this.db.prepare("UPDATE edge_settings SET is_running=0 WHERE id=1").run();
+      }
       return;
     }
 

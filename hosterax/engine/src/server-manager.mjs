@@ -638,12 +638,22 @@ export class ServerManager {
    */
   async forward(serverId, { id, remotePort, localPort }) {
     await this.ensureReady(serverId);
-    const bound = await this.transport.forward(serverId, {
-      id,
-      remotePort,
-      localPort: localPort || 0,
-      bindHost: this.bindHost,
-    });
+    const open = (port) =>
+      this.transport.forward(serverId, {
+        id,
+        remotePort,
+        localPort: port,
+        bindHost: this.bindHost,
+      });
+    let bound;
+    try {
+      bound = await open(localPort || 0);
+    } catch (err) {
+      // The port was free when it was chosen and taken by the time it was bound (another app, another
+      // engine). Any free port will do: the caller records whichever one it gets.
+      if (!localPort || !/EADDRINUSE|address already in use/i.test(String(err?.message))) throw err;
+      bound = await open(0);
+    }
     this._desired(serverId).set(id, { remotePort, localPort: bound });
     return bound;
   }
