@@ -108,3 +108,17 @@ test("docs/THIRD_PARTY.md is up to date", () => {
   const have = fs.existsSync(OUTPUT) ? fs.readFileSync(OUTPUT, "utf8").replace(/\r\n/g, "\n") : "";
   assert.equal(have, want, "run `npm run licenses:write`");
 });
+
+test("an out-of-date inventory says which packages differ", async () => {
+  const { describeDifference } = await import("../../../scripts/licenses.mjs");
+  const committed = ["**MIT** (3): alpha, beta, gamma", "| better-sqlite3 | 13.0.3 | MIT |"].join(
+    "\n",
+  );
+  const here = ["**MIT** (3): alpha, gamma, delta", "| better-sqlite3 | 13.0.4 | MIT |"].join("\n");
+  const said = describeDifference(committed, here);
+  assert.match(said, /only on this machine: .*delta/);
+  assert.match(said, /only on this machine: .*13\.0\.4/);
+  assert.match(said, /only in the committed file: .*beta/);
+  assert.match(said, /only in the committed file: .*13\.0\.3/);
+  assert.doesNotMatch(said, /alpha|gamma/, "what both have is not mentioned");
+});

@@ -636,7 +636,7 @@ export class ServerManager {
    * Make `remotePort` on the server (an app published on its loopback) reachable here on `localPort`.
    * Returns the local port that is listening.
    */
-  async forward(serverId, { id, remotePort, localPort }) {
+  async forward(serverId, { id, remotePort, localPort, allowAnyPort = false }) {
     await this.ensureReady(serverId);
     const open = (port) =>
       this.transport.forward(serverId, {
@@ -650,8 +650,10 @@ export class ServerManager {
       bound = await open(localPort || 0);
     } catch (err) {
       // The port was free when it was chosen and taken by the time it was bound (another app, another
-      // engine). Any free port will do: the caller records whichever one it gets.
-      if (!localPort || !/EADDRINUSE|address already in use/i.test(String(err?.message))) throw err;
+      // engine), or one this process may not bind. A caller that records the port it gets (a deploy) can say
+      // any free port will do; restoring a forward that routes already point at must not move silently.
+      const unusable = /EADDRINUSE|EACCES|address already in use|permission denied/i;
+      if (!allowAnyPort || !localPort || !unusable.test(String(err?.message))) throw err;
       bound = await open(0);
     }
     this._desired(serverId).set(id, { remotePort, localPort: bound });

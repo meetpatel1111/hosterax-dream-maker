@@ -216,6 +216,27 @@ export function render({ engine, dashboard }) {
   return out.join("\n");
 }
 
+/** Which entries differ between the committed inventory and what this machine would generate. */
+export function describeDifference(have, want) {
+  const items = (text) =>
+    new Set(
+      text
+        .split("\n")
+        .flatMap((line) => line.replace(/^\*\*[^*]+\*\*\s*\(\d+\):\s*/, "").split(/,\s+|\s*\|\s*/))
+        .map((x) => x.trim())
+        .filter(Boolean),
+    );
+  const a = items(have);
+  const b = items(want);
+  const onlyHere = [...b].filter((x) => !a.has(x));
+  const onlyCommitted = [...a].filter((x) => !b.has(x));
+  const show = (list) => (list.length ? list.slice(0, 25).join(", ") : "(nothing)");
+  return [
+    `  only on this machine: ${show(onlyHere)}`,
+    `  only in the committed file: ${show(onlyCommitted)}`,
+  ].join("\n");
+}
+
 export function gather() {
   return {
     engine: collect(path.join(ROOT, "hosterax", "engine")),
@@ -244,6 +265,7 @@ async function main() {
       : "";
     if (have !== text) {
       console.error(`${path.relative(ROOT, OUTPUT)} is out of date. Run: npm run licenses:write`);
+      console.error(describeDifference(have, text));
       process.exit(1);
     }
     console.log("licences are in policy and the inventory is up to date");

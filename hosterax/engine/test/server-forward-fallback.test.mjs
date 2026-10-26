@@ -24,7 +24,12 @@ test("a forward whose wanted port is taken binds a free one and records it", asy
       throw new Error("listen EADDRINUSE: address already in use 127.0.0.1:3001");
     return 40123;
   });
-  const bound = await m.forward("srv", { id: "app", remotePort: 22001, localPort: 3001 });
+  const bound = await m.forward("srv", {
+    id: "app",
+    remotePort: 22001,
+    localPort: 3001,
+    allowAnyPort: true,
+  });
   assert.equal(bound, 40123);
   assert.deepEqual(asked, [3001, 0], "the wanted port first, then any free one");
   assert.deepEqual(desired.get("app"), { remotePort: 22001, localPort: 40123 });
@@ -53,4 +58,32 @@ test("other failures are not retried, and asking for any port is not retried eit
   });
   await assert.rejects(busy.m.forward("srv", { id: "b", remotePort: 22001 }), /EADDRINUSE/);
   assert.equal(calls, 1, "with no wanted port there is nothing to fall back from");
+});
+
+test("restoring a forward is not moved silently: without the opt-in the failure is reported", async () => {
+  const asked = [];
+  const { m, desired } = manager(async (serverId, opts) => {
+    asked.push(opts.localPort);
+    throw new Error("listen EADDRINUSE: address already in use 127.0.0.1:3001");
+  });
+  await assert.rejects(
+    m.forward("srv", { id: "app", remotePort: 22001, localPort: 3001 }),
+    /EADDRINUSE/,
+  );
+  assert.deepEqual(asked, [3001]);
+  assert.equal(desired.has("app"), false);
+});
+
+test("a port this process is not allowed to bind also falls back, when the caller allows it", async () => {
+  const asked = [];
+  const { m } = manager(async (serverId, opts) => {
+    asked.push(opts.localPort);
+    if (opts.localPort === 80) throw new Error("listen EACCES: permission denied 127.0.0.1:80");
+    return 40124;
+  });
+  assert.equal(
+    await m.forward("srv", { id: "app", remotePort: 22001, localPort: 80, allowAnyPort: true }),
+    40124,
+  );
+  assert.deepEqual(asked, [80, 0]);
 });

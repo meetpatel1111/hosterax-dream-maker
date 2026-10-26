@@ -6,6 +6,7 @@
 
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import net from "node:net";
 import { spawnSync } from "node:child_process";
 import { createHarness } from "./helpers/engine-harness.mjs";
 import { startSshFixture, sshToolsAvailable } from "./helpers/ssh-fixture.mjs";
@@ -18,6 +19,16 @@ let fx;
 let engine;
 let admin;
 let home;
+/** A port nothing is listening on, to ask for as a project's own. */
+const aFreePort = () =>
+  new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+
 let serverId;
 const api = (method, path, body) => h.call(engine, admin, method, path, body);
 
@@ -121,6 +132,9 @@ test(
       target: "docker",
       serverId,
       env: { GREETING: "hello" },
+      // a port of its own: the shared default range is also used by every other test's apps, and a later test
+      // needs this one to still be free after an engine restart
+      port: await aFreePort(),
     });
     assert.equal(created.status, 201, created.text);
     assert.equal(created.data.serverId, serverId);

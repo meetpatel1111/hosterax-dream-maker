@@ -42,6 +42,7 @@ import {
 import { SelfHealEngine } from "./self-heal.mjs";
 import { pullWithUniversalHealing, normalizeImageSource } from "./image-resolver.mjs";
 import { killTree, waitForTreeExit } from "./process-tree.mjs";
+import { choosePort } from "./port-check.mjs";
 import { TLSManager } from "./tls-manager.mjs";
 import { EdgeManager } from "./edge-manager.mjs";
 import { BackupManager } from "./backup-manager.mjs";
@@ -791,19 +792,22 @@ export function allocateProjectPort(projectName, preferredPort = null, avoid = n
  * deployed successfully yet; once it has been, the app listening on its port may be the project itself (a
  * redeploy starts the new version before the old one is gone), so it keeps the port it has.
  */
-async function allocateFreeProjectPort(projectName, preferredPort = null) {
+async function allocateFreeProjectPort(
+  projectName,
+  preferredPort = null,
+  { bindable = false } = {},
+) {
   const owned = db
     .prepare(
       "SELECT p.port FROM projects p WHERE LOWER(p.name)=LOWER(?) AND EXISTS (SELECT 1 FROM deployments d WHERE LOWER(d.project)=LOWER(?) AND d.phase='ready')",
     )
     .get(projectName, projectName)?.port;
-  const avoid = new Set();
-  for (let attempt = 0; attempt < 500; attempt++) {
-    const port = allocateProjectPort(projectName, preferredPort, avoid);
-    if (port === owned || (await isPortFree(port))) return port;
-    avoid.add(port);
-  }
-  throw new Error("no free port could be found on this machine");
+  return choosePort({
+    pick: (wanted, avoid) => allocateProjectPort(projectName, wanted, avoid),
+    wanted: preferredPort,
+    bindable,
+    owned,
+  });
 }
 
 // Interface that deployed apps publish on. Use 127.0.0.1 to force all traffic through the edge proxy.
@@ -1884,7 +1888,10 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
 
     // Allocate verified free host port. For a remote project this is the port on THIS machine that
     // reaches it (an SSH forward); the container itself publishes on the server's loopback only.
-    const hostPort = await allocateFreeProjectPort(project, containerInternalPort);
+    // (for a remote project this is the port the engine itself listens on for the forward)
+    const hostPort = await allocateFreeProjectPort(project, containerInternalPort, {
+      bindable: Boolean(remoteServerId),
+    });
     try {
       db.prepare("UPDATE projects SET port=? WHERE name=?").run(hostPort, project);
     } catch {}
@@ -2125,6 +2132,7 @@ pages:
           id: project,
           remotePort,
           localPort: hostPort,
+          allowAnyPort: true, // taken since it was chosen: any free port will do, and it is recorded below
         });
         if (bound !== hostPort) {
           db.prepare("UPDATE projects SET port=? WHERE name=?").run(bound, project);
@@ -2369,7 +2377,9 @@ async function runDeploymentHere(project, opts = {}) {
 
         const det = detectStack(workdir, p, id);
         finalStartCmd = det.start_cmd || p.start_cmd;
-        finalPort = await allocateFreeProjectPort(project, p.port || det.port || 3000);
+        finalPort = await allocateFreeProjectPort(project, p.port || det.port || 3000, {
+          bindable: true,
+        });
         try {
           db.prepare("UPDATE projects SET port=? WHERE name=?").run(finalPort, project);
         } catch {}
