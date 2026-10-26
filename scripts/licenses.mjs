@@ -54,7 +54,12 @@ export function collect(dir) {
     if (license && typeof license === "object") license = license.type;
     if (!license && Array.isArray(pkg.licenses))
       license = pkg.licenses.map((l) => l.type).join(" OR ");
-    found.set(key, { name: pkg.name, version: pkg.version, license: license || "UNSPECIFIED" });
+    found.set(key, {
+      name: pkg.name,
+      version: pkg.version,
+      license: license || "UNSPECIFIED",
+      location: path.dirname(manifest), // for diagnosing a mismatch; not part of the inventory
+    });
     for (const dep of Object.keys(pkg.dependencies || {}))
       queue.push({ name: dep, from: path.dirname(manifest) });
   }
@@ -269,6 +274,17 @@ async function main() {
     if (have !== text) {
       console.error(`${path.relative(ROOT, OUTPUT)} is out of date. Run: npm run licenses:write`);
       console.error(describeDifference(have, text));
+      // where the engine's packages were found tells a stray tree from a real difference
+      const inside = (p) =>
+        p.location.startsWith(path.join(ROOT, "hosterax", "engine", "node_modules"));
+      const outside = data.engine.filter((p) => !inside(p));
+      console.error(
+        `  engine packages: ${data.engine.length} (${outside.length} found outside hosterax/engine/node_modules)`,
+      );
+      for (const p of data.engine.slice(0, 6))
+        console.error(`    ${p.name}@${p.version}  ${p.location}`);
+      for (const p of outside.slice(0, 4))
+        console.error(`    outside: ${p.name}@${p.version}  ${p.location}`);
       process.exit(1);
     }
     console.log("licences are in policy and the inventory is up to date");
