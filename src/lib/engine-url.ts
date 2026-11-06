@@ -1,20 +1,12 @@
 /**
  * Where the engine is, when the user has not chosen an address in Settings.
  *
- * When the engine itself served this page (Docker, `npx hosterax`, the desktop app) it says so with a
- * `Server-Timing: hosterax` header, and the engine is simply this page's origin — whatever port it
- * runs on. Anywhere else (the Vite dev server, a preview host) the conventional local address is used.
+ * For local operations, defaults to the current origin (proxied to the local HosteraX SQLite engine)
+ * or loopback 127.0.0.1:7777 on the server.
  */
-export const FALLBACK_ENGINE_URL = "http://localhost:7777";
+export const FALLBACK_ENGINE_URL = "";
 
 export function defaultEngineUrl(): string {
-  if (typeof window === "undefined") return FALLBACK_ENGINE_URL;
-  try {
-    const nav = performance.getEntriesByType("navigation")[0] as
-      PerformanceNavigationTiming | undefined;
-    if (nav?.serverTiming?.some((t) => t.name === "hosterax")) return window.location.origin;
-  } catch {
-    /* Server-Timing is unavailable — use the fallback */
-  }
-  return FALLBACK_ENGINE_URL;
+  if (typeof window === "undefined") return "http://127.0.0.1:7777";
+  return window.location.origin;
 }
