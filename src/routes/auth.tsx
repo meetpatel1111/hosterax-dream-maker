@@ -276,9 +276,6 @@ function AuthPage() {
                 <Key className="h-3 w-3" /> The first token is printed in the engine's console when
                 it starts. Create more under API tokens.
               </p>
-              <p className="text-[11px] text-muted-foreground">
-                The token stays in memory and is cleared when you reload or close this page.
-              </p>
               <button
                 type="submit"
                 disabled={busy}

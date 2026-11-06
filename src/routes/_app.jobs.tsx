@@ -94,7 +94,7 @@ function formatRelativeTime(ts?: number | null): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-export default function JobsPage() {
+function JobsPage() {
   const eng = useEngine();
   const {
     data: jobs = [],

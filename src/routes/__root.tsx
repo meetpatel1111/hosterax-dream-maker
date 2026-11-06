@@ -40,9 +40,23 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
   console.error(error);
   const router = useRouter();
   const errorMessage = error instanceof Error ? error.message : String(error);
+  const isChunkError =
+    errorMessage.includes("Failed to fetch dynamically imported module") ||
+    errorMessage.includes("dynamically imported module") ||
+    errorMessage.includes("Loading chunk");
+
   useEffect(() => {
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
-  }, [error]);
+    if (isChunkError && typeof window !== "undefined") {
+      const reloadKey = "hx_chunk_reload";
+      const last = sessionStorage.getItem(reloadKey);
+      const now = Date.now();
+      if (!last || now - Number(last) > 15000) {
+        sessionStorage.setItem(reloadKey, String(now));
+        window.location.reload();
+      }
+    }
+  }, [error, isChunkError]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -55,12 +69,16 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
         <div className="mt-6 flex justify-center gap-2">
           <button
             onClick={() => {
-              router.invalidate();
-              reset();
+              if (isChunkError && typeof window !== "undefined") {
+                window.location.reload();
+              } else {
+                router.invalidate();
+                reset();
+              }
             }}
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90"
           >
-            Retry
+            {isChunkError ? "Reload page" : "Retry"}
           </button>
           <a href="/" className="rounded-md border border-border px-4 py-2 text-sm hover:bg-accent">
             Go home
@@ -94,12 +112,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     ],
     links: [
       { rel: "stylesheet", href: appCss },
-      { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
-      {
-        rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap",
-      },
       { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
     ],
   }),

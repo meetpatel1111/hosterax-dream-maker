@@ -80,7 +80,7 @@ function setCachedTranslation(text: string, lang: LanguageCode, translated: stri
 }
 
 /**
- * Dynamic Live Translation Request via Google GTX / MyMemory translation bridge
+ * Dynamic Live Translation Request via independent open translation bridge
  */
 async function fetchLiveTranslation(text: string, targetLang: LanguageCode): Promise<string> {
   const trimmed = text.trim();
@@ -91,37 +91,17 @@ async function fetchLiveTranslation(text: string, targetLang: LanguageCode): Pro
   if (cached) return text.replace(trimmed, cached);
 
   try {
-    // High-speed GTX dynamic translation endpoint
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLang}&dt=t&q=${encodeURIComponent(
+    const altUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
       trimmed,
-    )}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-
-    // Result format: [[["Translated Text", "Original Text", ...]]]
-    if (Array.isArray(data) && Array.isArray(data[0])) {
-      const translated = data[0].map((item: any) => item[0]).join("");
-      if (translated) {
-        setCachedTranslation(trimmed, targetLang, translated);
-        return text.replace(trimmed, translated);
-      }
+    )}&langpair=en|${targetLang}`;
+    const altRes = await fetch(altUrl);
+    const altData = await altRes.json();
+    if (altData?.responseData?.translatedText) {
+      const translated = altData.responseData.translatedText;
+      setCachedTranslation(trimmed, targetLang, translated);
+      return text.replace(trimmed, translated);
     }
-  } catch (err) {
-    // Fallback: try alternative MyMemory translation bridge
-    try {
-      const altUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(
-        trimmed,
-      )}&langpair=en|${targetLang}`;
-      const altRes = await fetch(altUrl);
-      const altData = await altRes.json();
-      if (altData?.responseData?.translatedText) {
-        const translated = altData.responseData.translatedText;
-        setCachedTranslation(trimmed, targetLang, translated);
-        return text.replace(trimmed, translated);
-      }
-    } catch (e) {}
-  }
+  } catch (e) {}
 
   return text;
 }

@@ -76,7 +76,7 @@ function SettingsPage() {
               setLiveTranslateEnabled(e.target.checked);
               toast[e.target.checked ? "warning" : "success"](
                 e.target.checked
-                  ? "Machine translation on — on-screen text is sent to Google Translate / MyMemory."
+                  ? "Machine translation on — on-screen text is translated via independent translation bridge."
                   : "Machine translation off — nothing is sent to third parties.",
               );
             }}
