@@ -416,7 +416,7 @@ test("schedules are validated and get their first run time", () => {
 });
 
 test("only due schedules run, and a successful run prunes to keepLast", async () => {
-  const { scheduler, sdb, log, advance } = schedulerSetup();
+  const { scheduler, sdb, log, advance, now } = schedulerSetup();
   const s = scheduler.create({ ...base, keepLast: 2, drill: "archive" });
 
   await scheduler.tick();
@@ -440,7 +440,7 @@ test("only due schedules run, and a successful run prunes to keepLast", async ()
   const after = scheduler.get(s.id);
   assert.equal(after.lastStatus, "ok");
   assert.equal(after.lastBackupId, "b4");
-  assert.ok(after.nextRunAt > Date.now() - 1);
+  assert.ok(after.nextRunAt > now() - 1);
 });
 
 test("keepDays drops old backups but always keeps the newest", async () => {
