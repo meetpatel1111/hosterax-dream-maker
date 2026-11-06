@@ -24,6 +24,8 @@ import {
   Languages,
   Share2,
   Bell,
+  Menu,
+  X,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
@@ -59,6 +61,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   const loc = useLocation();
   const { data: orgs = [] } = useOrganizations();
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const { t, language, setLanguage, isRtl } = useTranslation();
 
   const currentOrg = orgs.find((o) => (activeOrgId ? o.id === activeOrgId : true)) || orgs[0];
@@ -174,7 +177,17 @@ export function DashboardShell({ children }: { children: ReactNode }) {
       <main className="flex-1 min-w-0">
         <header className="flex h-14 items-center justify-between border-b border-border bg-background/60 px-6 backdrop-blur">
           <div className="flex items-center gap-3">
-            <div className="md:hidden flex items-center mr-2">
+            <div className="flex items-center gap-2 md:hidden">
+              <button
+                type="button"
+                aria-label={mobileNavigationOpen ? "Close navigation" : "Open navigation"}
+                aria-controls="mobile-navigation"
+                aria-expanded={mobileNavigationOpen}
+                onClick={() => setMobileNavigationOpen((open) => !open)}
+                className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                {mobileNavigationOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+              </button>
               <Link to="/dashboard">
                 <Logo />
               </Link>
@@ -193,7 +206,43 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             </span>
           </div>
         </header>
-        <div className="p-6">{children}</div>
+        {mobileNavigationOpen && (
+          <div
+            id="mobile-navigation"
+            className="fixed inset-x-0 bottom-0 top-14 z-50 overflow-y-auto border-b border-border bg-sidebar p-4 text-sidebar-foreground shadow-2xl md:hidden"
+          >
+            <nav className="space-y-1" aria-label="Main navigation">
+              <Link
+                to="/new"
+                onClick={() => setMobileNavigationOpen(false)}
+                className="mb-4 flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2.5 text-sm font-medium text-primary-foreground"
+              >
+                <Plus className="h-4 w-4" /> {t("newProject", "New Project")}
+              </Link>
+              {NAV.map((n) => {
+                const active =
+                  loc.pathname === n.to || (n.to !== "/dashboard" && loc.pathname.startsWith(n.to));
+                const Icon = n.icon;
+                return (
+                  <Link
+                    key={n.to}
+                    to={n.to}
+                    onClick={() => setMobileNavigationOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
+                      active
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                        : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" /> {t(n.key as any, n.label)}
+                  </Link>
+                );
+              })}
+            </nav>
+          </div>
+        )}
+        <div className="p-4 md:p-6">{children}</div>
       </main>
       <AICopilot />
     </div>
