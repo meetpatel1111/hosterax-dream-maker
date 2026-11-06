@@ -5796,28 +5796,71 @@ const server = http.createServer(async (req, res) => {
 });
 
 const wss = new WebSocketServer({ server, path: "/ws" });
+
+/**
+ * Browser WebSockets cannot set an Authorization header. The dashboard therefore sends an API token
+ * or session token as a WebSocket subprotocol (never in a URL); proxies and access logs commonly
+ * retain URLs. Native clients may still send a normal bearer header.
+ */
+function websocketScopes(req) {
+  if (isTrustedLocalRequest(req, PORT)) return ["*"];
+  const protocolTokens = String(req.headers["sec-websocket-protocol"] || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const token = bearerFrom(req) || protocolTokens.find((value) => value !== "hosterax") || "";
+  if (token.startsWith("hxs_")) return accounts.resolveSession(token)?.scopes ?? null;
+  const row = token
+    ? db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hashToken(token))
+    : null;
+  if (!row) return null;
+  try {
+    return row.scopes_json ? JSON.parse(row.scopes_json) : ["*"];
+  } catch {
+    return ["*"];
+  }
+}
+
+function closeWebSocket(ws) {
+  ws.close(1008, "unauthorized");
+}
+
 wss.on("connection", (ws, req) => {
   const url = new URL(req.url, "http://x");
-  const id = url.searchParams.get("deployment");
-  const token = url.searchParams.get("token");
-  if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return ws.close();
-  // Auth check: require a valid token or a genuinely local, same-origin client
-  const isValidToken = String(token || "").startsWith("hxs_")
-    ? !!accounts.resolveSession(token)
-    : !!db.prepare("SELECT 1 FROM tokens WHERE token=?").get(hashToken(token || ""));
-  if (!isValidToken && !isTrustedLocalRequest(req, PORT)) return ws.close();
-  if (!subscribers.has(id)) subscribers.set(id, new Set());
-  subscribers.get(id).add(ws);
-  // replay
-  const p = path.join(LOGDIR, id + ".log");
-  if (fs.existsSync(p)) {
-    for (const line of fs.readFileSync(p, "utf8").split("\n").filter(Boolean)) {
-      try {
-        ws.send(JSON.stringify({ deploymentId: id, ts: Date.now(), stream: "replay", text: line }));
-      } catch {}
+  const deploymentId = url.searchParams.get("deployment");
+  const projectRef = url.searchParams.get("project");
+  // A stream has exactly one owner. Supporting both would make authorization ambiguous.
+  if ((deploymentId && projectRef) || (!deploymentId && !projectRef)) return closeWebSocket(ws);
+  if (scopesLevel(websocketScopes(req) || []) < 1) return closeWebSocket(ws);
+
+  if (deploymentId) {
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(deploymentId)) return closeWebSocket(ws);
+    if (!subscribers.has(deploymentId)) subscribers.set(deploymentId, new Set());
+    subscribers.get(deploymentId).add(ws);
+    const logPath = path.join(LOGDIR, deploymentId + ".log");
+    if (fs.existsSync(logPath)) {
+      for (const line of fs.readFileSync(logPath, "utf8").split("\n").filter(Boolean)) {
+        try {
+          ws.send(JSON.stringify({ deploymentId, ts: Date.now(), stream: "replay", text: line }));
+        } catch {}
+      }
     }
+    ws.on("close", () => subscribers.get(deploymentId)?.delete(ws));
+    return;
   }
-  ws.on("close", () => subscribers.get(id)?.delete(ws));
+
+  const project = db
+    .prepare("SELECT name FROM projects WHERE name=? OR slug=?")
+    .get(projectRef, projectRef)?.name;
+  if (!project) return closeWebSocket(ws);
+  if (!runtimeSubs.has(project)) runtimeSubs.set(project, new Set());
+  runtimeSubs.get(project).add(ws);
+  for (const line of runtimeLogs.get(project) ?? []) {
+    try {
+      ws.send(JSON.stringify({ project, ...line }));
+    } catch {}
+  }
+  ws.on("close", () => runtimeSubs.get(project)?.delete(ws));
 });
 
 server.listen(PORT, () => {

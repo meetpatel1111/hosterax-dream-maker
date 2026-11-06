@@ -247,7 +247,9 @@ export function EngineLogStream({
     const wsUrl = eng.url.replace(/^http/, "ws") + "/ws?deployment=" + deploymentId;
     let ws: WebSocket;
     try {
-      ws = new WebSocket(wsUrl);
+      // Browser WebSockets do not allow Authorization headers. The engine accepts the token as a
+      // subprotocol instead, keeping credentials out of copied URLs and access logs.
+      ws = new WebSocket(wsUrl, eng.token ? ["hosterax", eng.token] : ["hosterax"]);
     } catch {
       return;
     }
@@ -261,7 +263,7 @@ export function EngineLogStream({
       }
     };
     return () => ws.close();
-  }, [deploymentId, eng.url]);
+  }, [deploymentId, eng.url, eng.token]);
 
   return (
     <div className="rounded-xl border border-border bg-card">

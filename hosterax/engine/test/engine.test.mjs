@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
+import { WebSocket } from "ws";
 
 const engineDir = dirname(dirname(fileURLToPath(import.meta.url)));
 const home = mkdtempSync(join(tmpdir(), "hosterax-test-"));
@@ -63,6 +64,24 @@ async function api(method, path, body) {
   } catch {}
   if (!r.ok) throw new Error(`${method} ${path} -> ${r.status}: ${text}`);
   return data;
+}
+
+function openWebSocket(path, protocols, options = {}) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}${path}`, protocols, options);
+    const timeout = setTimeout(() => {
+      ws.terminate();
+      reject(new Error(`websocket did not open: ${path}`));
+    }, 3000);
+    ws.once("open", () => {
+      clearTimeout(timeout);
+      resolve(ws);
+    });
+    ws.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
 }
 
 let bootstrapToken = "";
@@ -165,6 +184,27 @@ test("projects CRUD", async () => {
   const list2 = await api("GET", "/api/projects");
   const leftover = list2.find((p) => p.name === name);
   assert.ok(!leftover || leftover.isArchived === true);
+});
+
+test("authenticated WebSockets stream deployment and project runtime logs", async () => {
+  const project = `stream-test-${Date.now()}`;
+  await api("POST", "/api/projects", { name: project, source: "https://example.test/repo.git" });
+  const projectStream = await openWebSocket(
+    `/ws?project=${encodeURIComponent(project)}`,
+    ["hosterax", bearer],
+    { origin: "https://remote-dashboard.example" },
+  );
+  assert.equal(projectStream.readyState, WebSocket.OPEN);
+  projectStream.close();
+
+  const deploymentStream = await openWebSocket(
+    "/ws?deployment=deployment_stream_test",
+    ["hosterax", bearer],
+    { origin: "https://remote-dashboard.example" },
+  );
+  assert.equal(deploymentStream.readyState, WebSocket.OPEN);
+  deploymentStream.close();
+  await api("DELETE", `/api/projects/${project}`);
 });
 
 test("the engine serves its OpenAPI description to authenticated callers only", async () => {
