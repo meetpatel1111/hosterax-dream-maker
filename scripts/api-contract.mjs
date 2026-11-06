@@ -304,6 +304,43 @@ export function buildOpenApi(routes, version) {
         schema: { type: "string" },
       },
     ],
+    "GET /api/backups/page": [
+      {
+        name: "limit",
+        in: "query",
+        required: false,
+        description: "Results per page (default 50, maximum 100).",
+        schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+      },
+      {
+        name: "database",
+        in: "query",
+        required: false,
+        description: "Optional database name filter.",
+        schema: { type: "string" },
+      },
+      {
+        name: "project",
+        in: "query",
+        required: false,
+        description: "Optional project name filter.",
+        schema: { type: "string" },
+      },
+      {
+        name: "beforeCreatedAt",
+        in: "query",
+        required: false,
+        description: "Timestamp from nextCursor; provide it with beforeId to load the next page.",
+        schema: { type: "integer" },
+      },
+      {
+        name: "beforeId",
+        in: "query",
+        required: false,
+        description: "Backup ID from nextCursor; provide it with beforeCreatedAt.",
+        schema: { type: "string" },
+      },
+    ],
   };
   const paths = {};
   for (const r of routes) {

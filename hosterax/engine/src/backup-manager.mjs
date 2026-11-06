@@ -296,25 +296,77 @@ export class BackupManager {
    * List all backups
    */
   listBackups(filter = {}) {
-    let sql = "SELECT * FROM backups";
+    const where = [];
     const params = [];
 
     if (filter.database_name) {
-      sql += " WHERE database_name=?";
+      where.push("database_name=?");
       params.push(filter.database_name);
-    } else if (filter.project_name) {
-      sql += " WHERE project_name=?";
+    }
+    if (filter.project_name) {
+      where.push("project_name=?");
       params.push(filter.project_name);
     }
 
-    sql += " ORDER BY created_at DESC";
+    const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+    let sql = `SELECT * FROM backups${whereSql} ORDER BY created_at DESC, id DESC`;
+    if (filter.limit !== undefined) {
+      const requestedLimit = Number(filter.limit);
+      const limit = Math.min(
+        Math.max(Number.isInteger(requestedLimit) ? requestedLimit : 100, 1),
+        500,
+      );
+      sql += " LIMIT ?";
+      params.push(limit);
+    }
     const rows = this.db.prepare(sql).all(...params);
 
-    return rows.map((r) => ({
-      ...r,
-      sizeMb: parseFloat((r.file_size_bytes / 1048576).toFixed(2)),
-      existsOnDisk: fs.existsSync(r.file_path),
-    }));
+    return rows.map((row) => this._shapeBackupRow(row));
+  }
+
+  listBackupsPage(filter = {}, limit = 50, cursor = null) {
+    const requestedLimit = Number(limit);
+    const boundedLimit = Math.min(
+      Math.max(Number.isInteger(requestedLimit) ? requestedLimit : 50, 1),
+      100,
+    );
+    const where = [];
+    const params = [];
+
+    if (filter.database_name) {
+      where.push("database_name=?");
+      params.push(filter.database_name);
+    }
+    if (filter.project_name) {
+      where.push("project_name=?");
+      params.push(filter.project_name);
+    }
+    if (cursor) {
+      where.push("(created_at, id) < (?, ?)");
+      params.push(cursor.createdAt, cursor.id);
+    }
+
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM backups${where.length ? ` WHERE ${where.join(" AND ")}` : ""}
+         ORDER BY created_at DESC, id DESC LIMIT ?`,
+      )
+      .all(...params, boundedLimit + 1);
+    const hasMore = rows.length > boundedLimit;
+    const pageRows = hasMore ? rows.slice(0, boundedLimit) : rows;
+    const last = pageRows.at(-1);
+    return {
+      items: pageRows.map((row) => this._shapeBackupRow(row)),
+      nextCursor: hasMore && last ? { createdAt: last.created_at, id: last.id } : null,
+    };
+  }
+
+  _shapeBackupRow(row) {
+    return {
+      ...row,
+      sizeMb: parseFloat((row.file_size_bytes / 1048576).toFixed(2)),
+      existsOnDisk: fs.existsSync(row.file_path),
+    };
   }
 
   /**
@@ -323,11 +375,7 @@ export class BackupManager {
   getBackup(id) {
     const row = this.db.prepare("SELECT * FROM backups WHERE id=?").get(id);
     if (!row) return null;
-    return {
-      ...row,
-      sizeMb: parseFloat((row.file_size_bytes / 1048576).toFixed(2)),
-      existsOnDisk: fs.existsSync(row.file_path),
-    };
+    return this._shapeBackupRow(row);
   }
 
   /**

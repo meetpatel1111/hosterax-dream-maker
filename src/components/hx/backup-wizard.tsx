@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   Database,
   HardDrive,
@@ -22,10 +22,11 @@ import { toast } from "sonner";
 import {
   useEngine,
   useBackupTargets,
-  useBackups,
+  useBackupHistory,
   useS3Config,
   useRemoteS3Backups,
   useBackupSchedules,
+  type BackupCursor,
   type BackupItem,
 } from "../../lib/engine";
 
@@ -47,9 +48,16 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [testingS3, setTestingS3] = useState(false);
   const [savingS3, setSavingS3] = useState(false);
+  const [olderBackups, setOlderBackups] = useState<BackupItem[]>([]);
+  const [olderCursor, setOlderCursor] = useState<BackupCursor | null>(null);
+  const [hasLoadedOlder, setHasLoadedOlder] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [loadOlderError, setLoadOlderError] = useState("");
+  const olderRequest = useRef<AbortController | null>(null);
+  const latestBackupRows = useRef<BackupItem[]>([]);
 
   const targetsQuery = useBackupTargets();
-  const backupsQuery = useBackups();
+  const backupsQuery = useBackupHistory();
   const s3ConfigQuery = useS3Config();
   const remoteBackupsQuery = useRemoteS3Backups();
   const schedulesQuery = useBackupSchedules();
@@ -66,7 +74,12 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
 
   const targets = useMemo(() => targetsQuery.data || [], [targetsQuery.data]);
-  const backups = useMemo(() => backupsQuery.data || [], [backupsQuery.data]);
+  const latestBackups = backupsQuery.data?.items || [];
+  const backups = useMemo(
+    () => [...latestBackups, ...olderBackups],
+    [latestBackups, olderBackups],
+  );
+  const backupCursor = hasLoadedOlder ? olderCursor : backupsQuery.data?.nextCursor || null;
   const s3Config = s3ConfigQuery.data;
   const remoteBackups = useMemo(() => remoteBackupsQuery.data || [], [remoteBackupsQuery.data]);
 
@@ -101,6 +114,76 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   }, [targets, selectedTargetId]);
 
   const selectedTarget = targets.find((t) => t.id === selectedTargetId) || targets[0];
+
+  useEffect(() => {
+    olderRequest.current?.abort();
+    latestBackupRows.current = [];
+    setOlderBackups([]);
+    setOlderCursor(null);
+    setHasLoadedOlder(false);
+    setLoadOlderError("");
+    setIsLoadingOlder(false);
+    return () => olderRequest.current?.abort();
+  }, [engine.url, engine.token]);
+
+  useEffect(() => {
+    const previous = latestBackupRows.current;
+    if (hasLoadedOlder && previous.length) {
+      const currentIds = new Set(latestBackups.map((backup) => backup.id));
+      const displaced = previous.filter((backup) => !currentIds.has(backup.id));
+      if (displaced.length) {
+        setOlderBackups((current) => {
+          const knownIds = new Set([...latestBackups, ...current].map((backup) => backup.id));
+          return [...displaced.filter((backup) => !knownIds.has(backup.id)), ...current];
+        });
+      }
+    }
+    latestBackupRows.current = latestBackups;
+  }, [latestBackups, hasLoadedOlder]);
+
+  const loadOlder = async () => {
+    if (!backupCursor || isLoadingOlder) return;
+    const controller = new AbortController();
+    olderRequest.current = controller;
+    setIsLoadingOlder(true);
+    setLoadOlderError("");
+    const params = new URLSearchParams({
+      limit: "50",
+      beforeCreatedAt: String(backupCursor.createdAt),
+      beforeId: backupCursor.id,
+    });
+    try {
+      const page = await engine.call<{ items: BackupItem[]; nextCursor: BackupCursor | null }>(
+        "GET",
+        `/api/backups/page?${params.toString()}`,
+        undefined,
+        { signal: controller.signal },
+      );
+      setOlderBackups((current) => {
+        const ids = new Set([...latestBackups, ...current].map((backup) => backup.id));
+        return [...current, ...page.items.filter((backup) => !ids.has(backup.id))];
+      });
+      setOlderCursor(page.nextCursor);
+      setHasLoadedOlder(true);
+    } catch (error) {
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        setLoadOlderError(error instanceof Error ? error.message : "Could not load older snapshots.");
+      }
+    } finally {
+      if (olderRequest.current === controller) {
+        olderRequest.current = null;
+        setIsLoadingOlder(false);
+      }
+    }
+  };
+
+  const refreshOlderBackup = async (id: string) => {
+    if (!olderBackups.some((backup) => backup.id === id)) return;
+    try {
+      const updated = await engine.call<BackupItem>("GET", `/api/backups/${id}`);
+      setOlderBackups((current) => current.map((backup) => (backup.id === id ? updated : backup)));
+    } catch {}
+  };
 
   const triggerBackup = async () => {
     if (!selectedTarget) {
@@ -151,6 +234,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
       const res: any = await engine.call("POST", `/api/backups/${backupId}/sync-s3`);
       toast.success(`Snapshot replicated to S3: ${res.s3Key}`);
       backupsQuery.refetch();
+      void refreshOlderBackup(backupId);
       remoteBackupsQuery.refetch();
     } catch (err: any) {
       toast.error(err?.message || "S3 sync failed. Check your S3 credentials.");
@@ -226,6 +310,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
 
       toast.success(res.message || `Snapshot ${b.id} restored.`, { id: toastId });
       backupsQuery.refetch();
+      void refreshOlderBackup(b.id);
     } catch (err: any) {
       toast.error(err?.message || "Restore failed", { id: toastId });
     } finally {
@@ -238,6 +323,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
     try {
       await engine.call("DELETE", `/api/backups/${id}`);
       toast.success(`Snapshot ${id} deleted.`);
+      setOlderBackups((current) => current.filter((backup) => backup.id !== id));
       backupsQuery.refetch();
     } catch (err: any) {
       toast.error(err?.message || "Failed to delete backup");
@@ -329,6 +415,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
       );
       (r.ok ? toast.success : toast.error)(r.message);
       backupsQuery.refetch();
+      void refreshOlderBackup(id);
     } catch (e: any) {
       toast.error(e?.message || "Verification failed to run");
     } finally {
@@ -377,7 +464,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
             >
               {tab === "create" && "Create Snapshot"}
               {tab === "schedules" && `Schedules (${schedules.length})`}
-              {tab === "history" && `Snapshots History (${backups.length})`}
+              {tab === "history" && `Snapshots History (${backups.length}${backupCursor ? "+" : ""})`}
               {tab === "storage" && "Remote S3 / R2 Storage"}
             </button>
           ))}
@@ -660,7 +747,27 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
 
           {activeTab === "history" && (
             <div className="space-y-4">
-              {backups.length === 0 ? (
+              {backupsQuery.isError && backups.length > 0 && (
+                <div role="status" className="text-xs text-amber-400">
+                  Could not refresh snapshot history. Showing the last loaded records.
+                </div>
+              )}
+              {backupsQuery.isPending ? (
+                <div className="p-12 text-center text-sm text-muted-foreground" role="status">
+                  Loading snapshot history…
+                </div>
+              ) : backupsQuery.isError && backups.length === 0 ? (
+                <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-6 text-center text-sm">
+                  <p className="text-muted-foreground">Snapshot history could not be loaded.</p>
+                  <button
+                    type="button"
+                    onClick={() => backupsQuery.refetch()}
+                    className="mt-3 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : backups.length === 0 ? (
                 <div className="flex flex-col items-center justify-center p-12 text-center border border-dashed border-border rounded-xl">
                   <FileArchive className="h-10 w-10 text-muted-foreground/40 mb-3" />
                   <h4 className="text-sm font-medium text-foreground">No Snapshots Created Yet</h4>
@@ -798,6 +905,23 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                       </div>
                     </div>
                   ))}
+                </div>
+              )}
+              {loadOlderError && (
+                <div role="alert" className="text-sm text-destructive">
+                  {loadOlderError}
+                </div>
+              )}
+              {backupCursor && backups.length > 0 && (
+                <div className="flex justify-center">
+                  <button
+                    type="button"
+                    disabled={isLoadingOlder}
+                    onClick={loadOlder}
+                    className="rounded-md border border-border px-4 py-2 text-xs font-medium transition-colors hover:bg-accent disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {isLoadingOlder ? "Loading…" : "Load older snapshots"}
+                  </button>
                 </div>
               )}
             </div>

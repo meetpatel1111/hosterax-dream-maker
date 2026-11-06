@@ -158,8 +158,11 @@ CREATE TABLE IF NOT EXISTS backups (
   finished_at INTEGER,
   error_message TEXT
 );
-CREATE INDEX IF NOT EXISTS idx_backups_db ON backups(database_name);
-CREATE INDEX IF NOT EXISTS idx_backups_created ON backups(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backups_db_created_id ON backups(database_name, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_backups_project_created_id ON backups(project_name, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_backups_created_id ON backups(created_at DESC, id DESC);
+DROP INDEX IF EXISTS idx_backups_db;
+DROP INDEX IF EXISTS idx_backups_created;
 CREATE TABLE IF NOT EXISTS webhooks (
   id TEXT PRIMARY KEY,
   project TEXT NOT NULL,
@@ -4719,12 +4722,46 @@ const server = http.createServer(async (req, res) => {
       const targets = await backupManager.detectTargets();
       return json(res, 200, targets);
     }
+    if (url.pathname === "/api/backups/page" && req.method === "GET") {
+      const rawLimit = url.searchParams.get("limit");
+      const requestedLimit = rawLimit === null ? 50 : Number(rawLimit);
+      if (!Number.isInteger(requestedLimit) || requestedLimit < 1)
+        return json(res, 400, { error: "limit must be a positive integer" });
+      const limit = Math.min(requestedLimit, 100);
+      const rawBeforeCreatedAt = url.searchParams.get("beforeCreatedAt");
+      const beforeId = url.searchParams.get("beforeId");
+      const hasCursor = rawBeforeCreatedAt !== null || beforeId !== null;
+      const beforeCreatedAt = rawBeforeCreatedAt === null ? null : Number(rawBeforeCreatedAt);
+      if (
+        hasCursor &&
+        (!Number.isSafeInteger(beforeCreatedAt) ||
+          beforeCreatedAt < 0 ||
+          !beforeId?.trim() ||
+          beforeId.length > 200)
+      ) {
+        return json(res, 400, { error: "beforeCreatedAt and beforeId must form a valid cursor" });
+      }
+      const page = backupManager.listBackupsPage(
+        {
+          database_name: url.searchParams.get("database"),
+          project_name: url.searchParams.get("project"),
+        },
+        limit,
+        hasCursor ? { createdAt: beforeCreatedAt, id: beforeId } : null,
+      );
+      return json(res, 200, page);
+    }
     if (url.pathname === "/api/backups" && req.method === "GET") {
       const dbFilter = url.searchParams.get("database");
       const projFilter = url.searchParams.get("project");
+      const rawLimit = url.searchParams.get("limit");
+      const requestedLimit = rawLimit === null ? 100 : Number(rawLimit);
+      if (!Number.isInteger(requestedLimit) || requestedLimit < 1)
+        return json(res, 400, { error: "limit must be a positive integer" });
       const backups = backupManager.listBackups({
         database_name: dbFilter,
         project_name: projFilter,
+        limit: Math.min(requestedLimit, 500),
       });
       return json(res, 200, backups);
     }
@@ -5545,7 +5582,11 @@ const server = http.createServer(async (req, res) => {
       return json(
         res,
         200,
-        db.prepare("SELECT * FROM managed_dbs WHERE project=? ORDER BY created_at DESC").all(m[1]),
+        db
+          .prepare(
+            "SELECT id, project, name, engine, size_mb, status, created_at, port FROM managed_dbs WHERE project=? ORDER BY created_at DESC",
+          )
+          .all(m[1]),
       );
     }
     if (
@@ -5563,7 +5604,15 @@ const server = http.createServer(async (req, res) => {
       return json(res, r.ok ? 200 : r.status || 500, r);
     }
     if (url.pathname === "/api/databases" && req.method === "GET") {
-      return json(res, 200, db.prepare("SELECT * FROM managed_dbs ORDER BY created_at DESC").all());
+      return json(
+        res,
+        200,
+        db
+          .prepare(
+            "SELECT id, project, name, engine, size_mb, status, created_at, port FROM managed_dbs ORDER BY created_at DESC",
+          )
+          .all(),
+      );
     }
     if ((m = url.pathname.match(/^\/api\/databases\/([^/]+)$/)) && req.method === "DELETE") {
       const mdb = db.prepare("SELECT * FROM managed_dbs WHERE id=?").get(m[1]);

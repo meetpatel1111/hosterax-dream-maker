@@ -450,6 +450,67 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/backups/page": {
+      "get": {
+        "summary": "GET /api/backups/page",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Results per page (default 50, maximum 100).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "database",
+            "in": "query",
+            "required": false,
+            "description": "Optional database name filter.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "description": "Optional project name filter.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "beforeCreatedAt",
+            "in": "query",
+            "required": false,
+            "description": "Timestamp from nextCursor; provide it with beforeId to load the next page.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "beforeId",
+            "in": "query",
+            "required": false,
+            "description": "Backup ID from nextCursor; provide it with beforeCreatedAt.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/backups/remote-s3": {
       "delete": {
         "summary": "DELETE /api/backups/remote-s3",

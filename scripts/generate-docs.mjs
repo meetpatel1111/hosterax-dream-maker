@@ -165,6 +165,12 @@ export async function renderApiDocs() {
         "",
       );
     }
+    if (g === "backups") {
+      out.push(
+        "`GET /api/backups/page` returns `{ items, nextCursor }` with up to 50 snapshots by default (maximum 100). Pass both `beforeCreatedAt` and `beforeId` from `nextCursor` to load the following page; `database` and `project` filters are supported.",
+        "",
+      );
+    }
   }
   return out.join("\n");
 }

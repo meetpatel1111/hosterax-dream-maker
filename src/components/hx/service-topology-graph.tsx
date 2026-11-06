@@ -58,7 +58,7 @@ export function ServiceTopologyGraph({
     refetchInterval: 5000,
     retry: false,
   });
-  const { data: backups = [] } = useBackups(undefined, projectName);
+  const { data: backups = [] } = useBackups(undefined, projectName, 5);
   const health = heal?.projects?.[projectName];
   const providerLabel =
     edge?.provider === "openresty"
@@ -68,7 +68,7 @@ export function ServiceTopologyGraph({
         : "Caddy 2";
   const edgeRunning = edge?.containerStatus === "running";
   const volumeNote = backups.length
-    ? `${backups.filter((b) => b.status === "completed").length} snapshot(s)`
+    ? `${backups.filter((b) => b.status === "completed").length} recent snapshot(s)`
     : "No snapshots yet";
   const magicHost = formatMagicDnsUrl(projectName, activeProvider);
   const isSuspended = scaleZero?.isSleeping;

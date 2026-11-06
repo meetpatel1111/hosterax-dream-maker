@@ -448,6 +448,9 @@ export type BackupItem = {
   verify_message?: string | null;
 };
 
+export type BackupCursor = { createdAt: number; id: string };
+export type BackupPage = { items: BackupItem[]; nextCursor: BackupCursor | null };
+
 export type BackupSchedule = {
   id: string;
   name: string;
@@ -503,25 +506,42 @@ export function useBackupTargets() {
   });
 }
 
-export function useBackups(database?: string, project?: string) {
+export function useBackups(database?: string, project?: string, limit = 50) {
   const eng = useEngine();
   const health = useEngineHealth();
   return useQuery<BackupItem[]>({
-    queryKey: ["backups", eng.url, eng.token, database, project],
+    queryKey: ["backups", eng.url, eng.token, database, project, limit],
     queryFn: async () => {
       try {
-        let path = "/api/backups";
-        const params = new URLSearchParams();
+        const params = new URLSearchParams({ limit: String(limit) });
         if (database) params.set("database", database);
         if (project) params.set("project", project);
-        if (params.toString()) path += `?${params.toString()}`;
-        return await eng.call<BackupItem[]>("GET", path);
+        return await eng.call<BackupItem[]>("GET", `/api/backups?${params.toString()}`);
       } catch {
         return [];
       }
     },
     enabled: !!health.data?.ok,
-    refetchInterval: 5000,
+    refetchInterval: 15000,
+  });
+}
+
+export function useBackupHistory(database?: string, project?: string, limit = 50) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<BackupPage>({
+    queryKey: ["backup-history", eng.url, eng.token, database, project, limit],
+    queryFn: async ({ signal }) => {
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (database) params.set("database", database);
+      if (project) params.set("project", project);
+      return eng.call<BackupPage>("GET", `/api/backups/page?${params.toString()}`, undefined, {
+        signal,
+      });
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 15000,
+    staleTime: 10000,
   });
 }
 

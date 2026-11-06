@@ -38,6 +38,7 @@ function DeploymentsPage() {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [loadOlderError, setLoadOlderError] = useState("");
   const olderRequest = useRef<AbortController | null>(null);
+  const latestRows = useRef<DeploymentRow[]>([]);
 
   const deploymentsQuery = useQuery({
     queryKey: ["deployment-history", engine.url, engine.token],
@@ -51,6 +52,7 @@ function DeploymentsPage() {
 
   useEffect(() => {
     olderRequest.current?.abort();
+    latestRows.current = [];
     setOlderDeployments([]);
     setOlderCursor(null);
     setHasLoadedOlder(false);
@@ -62,6 +64,24 @@ function DeploymentsPage() {
   const latestDeployments = deploymentsQuery.data?.items || [];
   const nextCursor = hasLoadedOlder ? olderCursor : deploymentsQuery.data?.nextCursor || null;
   const canLoadOlder = Boolean(nextCursor);
+
+  useEffect(() => {
+    const previous = latestRows.current;
+    if (hasLoadedOlder && previous.length) {
+      const currentIds = new Set(latestDeployments.map((deployment) => deployment.id));
+      const displaced = previous.filter((deployment) => !currentIds.has(deployment.id));
+      if (displaced.length) {
+        setOlderDeployments((current) => {
+          const knownIds = new Set([...latestDeployments, ...current].map((deployment) => deployment.id));
+          return [
+            ...displaced.filter((deployment) => !knownIds.has(deployment.id)),
+            ...current,
+          ];
+        });
+      }
+    }
+    latestRows.current = latestDeployments;
+  }, [latestDeployments, hasLoadedOlder]);
 
   const loadOlder = async () => {
     if (!nextCursor || isLoadingOlder) return;

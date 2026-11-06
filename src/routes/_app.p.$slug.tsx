@@ -1157,18 +1157,19 @@ function ProjectDomains({
 function DatabasesTab({ projectId, projectName }: { projectId: string; projectName: string }) {
   const engine = useEngine();
   const qc = useQueryClient();
-  const { data: dbs = [] } = useQuery({
-    queryKey: ["dbs", projectName, engine.url],
-    queryFn: async () => {
-      try {
-        const data = await engine.call<any[]>("GET", `/api/projects/${projectName}/databases`);
-        return data ?? [];
-      } catch {
-        return [];
-      }
-    },
-    refetchInterval: 3000,
+  const databasesQuery = useQuery({
+    queryKey: ["dbs", projectName, engine.url, engine.token],
+    queryFn: ({ signal }) =>
+      engine.call<any[]>(
+        "GET",
+        `/api/projects/${encodeURIComponent(projectName)}/databases`,
+        undefined,
+        { signal },
+      ),
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
+  const dbs = databasesQuery.data || [];
 
   async function provision(engineType: string) {
     const name = prompt(`Name for ${engineType} instance?`, `${engineType}-main`);
@@ -1211,7 +1212,29 @@ function DatabasesTab({ projectId, projectName }: { projectId: string; projectNa
         ))}
       </div>
       <div className="rounded-lg border border-border bg-card">
-        {dbs.length === 0 ? (
+        {databasesQuery.isError && dbs.length > 0 && (
+          <div role="status" className="border-b border-border px-4 py-2 text-xs text-amber-400">
+            Could not refresh database instances. Showing the last loaded results.
+          </div>
+        )}
+        {databasesQuery.isPending ? (
+          <div className="p-8 text-center text-sm text-muted-foreground" role="status">
+            Loading database instances…
+          </div>
+        ) : databasesQuery.isError && dbs.length === 0 ? (
+          <div className="p-8 text-center text-sm text-muted-foreground" role="alert">
+            Database instances could not be loaded. Retry to check the current state.
+            <div>
+              <button
+                type="button"
+                onClick={() => databasesQuery.refetch()}
+                className="mt-3 rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent"
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        ) : dbs.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
             No databases attached. Provision one above.
           </div>
@@ -1225,16 +1248,7 @@ function DatabasesTab({ projectId, projectName }: { projectId: string; projectNa
                 <div className="flex-1">
                   <div className="text-sm font-medium">{d.name}</div>
                   <div className="mt-0.5 text-xs text-muted-foreground">
-                    {d.engine} · {d.size_mb} MB
-                    {d.connection_string && (
-                      <>
-                        {" "}
-                        ·{" "}
-                        <span className="font-mono">
-                          {d.connection_string.replace(/:[^:@]+@/, ":••••@")}
-                        </span>
-                      </>
-                    )}
+                    {d.engine} · {d.size_mb} MB{d.port ? ` · Port ${d.port}` : ""}
                   </div>
                 </div>
                 <StatusBadge status={d.status} />

@@ -1111,7 +1111,8 @@ export class MCPServer {
 
         // ── Databases & Snapshots ──
         case "list_databases": {
-          let query = "SELECT * FROM managed_dbs";
+          let query =
+            "SELECT id, project, name, engine, size_mb, status, created_at, port FROM managed_dbs";
           const queryParams = [];
           if (args.projectName) {
             query += " WHERE project=?";
@@ -1122,7 +1123,12 @@ export class MCPServer {
             rows = this.db.prepare(query).all(...queryParams);
           } catch {
             try {
-              rows = this.db.prepare(query.replace("managed_dbs", "databases")).all(...queryParams);
+              rows = this.db
+                .prepare(
+                  "SELECT id, project, name, engine, size_mb, status, created_at FROM databases" +
+                    (args.projectName ? " WHERE project=?" : ""),
+                )
+                .all(...queryParams);
             } catch {}
           }
           return formatResponse(rows);
