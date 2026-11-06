@@ -10,9 +10,12 @@ const DEFAULT_URL = FALLBACK_ENGINE_URL;
 
 function read(): EngineState {
   if (typeof window === "undefined") return { url: DEFAULT_URL, token: "" };
+  // Migrate away from the legacy persistent bearer token. Engine credentials stay in this page's
+  // memory so a reload or another same-origin script cannot read a token from Web Storage.
+  localStorage.removeItem("hx.token");
   return {
     url: localStorage.getItem("hx.url") || defaultEngineUrl(),
-    token: localStorage.getItem("hx.token") || "",
+    token: "",
   };
 }
 
@@ -51,10 +54,15 @@ function getServerSnapshot() {
 export function setEngineConfig(url: string, token: string) {
   if (typeof window !== "undefined") {
     localStorage.setItem("hx.url", url);
-    localStorage.setItem("hx.token", token);
+    localStorage.removeItem("hx.token");
   }
   state = { url, token };
   emit();
+}
+
+/** Returns the current page's in-memory engine token for auth actions such as logout. */
+export function getEngineToken() {
+  return state.token;
 }
 
 export function useEngine() {

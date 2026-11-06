@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { toast } from "sonner";
-import { setEngineConfig } from "./engine";
+import { getEngineToken, setEngineConfig } from "./engine";
 import { defaultEngineUrl } from "./engine-url";
 
 export type AuthUser = {
@@ -50,7 +50,7 @@ type WhoAmI = {
 
 const readUrl = () =>
   (typeof window !== "undefined" && localStorage.getItem("hx.url")) || defaultEngineUrl();
-const readToken = () => (typeof window !== "undefined" && localStorage.getItem("hx.token")) || "";
+const readToken = () => (typeof window !== "undefined" ? getEngineToken() : "");
 
 /**
  * Asks the ENGINE who we are. The dashboard has no accounts of its own: what you may do is decided
