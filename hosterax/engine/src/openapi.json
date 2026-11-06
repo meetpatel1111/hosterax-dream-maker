@@ -1929,6 +1929,17 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/jobs/stats": {
+      "get": {
+        "summary": "GET /api/jobs/stats",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/logs/search": {
       "get": {
         "summary": "GET /api/logs/search",

@@ -22,6 +22,7 @@ import {
 import {
   useCronJobs,
   useJobRuns,
+  useJobStats,
   useEngineProjects,
   useEngine,
   type CronJob,
@@ -95,8 +96,19 @@ function formatRelativeTime(ts?: number | null): string {
 
 export default function JobsPage() {
   const eng = useEngine();
-  const { data: jobs = [], refetch: refetchJobs, isLoading: loadingJobs } = useCronJobs();
-  const { data: allRuns = [], refetch: refetchRuns } = useJobRuns();
+  const {
+    data: jobs = [],
+    refetch: refetchJobs,
+    isLoading: loadingJobs,
+    isError: jobsError,
+  } = useCronJobs();
+  const {
+    data: allRuns = [],
+    refetch: refetchRuns,
+    isLoading: loadingRuns,
+    isError: runsError,
+  } = useJobRuns();
+  const jobStatsQuery = useJobStats();
   const { data: projects = [] } = useEngineProjects();
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -104,6 +116,7 @@ export default function JobsPage() {
   const [logSheetJob, setLogSheetJob] = useState<CronJob | null>(null);
   const [executingId, setExecutingId] = useState<string | null>(null);
   const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
+  const selectedRunsQuery = useJobRuns(logSheetJob?.id, Boolean(logSheetJob));
 
   // Form State
   const [formName, setFormName] = useState("");
@@ -118,10 +131,8 @@ export default function JobsPage() {
 
   const totalJobs = jobs.length;
   const activeJobs = jobs.filter((j) => j.enabled).length;
-  const totalExecutions = allRuns.length;
-  const successfulRuns = allRuns.filter((r) => r.status === "success").length;
-  const successRate =
-    totalExecutions > 0 ? Math.round((successfulRuns / totalExecutions) * 100) : 100;
+  const totalExecutions = jobStatsQuery.data?.totalRuns ?? 0;
+  const successRate = jobStatsQuery.data?.successRate ?? null;
 
   function openCreateModal() {
     setSelectedJob(null);
@@ -224,7 +235,7 @@ export default function JobsPage() {
     }
   }
 
-  const jobRuns = logSheetJob ? allRuns.filter((r) => r.job_id === logSheetJob.id) : allRuns;
+  const jobRuns = logSheetJob ? selectedRunsQuery.data || [] : allRuns;
 
   return (
     <div className="space-y-8 p-6 max-w-7xl mx-auto">
@@ -294,8 +305,10 @@ export default function JobsPage() {
             <Play className="w-4 h-4 text-emerald-500" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono">{totalExecutions}</span>
-            <span className="text-xs text-muted-foreground">runs recorded</span>
+            <span className="text-2xl font-bold font-mono">
+              {jobStatsQuery.isPending || jobStatsQuery.isError ? "—" : totalExecutions}
+            </span>
+            <span className="text-xs text-muted-foreground">all recorded runs</span>
           </div>
         </div>
 
@@ -307,8 +320,18 @@ export default function JobsPage() {
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold font-mono text-emerald-400">{successRate}%</span>
-            <span className="text-xs text-muted-foreground">reliability</span>
+            <span className="text-2xl font-bold font-mono text-emerald-400">
+              {jobStatsQuery.isPending || jobStatsQuery.isError || successRate === null
+                ? "—"
+                : `${successRate}%`}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {jobStatsQuery.isError
+                ? "stats unavailable"
+                : successRate === null
+                  ? "no completed runs"
+                  : "completed runs"}
+            </span>
           </div>
         </div>
 
@@ -338,7 +361,28 @@ export default function JobsPage() {
           </div>
         </div>
 
-        {jobs.length === 0 ? (
+        {jobsError && jobs.length > 0 && (
+          <div role="status" className="flex items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs text-amber-400">
+            Could not refresh schedules. Showing the last loaded list.
+            <Button variant="outline" size="sm" onClick={() => refetchJobs()}>
+              Retry
+            </Button>
+          </div>
+        )}
+        {loadingJobs ? (
+          <div className="p-10 text-center text-sm text-muted-foreground" role="status">
+            Loading scheduled jobs…
+          </div>
+        ) : jobsError && jobs.length === 0 ? (
+          <div className="p-10 text-center text-sm text-muted-foreground" role="alert">
+            Scheduled jobs could not be loaded.
+            <div>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => refetchJobs()}>
+                Retry
+              </Button>
+            </div>
+          </div>
+        ) : jobs.length === 0 ? (
           <div className="text-center py-16 px-4">
             <Clock className="w-12 h-12 text-muted-foreground/40 mx-auto mb-3" />
             <h3 className="font-semibold text-base">No Scheduled Jobs Configured</h3>
@@ -359,7 +403,7 @@ export default function JobsPage() {
                   <th className="py-3 px-4">Status</th>
                   <th className="py-3 px-4">Job Name & Schedule</th>
                   <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Target / Command</th>
+                  <th className="py-3 px-4">Target</th>
                   <th className="py-3 px-4">Last Run</th>
                   <th className="py-3 px-4">Next Run</th>
                   <th className="py-3 px-4 text-right">Actions</th>
@@ -420,11 +464,12 @@ export default function JobsPage() {
                       )}
                     </td>
                     <td className="py-3 px-4">
-                      <div
-                        className="max-w-xs truncate font-mono text-xs text-muted-foreground"
-                        title={job.command || job.http_url || "Automated DB Snapshot"}
-                      >
-                        {job.command || job.http_url || "Automated Snapshot"}
+                      <div className="max-w-xs truncate font-mono text-xs text-muted-foreground">
+                        {job.has_command
+                          ? "Shell command configured"
+                          : job.has_http_target
+                            ? "HTTP endpoint configured"
+                            : "Automated snapshot"}
                       </div>
                       {job.target_container && (
                         <span className="text-[10px] text-muted-foreground/70">
@@ -511,10 +556,32 @@ export default function JobsPage() {
             <Badge variant="secondary" className="text-xs font-mono">
               {allRuns.length}
             </Badge>
+            <span className="text-xs text-muted-foreground">latest records</span>
           </div>
         </div>
 
-        {allRuns.length === 0 ? (
+        {runsError && allRuns.length > 0 && (
+          <div role="status" className="flex items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs text-amber-400">
+            Could not refresh execution history. Showing the last loaded runs.
+            <Button variant="outline" size="sm" onClick={() => refetchRuns()}>
+              Retry
+            </Button>
+          </div>
+        )}
+        {loadingRuns ? (
+          <div className="p-10 text-center text-sm text-muted-foreground" role="status">
+            Loading execution history…
+          </div>
+        ) : runsError && allRuns.length === 0 ? (
+          <div className="p-10 text-center text-sm text-muted-foreground" role="alert">
+            Execution history could not be loaded.
+            <div>
+              <Button variant="outline" size="sm" className="mt-3" onClick={() => refetchRuns()}>
+                Retry
+              </Button>
+            </div>
+          </div>
+        ) : allRuns.length === 0 ? (
           <div className="text-center py-10 px-4 text-sm text-muted-foreground">
             No execution history records available yet.
           </div>
@@ -769,7 +836,25 @@ export default function JobsPage() {
           </SheetHeader>
 
           <div className="mt-6 space-y-6">
-            {jobRuns.length === 0 ? (
+            {selectedRunsQuery.isError ? (
+              <div className="py-12 text-center text-sm text-muted-foreground" role="alert">
+                Execution logs could not be loaded. They require a deploy-scoped token.
+                <div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3"
+                    onClick={() => selectedRunsQuery.refetch()}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              </div>
+            ) : selectedRunsQuery.isPending ? (
+              <div className="py-12 text-center text-sm text-muted-foreground" role="status">
+                Loading execution logs…
+              </div>
+            ) : jobRuns.length === 0 ? (
               <div className="text-center py-12 text-sm text-muted-foreground">
                 No runs recorded for this job yet. Click "Run" to test execution.
               </div>

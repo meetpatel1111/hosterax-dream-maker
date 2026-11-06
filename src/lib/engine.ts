@@ -619,10 +619,9 @@ export type CronJob = {
   schedule_type: string;
   cron_expression: string;
   job_type: "command" | "http" | "backup";
-  command?: string;
-  http_url?: string;
   http_method?: string;
-  http_headers_json?: string;
+  has_command?: number;
+  has_http_target?: number;
   target_container?: string;
   timeout_seconds: number;
   max_retries: number;
@@ -651,38 +650,54 @@ export type JobRun = {
   error_message?: string | null;
 };
 
+export type JobStats = {
+  totalJobs: number;
+  activeJobs: number;
+  totalRuns: number;
+  successfulRuns: number;
+  failedRuns: number;
+  runningRuns: number;
+  successRate: number | null;
+};
+
 export function useCronJobs() {
   const eng = useEngine();
   const health = useEngineHealth();
   return useQuery<CronJob[]>({
     queryKey: ["cron-jobs", eng.url, eng.token],
-    queryFn: async () => {
-      try {
-        return await eng.call<CronJob[]>("GET", "/api/jobs");
-      } catch {
-        return [];
-      }
-    },
+    queryFn: ({ signal }) => eng.call<CronJob[]>("GET", "/api/jobs", undefined, { signal }),
     enabled: !!health.data?.ok,
-    refetchInterval: 4000,
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 }
 
-export function useJobRuns(jobId?: string) {
+export function useJobRuns(jobId?: string, onlyWhenSelected = false) {
   const eng = useEngine();
   const health = useEngineHealth();
   return useQuery<JobRun[]>({
     queryKey: ["job-runs", eng.url, eng.token, jobId],
-    queryFn: async () => {
-      try {
-        const path = jobId ? `/api/jobs/${jobId}/runs` : "/api/jobs-runs";
-        return await eng.call<JobRun[]>("GET", path);
-      } catch {
-        return [];
-      }
+    queryFn: ({ signal }) => {
+      const path = jobId
+        ? `/api/jobs/${encodeURIComponent(jobId)}/runs?limit=100`
+        : "/api/jobs-runs?limit=50";
+      return eng.call<JobRun[]>("GET", path, undefined, { signal });
     },
+    enabled: !!health.data?.ok && (!onlyWhenSelected || !!jobId),
+    refetchInterval: jobId ? 5000 : 10000,
+    staleTime: 3000,
+  });
+}
+
+export function useJobStats() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<JobStats>({
+    queryKey: ["job-stats", eng.url, eng.token],
+    queryFn: ({ signal }) => eng.call<JobStats>("GET", "/api/jobs/stats", undefined, { signal }),
     enabled: !!health.data?.ok,
-    refetchInterval: 3000,
+    refetchInterval: 30000,
+    staleTime: 15000,
   });
 }
 

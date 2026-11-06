@@ -2349,7 +2349,16 @@ export class AIOpsManager {
     if (this.cronManager?.listJobs) {
       return this.cronManager.listJobs();
     }
-    return this.db.prepare("SELECT * FROM cron_jobs ORDER BY created_at DESC").all();
+    return this.db
+      .prepare(
+        `SELECT id, name, project_name, schedule_type, cron_expression, job_type, http_method,
+                target_container, timeout_seconds, max_retries, enabled, next_run_at, last_run_at,
+                last_status, last_duration_ms, created_at, updated_at,
+                CASE WHEN command IS NOT NULL AND command != '' THEN 1 ELSE 0 END AS has_command,
+                CASE WHEN http_url IS NOT NULL AND http_url != '' THEN 1 ELSE 0 END AS has_http_target
+         FROM cron_jobs ORDER BY created_at DESC`,
+      )
+      .all();
   }
 
   async toolCreateCronJob(data) {

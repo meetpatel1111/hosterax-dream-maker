@@ -117,6 +117,7 @@ export class CronManager {
       );
 
       CREATE INDEX IF NOT EXISTS idx_job_runs_job ON job_runs(job_id, started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_job_runs_started_id ON job_runs(started_at DESC, id DESC);
       CREATE INDEX IF NOT EXISTS idx_cron_jobs_enabled ON cron_jobs(enabled, next_run_at);
     `);
   }
@@ -164,7 +165,16 @@ export class CronManager {
   }
 
   listJobs() {
-    return this.db.prepare("SELECT * FROM cron_jobs ORDER BY created_at DESC").all();
+    return this.db
+      .prepare(
+        `SELECT id, name, project_name, schedule_type, cron_expression, job_type, http_method,
+                target_container, timeout_seconds, max_retries, enabled, next_run_at, last_run_at,
+                last_status, last_duration_ms, created_at, updated_at,
+                CASE WHEN command IS NOT NULL AND command != '' THEN 1 ELSE 0 END AS has_command,
+                CASE WHEN http_url IS NOT NULL AND http_url != '' THEN 1 ELSE 0 END AS has_http_target
+         FROM cron_jobs ORDER BY created_at DESC`,
+      )
+      .all();
   }
 
   getJob(id) {
@@ -279,13 +289,51 @@ export class CronManager {
     return res.changes > 0;
   }
 
-  listJobRuns(jobId = null, limit = 50) {
+  listJobRuns(jobId = null, limit = 50, includeOutput = false) {
+    const requestedLimit = Number(limit);
+    const boundedLimit = Math.min(
+      Math.max(Number.isInteger(requestedLimit) ? requestedLimit : 50, 1),
+      100,
+    );
+    const columns = includeOutput
+      ? "id, job_id, job_name, project_name, trigger_type, status, started_at, finished_at, duration_ms, exit_code, stdout, stderr, error_message"
+      : "id, job_id, job_name, project_name, trigger_type, status, started_at, finished_at, duration_ms, exit_code";
     if (jobId) {
       return this.db
-        .prepare("SELECT * FROM job_runs WHERE job_id=? ORDER BY started_at DESC LIMIT ?")
-        .all(jobId, limit);
+        .prepare(`SELECT ${columns} FROM job_runs WHERE job_id=? ORDER BY started_at DESC, id DESC LIMIT ?`)
+        .all(jobId, boundedLimit);
     }
-    return this.db.prepare("SELECT * FROM job_runs ORDER BY started_at DESC LIMIT ?").all(limit);
+    return this.db
+      .prepare(`SELECT ${columns} FROM job_runs ORDER BY started_at DESC, id DESC LIMIT ?`)
+      .all(boundedLimit);
+  }
+
+  getStats() {
+    const runs = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total_runs,
+                SUM(CASE WHEN status='success' THEN 1 ELSE 0 END) AS successful_runs,
+                SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) AS failed_runs,
+                SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running_runs
+         FROM job_runs`,
+      )
+      .get();
+    const jobs = this.db
+      .prepare(
+        "SELECT COUNT(*) AS total_jobs, SUM(CASE WHEN enabled=1 THEN 1 ELSE 0 END) AS active_jobs FROM cron_jobs",
+      )
+      .get();
+    const completedRuns = runs.successful_runs + runs.failed_runs;
+    return {
+      totalJobs: jobs.total_jobs,
+      activeJobs: jobs.active_jobs || 0,
+      totalRuns: runs.total_runs,
+      successfulRuns: runs.successful_runs || 0,
+      failedRuns: runs.failed_runs || 0,
+      runningRuns: runs.running_runs || 0,
+      successRate:
+        completedRuns > 0 ? Math.round((runs.successful_runs / completedRuns) * 100) : null,
+    };
   }
 
   getJobRun(runId) {

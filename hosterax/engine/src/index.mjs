@@ -4928,6 +4928,9 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ────────── Scheduled Cron Jobs Subsystem ──────────
+    if (url.pathname === "/api/jobs/stats" && req.method === "GET") {
+      return json(res, 200, cronManager.getStats());
+    }
     if (url.pathname === "/api/jobs" && req.method === "GET") {
       return json(res, 200, cronManager.listJobs());
     }
@@ -4967,11 +4970,19 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if ((m = url.pathname.match(/^\/api\/jobs\/([^/]+)\/runs$/)) && req.method === "GET") {
-      const limit = Number(url.searchParams.get("limit") || 50);
-      return json(res, 200, cronManager.listJobRuns(m[1], limit));
+      const rawLimit = url.searchParams.get("limit");
+      const requestedLimit = rawLimit === null ? 50 : Number(rawLimit);
+      if (!Number.isInteger(requestedLimit) || requestedLimit < 1)
+        return json(res, 400, { error: "limit must be a positive integer" });
+      const limit = Math.min(requestedLimit, 100);
+      return json(res, 200, cronManager.listJobRuns(m[1], limit, true));
     }
     if (url.pathname === "/api/jobs-runs" && req.method === "GET") {
-      const limit = Number(url.searchParams.get("limit") || 50);
+      const rawLimit = url.searchParams.get("limit");
+      const requestedLimit = rawLimit === null ? 50 : Number(rawLimit);
+      if (!Number.isInteger(requestedLimit) || requestedLimit < 1)
+        return json(res, 400, { error: "limit must be a positive integer" });
+      const limit = Math.min(requestedLimit, 100);
       return json(res, 200, cronManager.listJobRuns(null, limit));
     }
     if ((m = url.pathname.match(/^\/api\/jobs\/runs\/([^/]+)$/)) && req.method === "GET") {

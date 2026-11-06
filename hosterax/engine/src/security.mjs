@@ -131,6 +131,9 @@ const SECRET_READS = [
   /\/webhook(-config)?$/,
   /^\/api\/servers/,
   /^\/api\/tokens/,
+  /^\/api\/jobs\/(?!stats$)[^/]+$/,
+  /^\/api\/jobs\/[^/]+\/runs$/,
+  /^\/api\/jobs\/runs\/[^/]+$/,
 ];
 
 /** Minimum scope level (1=read, 2=deploy, 3=admin) a token needs for this request. */
