@@ -159,6 +159,12 @@ export async function renderApiDocs() {
         `| ${r.method === "any" ? "any (not stated in the source)" : r.method} | \`${r.path}\` | ${r.scope} |`,
       );
     out.push("");
+    if (g === "deployments") {
+      out.push(
+        "`GET /api/deployments/page` returns `{ items, nextCursor }` with up to 50 deployments by default (maximum 100). Pass both `beforeStartedAt` and `beforeId` from `nextCursor` to load the following page.",
+        "",
+      );
+    }
   }
   return out.join("\n");
 }

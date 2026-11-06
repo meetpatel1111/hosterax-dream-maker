@@ -848,6 +848,49 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/deployments/page": {
+      "get": {
+        "summary": "GET /api/deployments/page",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Results per page (default 50, maximum 100).",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            }
+          },
+          {
+            "name": "beforeStartedAt",
+            "in": "query",
+            "required": false,
+            "description": "Timestamp from nextCursor; provide it with beforeId to load the next page.",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "beforeId",
+            "in": "query",
+            "required": false,
+            "description": "Deployment ID from nextCursor; provide it with beforeStartedAt.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/docker/containers": {
       "get": {
         "summary": "GET /api/docker/containers",

@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS deployments (
   exit_code INTEGER,
   workdir TEXT
 );
+CREATE INDEX IF NOT EXISTS idx_deployments_started_id ON deployments(started_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS tokens (
   token TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -4206,12 +4207,61 @@ const server = http.createServer(async (req, res) => {
     }
 
     // ────────── deployments ──────────
+    if (url.pathname === "/api/deployments/page" && req.method === "GET") {
+      const rawLimit = url.searchParams.get("limit");
+      const requestedLimit = rawLimit === null ? 50 : Number(rawLimit);
+      if (!Number.isInteger(requestedLimit) || requestedLimit < 1)
+        return json(res, 400, { error: "limit must be a positive integer" });
+      const limit = Math.min(requestedLimit, 100);
+      const rawBeforeStartedAt = url.searchParams.get("beforeStartedAt");
+      const beforeId = url.searchParams.get("beforeId");
+      const hasCursor = rawBeforeStartedAt !== null || beforeId !== null;
+      const beforeStartedAt = rawBeforeStartedAt === null ? null : Number(rawBeforeStartedAt);
+      if (
+        hasCursor &&
+        (!Number.isSafeInteger(beforeStartedAt) || beforeStartedAt < 0 || !beforeId?.trim() || beforeId.length > 200)
+      ) {
+        return json(res, 400, { error: "beforeStartedAt and beforeId must form a valid cursor" });
+      }
+
+      const rows = hasCursor
+        ? db
+            .prepare(
+              `SELECT id, project, version, phase, trigger, started_at, finished_at, exit_code,
+                      environment
+               FROM deployments
+               WHERE (started_at, id) < (?, ?)
+               ORDER BY started_at DESC, id DESC LIMIT ?`,
+            )
+            .all(beforeStartedAt, beforeId, limit + 1)
+        : db
+            .prepare(
+              `SELECT id, project, version, phase, trigger, started_at, finished_at, exit_code,
+                      environment
+               FROM deployments ORDER BY started_at DESC, id DESC LIMIT ?`,
+            )
+            .all(limit + 1);
+
+      const hasMore = rows.length > limit;
+      const items = hasMore ? rows.slice(0, limit) : rows;
+      const last = items.at(-1);
+      return json(res, 200, {
+        items,
+        nextCursor: hasMore && last ? { startedAt: last.started_at, id: last.id } : null,
+      });
+    }
     if (url.pathname === "/api/deployments" && req.method === "GET") {
-      const limit = Number(url.searchParams.get("limit") || 100);
+      const rawLimit = url.searchParams.get("limit");
+      const requestedLimit = rawLimit === null ? 100 : Number(rawLimit);
+      if (!Number.isInteger(requestedLimit) || requestedLimit < 1)
+        return json(res, 400, { error: "limit must be a positive integer" });
+      const limit = Math.min(requestedLimit, 500);
       return json(
         res,
         200,
-        db.prepare("SELECT * FROM deployments ORDER BY started_at DESC LIMIT ?").all(limit),
+        db
+          .prepare("SELECT * FROM deployments ORDER BY started_at DESC, id DESC LIMIT ?")
+          .all(limit),
       );
     }
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/deployments$/)) && req.method === "GET")

@@ -280,6 +280,31 @@ export function findMismatches(routes, calls) {
 // ───────────────────────── OpenAPI ─────────────────────────
 
 export function buildOpenApi(routes, version) {
+  const queryParams = {
+    "GET /api/deployments/page": [
+      {
+        name: "limit",
+        in: "query",
+        required: false,
+        description: "Results per page (default 50, maximum 100).",
+        schema: { type: "integer", minimum: 1, maximum: 100, default: 50 },
+      },
+      {
+        name: "beforeStartedAt",
+        in: "query",
+        required: false,
+        description: "Timestamp from nextCursor; provide it with beforeId to load the next page.",
+        schema: { type: "integer" },
+      },
+      {
+        name: "beforeId",
+        in: "query",
+        required: false,
+        description: "Deployment ID from nextCursor; provide it with beforeStartedAt.",
+        schema: { type: "string" },
+      },
+    ],
+  };
   const paths = {};
   for (const r of routes) {
     const openPath = r.path.replace(/\{(?:param|path)\}/g, (m, offset, whole) => {
@@ -298,7 +323,9 @@ export function buildOpenApi(routes, version) {
     for (const method of methods) {
       entry[method] ??= {
         summary: `${r.method === "*" ? "Any method" : r.method} ${r.path}`,
-        ...(params.length ? { parameters: params } : {}),
+        ...((params.length || queryParams[`${r.method} ${r.path}`]?.length)
+          ? { parameters: [...params, ...(queryParams[`${r.method} ${r.path}`] || [])] }
+          : {}),
         ...(r.method === "*" ? { "x-method-unspecified": true } : {}),
         responses: { default: { description: "See the engine source for the response shape." } },
         // file only: line numbers would make the committed spec stale after every unrelated edit
