@@ -80,11 +80,7 @@ function Dashboard() {
     refetchInterval: 10000,
   });
 
-  const {
-    data: sys,
-    error: systemError,
-    refetch: refetchSystem,
-  } = useEngineSystem();
+  const { data: sys, error: systemError, refetch: refetchSystem } = useEngineSystem();
   const { data: magicDns } = useMagicDnsSettings();
   const { data: netInfo } = useNetworkInterfaces();
   const primaryLanIp =
@@ -107,7 +103,11 @@ function Dashboard() {
     localStorage.setItem("hx.starred", JSON.stringify(next));
   };
 
-  const { data: stats, error: statsError, refetch: refetchStats } = useQuery({
+  const {
+    data: stats,
+    error: statsError,
+    refetch: refetchStats,
+  } = useQuery({
     queryKey: ["dashboard-stats", eng.url],
     enabled: !!health?.ok,
     queryFn: async ({ signal }) => {
@@ -284,7 +284,7 @@ function Dashboard() {
           className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
         >
           <span>
-            Dashboard data could not be loaded: {" "}
+            Dashboard data could not be loaded:{" "}
             {listError instanceof Error ? listError.message : String(listError)}
           </span>
           <button

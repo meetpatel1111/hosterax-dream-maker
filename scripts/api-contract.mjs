@@ -360,7 +360,7 @@ export function buildOpenApi(routes, version) {
     for (const method of methods) {
       entry[method] ??= {
         summary: `${r.method === "*" ? "Any method" : r.method} ${r.path}`,
-        ...((params.length || queryParams[`${r.method} ${r.path}`]?.length)
+        ...(params.length || queryParams[`${r.method} ${r.path}`]?.length
           ? { parameters: [...params, ...(queryParams[`${r.method} ${r.path}`] || [])] }
           : {}),
         ...(r.method === "*" ? { "x-method-unspecified": true } : {}),

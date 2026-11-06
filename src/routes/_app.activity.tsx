@@ -92,7 +92,12 @@ function ActivityPage() {
           label: `${event.details || eventType} (${event.project})`,
           user: "AutoHeal Watchdog",
           at: eventTime(event.timestamp),
-          status: event.status === "error" ? "failed" : event.status === "warning" ? "warning" : "success",
+          status:
+            event.status === "error"
+              ? "failed"
+              : event.status === "warning"
+                ? "warning"
+                : "success",
         });
       }
 
@@ -140,7 +145,8 @@ function ActivityPage() {
       filterKind === "all" ||
       (filterKind === "project" && event.kind.startsWith("project")) ||
       (filterKind === "deploy" && event.kind.startsWith("deploy")) ||
-      (filterKind === "heal" && (event.kind.startsWith("heal") || event.kind.startsWith("guard"))) ||
+      (filterKind === "heal" &&
+        (event.kind.startsWith("heal") || event.kind.startsWith("guard"))) ||
       (filterKind === "auth" && event.kind.startsWith("auth"));
     return matchQuery && matchKind;
   });
@@ -180,7 +186,11 @@ function ActivityPage() {
             className="w-full rounded-md border border-input bg-input/40 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
           />
         </div>
-        <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1" role="group" aria-label="Filter activity by type">
+        <div
+          className="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
+          role="group"
+          aria-label="Filter activity by type"
+        >
           {kinds.map((kind) => (
             <button
               key={kind.id}
@@ -224,7 +234,9 @@ function ActivityPage() {
                     )}
                   </div>
                   <div className="min-w-0">
-                    <div className="break-words text-sm font-medium text-foreground">{event.label}</div>
+                    <div className="break-words text-sm font-medium text-foreground">
+                      {event.label}
+                    </div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>{event.user}</span>
                       {event.ip && (
@@ -249,7 +261,9 @@ function ActivityPage() {
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground">
-                    {event.at ? formatDistanceToNow(new Date(event.at), { addSuffix: true }) : "Time unavailable"}
+                    {event.at
+                      ? formatDistanceToNow(new Date(event.at), { addSuffix: true })
+                      : "Time unavailable"}
                   </div>
                 </div>
               </div>

@@ -72,11 +72,10 @@ function DeploymentsPage() {
       const displaced = previous.filter((deployment) => !currentIds.has(deployment.id));
       if (displaced.length) {
         setOlderDeployments((current) => {
-          const knownIds = new Set([...latestDeployments, ...current].map((deployment) => deployment.id));
-          return [
-            ...displaced.filter((deployment) => !knownIds.has(deployment.id)),
-            ...current,
-          ];
+          const knownIds = new Set(
+            [...latestDeployments, ...current].map((deployment) => deployment.id),
+          );
+          return [...displaced.filter((deployment) => !knownIds.has(deployment.id)), ...current];
         });
       }
     }
@@ -113,7 +112,9 @@ function DeploymentsPage() {
       setHasLoadedOlder(true);
     } catch (error) {
       if (!(error instanceof Error && error.name === "AbortError")) {
-        setLoadOlderError(error instanceof Error ? error.message : "Could not load older deployments.");
+        setLoadOlderError(
+          error instanceof Error ? error.message : "Could not load older deployments.",
+        );
       }
     } finally {
       if (olderRequest.current === controller) {
@@ -242,7 +243,10 @@ function DeploymentsPage() {
             </div>
 
             {loadOlderError && (
-              <div role="alert" className="border-t border-border px-4 py-3 text-sm text-destructive">
+              <div
+                role="alert"
+                className="border-t border-border px-4 py-3 text-sm text-destructive"
+              >
                 {loadOlderError}
               </div>
             )}

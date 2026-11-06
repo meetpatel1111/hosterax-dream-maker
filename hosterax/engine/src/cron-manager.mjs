@@ -300,7 +300,9 @@ export class CronManager {
       : "id, job_id, job_name, project_name, trigger_type, status, started_at, finished_at, duration_ms, exit_code";
     if (jobId) {
       return this.db
-        .prepare(`SELECT ${columns} FROM job_runs WHERE job_id=? ORDER BY started_at DESC, id DESC LIMIT ?`)
+        .prepare(
+          `SELECT ${columns} FROM job_runs WHERE job_id=? ORDER BY started_at DESC, id DESC LIMIT ?`,
+        )
         .all(jobId, boundedLimit);
     }
     return this.db

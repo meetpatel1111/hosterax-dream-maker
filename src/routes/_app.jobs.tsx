@@ -362,7 +362,10 @@ export default function JobsPage() {
         </div>
 
         {jobsError && jobs.length > 0 && (
-          <div role="status" className="flex items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs text-amber-400">
+          <div
+            role="status"
+            className="flex items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs text-amber-400"
+          >
             Could not refresh schedules. Showing the last loaded list.
             <Button variant="outline" size="sm" onClick={() => refetchJobs()}>
               Retry
@@ -561,7 +564,10 @@ export default function JobsPage() {
         </div>
 
         {runsError && allRuns.length > 0 && (
-          <div role="status" className="flex items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs text-amber-400">
+          <div
+            role="status"
+            className="flex items-center justify-between gap-3 border-b border-border px-4 py-2 text-xs text-amber-400"
+          >
             Could not refresh execution history. Showing the last loaded runs.
             <Button variant="outline" size="sm" onClick={() => refetchRuns()}>
               Retry

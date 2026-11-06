@@ -11,32 +11,32 @@ uses a strong-copyleft licence (GPL, AGPL, SSPL, …) or has no licence at all.
 Maintained by hand. These run as separate programs; HosteraX does not link or redistribute them. Check the licence at its source before
 relying on this table for compliance.
 
-| Program | Used for | Licence | How it reaches you |
-| --- | --- | --- | --- |
-| Docker Engine and CLI | Runs every container (this machine and remote servers) | Apache-2.0 (Docker Desktop has its own subscription terms) | Not shipped: the host's own Docker is used |
-| OpenSSH (`ssh`, `ssh-keyscan`, `ssh-keygen`) | Remote servers, and the SSH-based public tunnels | OpenSSH licence (BSD-style) | Not shipped: the host's own client is used |
-| SQLite (inside better-sqlite3) | The engine's database | Public domain | Compiled into the better-sqlite3 package |
-| OpenResty (`openresty/openresty:alpine`) | The default edge proxy | BSD-2-Clause | Pulled as an image at run time (floating tag) |
-| Caddy (`caddy`) | The alternative edge proxy | Apache-2.0 | Pulled as an image at run time (floating tag) |
-| certbot (`certbot/certbot`) | Let's Encrypt certificates | Apache-2.0 | Pulled as an image at run time (floating tag) |
-| cloudflared | Public address through Cloudflare (free, no account) | Apache-2.0 (the Cloudflare services have their own terms) | Pulled as an image, pinned by version and digest |
-| ngrok agent | Public address through ngrok (needs your own account) | Proprietary: you accept ngrok's terms with your own token | Pulled as an image, pinned by version and digest; only used if you choose it |
-| bore | Public address through a bore relay | MIT | Pulled as an image, pinned by version and digest; only used if you choose it |
-| localtunnel | Public address through localtunnel | MIT | Fetched with `npx` only if you choose it |
-| Tailscale | Public address through Funnel | BSD-3-Clause (client); account terms apply | Not shipped: the host's own client is used |
-| localhost.run, Pinggy, Serveo | Public addresses over plain SSH | Services with their own terms; no software is installed | Reached with the host's `ssh` |
-| PostgreSQL, MariaDB, MySQL (images) | Managed databases, on request | PostgreSQL licence; GPL-2.0 (MariaDB, MySQL; with the MySQL FOSS exception) | Pulled as images and run as separate programs, never linked or redistributed |
-| MongoDB (image) | Managed databases, on request | SSPL-1.0 | Pulled as an image and run as a separate program; read the SSPL before offering it as a service |
-| Redis (image) | Managed databases, on request | 7.4 and later: RSALv2 or SSPLv1 (8.x also AGPLv3); 7.2 and earlier: BSD-3-Clause | Pulled as an image and run as a separate program |
+| Program                                      | Used for                                               | Licence                                                                          | How it reaches you                                                                              |
+| -------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Docker Engine and CLI                        | Runs every container (this machine and remote servers) | Apache-2.0 (Docker Desktop has its own subscription terms)                       | Not shipped: the host's own Docker is used                                                      |
+| OpenSSH (`ssh`, `ssh-keyscan`, `ssh-keygen`) | Remote servers, and the SSH-based public tunnels       | OpenSSH licence (BSD-style)                                                      | Not shipped: the host's own client is used                                                      |
+| SQLite (inside better-sqlite3)               | The engine's database                                  | Public domain                                                                    | Compiled into the better-sqlite3 package                                                        |
+| OpenResty (`openresty/openresty:alpine`)     | The default edge proxy                                 | BSD-2-Clause                                                                     | Pulled as an image at run time (floating tag)                                                   |
+| Caddy (`caddy`)                              | The alternative edge proxy                             | Apache-2.0                                                                       | Pulled as an image at run time (floating tag)                                                   |
+| certbot (`certbot/certbot`)                  | Let's Encrypt certificates                             | Apache-2.0                                                                       | Pulled as an image at run time (floating tag)                                                   |
+| cloudflared                                  | Public address through Cloudflare (free, no account)   | Apache-2.0 (the Cloudflare services have their own terms)                        | Pulled as an image, pinned by version and digest                                                |
+| ngrok agent                                  | Public address through ngrok (needs your own account)  | Proprietary: you accept ngrok's terms with your own token                        | Pulled as an image, pinned by version and digest; only used if you choose it                    |
+| bore                                         | Public address through a bore relay                    | MIT                                                                              | Pulled as an image, pinned by version and digest; only used if you choose it                    |
+| localtunnel                                  | Public address through localtunnel                     | MIT                                                                              | Fetched with `npx` only if you choose it                                                        |
+| Tailscale                                    | Public address through Funnel                          | BSD-3-Clause (client); account terms apply                                       | Not shipped: the host's own client is used                                                      |
+| localhost.run, Pinggy, Serveo                | Public addresses over plain SSH                        | Services with their own terms; no software is installed                          | Reached with the host's `ssh`                                                                   |
+| PostgreSQL, MariaDB, MySQL (images)          | Managed databases, on request                          | PostgreSQL licence; GPL-2.0 (MariaDB, MySQL; with the MySQL FOSS exception)      | Pulled as images and run as separate programs, never linked or redistributed                    |
+| MongoDB (image)                              | Managed databases, on request                          | SSPL-1.0                                                                         | Pulled as an image and run as a separate program; read the SSPL before offering it as a service |
+| Redis (image)                                | Managed databases, on request                          | 7.4 and later: RSALv2 or SSPLv1 (8.x also AGPLv3); 7.2 and earlier: BSD-3-Clause | Pulled as an image and run as a separate program                                                |
 
 ## The engine's npm packages (4)
 
-| Package | Version | Licence |
-| --- | --- | --- |
-| better-sqlite3 | 13.0.3 | MIT |
-| node-addon-api | 8.9.2 | MIT |
-| nodemailer | 9.0.5 | MIT-0 |
-| ws | 8.21.3 | MIT |
+| Package        | Version | Licence |
+| -------------- | ------- | ------- |
+| better-sqlite3 | 13.0.3  | MIT     |
+| node-addon-api | 8.9.2   | MIT     |
+| nodemailer     | 9.0.5   | MIT-0   |
+| ws             | 8.21.3  | MIT     |
 
 ## Packages bundled into the dashboard (247)
 

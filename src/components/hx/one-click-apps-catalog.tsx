@@ -131,7 +131,14 @@ export function OneClickAppsCatalog({
   });
 
   const catalogQuery = useInfiniteQuery({
-    queryKey: ["catalog-apps", eng.url, selectedTag, selectedSource, debouncedSearchQuery, pageSize],
+    queryKey: [
+      "catalog-apps",
+      eng.url,
+      selectedTag,
+      selectedSource,
+      debouncedSearchQuery,
+      pageSize,
+    ],
     initialPageParam: 0,
     queryFn: async ({ pageParam, signal }) => {
       const params = new URLSearchParams();
@@ -796,7 +803,9 @@ export function OneClickAppsCatalog({
           Catalog refresh failed: {catalogQueryError.message}. Showing the last loaded results.
           <button
             type="button"
-            onClick={() => void (health?.ok ? catalogQuery.refetch() : offlineCatalogQuery.refetch())}
+            onClick={() =>
+              void (health?.ok ? catalogQuery.refetch() : offlineCatalogQuery.refetch())
+            }
             className="rounded-md border border-amber-500/40 px-3 py-1.5 font-medium hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
           >
             Retry
@@ -818,7 +827,9 @@ export function OneClickAppsCatalog({
           </p>
           <button
             type="button"
-            onClick={() => void (health?.ok ? catalogQuery.refetch() : offlineCatalogQuery.refetch())}
+            onClick={() =>
+              void (health?.ok ? catalogQuery.refetch() : offlineCatalogQuery.refetch())
+            }
             className="mt-3 rounded-md border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
           >
             Retry
@@ -1077,7 +1088,9 @@ export function OneClickAppsCatalog({
                 {/* Buttons */}
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                   <button
-                    onClick={() => setVisibleCount((c) => Math.min(catalogResultTotal, c + pageSize))}
+                    onClick={() =>
+                      setVisibleCount((c) => Math.min(catalogResultTotal, c + pageSize))
+                    }
                     className="px-5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-xs font-semibold text-primary-foreground shadow-sm transition-all inline-flex items-center gap-2"
                   >
                     <span>Load Next {pageSize} Apps</span>

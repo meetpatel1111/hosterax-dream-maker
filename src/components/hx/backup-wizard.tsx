@@ -75,10 +75,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
 
   const targets = useMemo(() => targetsQuery.data || [], [targetsQuery.data]);
   const latestBackups = backupsQuery.data?.items || [];
-  const backups = useMemo(
-    () => [...latestBackups, ...olderBackups],
-    [latestBackups, olderBackups],
-  );
+  const backups = useMemo(() => [...latestBackups, ...olderBackups], [latestBackups, olderBackups]);
   const backupCursor = hasLoadedOlder ? olderCursor : backupsQuery.data?.nextCursor || null;
   const s3Config = s3ConfigQuery.data;
   const remoteBackups = useMemo(() => remoteBackupsQuery.data || [], [remoteBackupsQuery.data]);
@@ -167,7 +164,9 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
       setHasLoadedOlder(true);
     } catch (error) {
       if (!(error instanceof Error && error.name === "AbortError")) {
-        setLoadOlderError(error instanceof Error ? error.message : "Could not load older snapshots.");
+        setLoadOlderError(
+          error instanceof Error ? error.message : "Could not load older snapshots.",
+        );
       }
     } finally {
       if (olderRequest.current === controller) {
@@ -464,7 +463,8 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
             >
               {tab === "create" && "Create Snapshot"}
               {tab === "schedules" && `Schedules (${schedules.length})`}
-              {tab === "history" && `Snapshots History (${backups.length}${backupCursor ? "+" : ""})`}
+              {tab === "history" &&
+                `Snapshots History (${backups.length}${backupCursor ? "+" : ""})`}
               {tab === "storage" && "Remote S3 / R2 Storage"}
             </button>
           ))}

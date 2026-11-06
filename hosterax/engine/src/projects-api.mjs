@@ -1354,7 +1354,9 @@ export function createProjectsApi(ctx) {
         ].sort();
         let currentKeys = Object.keys(readEnv(proj.name, environment)).sort();
         if (environment === "production" && currentKeys.length === 0) {
-          const projectRow = db.prepare("SELECT env_json FROM projects WHERE name=?").get(proj.name);
+          const projectRow = db
+            .prepare("SELECT env_json FROM projects WHERE name=?")
+            .get(proj.name);
           currentKeys = Object.keys(projectRow ? decryptJson(projectRow.env_json) : {}).sort();
         }
         const deployed = new Set(deployedKeys);

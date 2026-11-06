@@ -4224,7 +4224,10 @@ const server = http.createServer(async (req, res) => {
       const beforeStartedAt = rawBeforeStartedAt === null ? null : Number(rawBeforeStartedAt);
       if (
         hasCursor &&
-        (!Number.isSafeInteger(beforeStartedAt) || beforeStartedAt < 0 || !beforeId?.trim() || beforeId.length > 200)
+        (!Number.isSafeInteger(beforeStartedAt) ||
+          beforeStartedAt < 0 ||
+          !beforeId?.trim() ||
+          beforeId.length > 200)
       ) {
         return json(res, 400, { error: "beforeStartedAt and beforeId must form a valid cursor" });
       }
