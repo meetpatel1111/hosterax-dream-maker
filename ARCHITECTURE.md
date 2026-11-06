@@ -75,6 +75,9 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
   4. Runs health-check probes (`/` or custom `health_path`).
   5. Atomically switches the internal reverse proxy route to the new port once healthy.
   6. Gracefully terminates the previous release snapshot.
+- Deployments for one project are queued in order so two builds cannot overwrite the same worktree or race their route cutovers.
+- Direct container images are pinned to the registry's `RepoDigest` when available; the digest is kept in the deployment snapshot and reused for rollback. Registries that do not expose a digest remain tag-based.
+- Deployment snapshots record environment variable names only. The project environment API uses these names to report added or removed variables without retaining secret values.
 
 ---
 
@@ -115,8 +118,9 @@ HosteraX is an autonomous, self-hosted cloud control plane designed to bridge mo
 
 ---
 
-### 7. App Store & 2,500+ Template Catalog (`public/catalog.json`)
+### 7. App Store & 2,500+ Template Catalog
 
-- Bundled database (no network needed to browse) compiling templates from **Awesome-Selfhosted**, **selfh.st**, and **Awesome-Sysadmin**.
+- The engine serves filtered pages from the bundled database compiled from **Awesome-Selfhosted**, **selfh.st**, and **Awesome-Sysadmin**. Pages default to 48 apps and cap at 250.
+- The web app fetches the bundled `public/catalog.json` only when the engine is offline, so offline browsing remains available without downloading the full database during connected sessions.
 - Container images are mapped per entry. Entries with `imageVerified: true` were confirmed against a registry; the rest are best guesses that the image resolver tries (and reports on) at deploy time.
 - Logos are loaded from public icon CDNs and can be switched off in Settings → Privacy.

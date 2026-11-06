@@ -33,7 +33,7 @@ function DatabasesPage() {
         return [];
       }
     },
-    refetchInterval: 3000,
+    refetchInterval: 10000,
   });
 
   return (

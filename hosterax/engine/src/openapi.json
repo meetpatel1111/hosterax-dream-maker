@@ -2619,6 +2619,27 @@
         "x-source": "hosterax/engine/src/projects-api.mjs"
       }
     },
+    "/api/projects/{name}/env-drift": {
+      "get": {
+        "summary": "GET /api/projects/{name}/env-drift",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/projects-api.mjs"
+      }
+    },
     "/api/projects/{name}/environments": {
       "get": {
         "summary": "GET /api/projects/{name}/environments",

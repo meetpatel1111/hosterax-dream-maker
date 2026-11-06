@@ -1029,6 +1029,21 @@ function applyRoute(project, appPort, hostname, id) {
 }
 
 // ---------- deploy engine ----------
+// Keep deployments for a project in order so two builds cannot replace the same working copy or
+// race to publish routes. Different projects can still deploy concurrently.
+const deploymentQueues = new Map();
+
+function enqueueDeployment(project, operation) {
+  const previous = deploymentQueues.get(project) ?? Promise.resolve();
+  const current = previous.catch(() => {}).then(operation);
+  const settled = current.catch(() => {});
+  deploymentQueues.set(project, settled);
+  void settled.then(() => {
+    if (deploymentQueues.get(project) === settled) deploymentQueues.delete(project);
+  });
+  return current;
+}
+
 function nextVersion(project) {
   const n = db.prepare("SELECT COUNT(*) c FROM deployments WHERE project=?").get(project).c;
   return `v0.${n + 1}.0`;
@@ -1639,41 +1654,43 @@ function superviseProcess(project, workdir, cmd, env, policy, deploymentId) {
   return rec;
 }
 
-function inspectDockerImage(tag) {
-  try {
-    const res = spawnSync("docker", ["image", "inspect", tag], {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    if (res.stdout) {
-      const raw = JSON.parse(res.stdout.trim());
-      const data = Array.isArray(raw) ? raw[0] : raw;
-      const cfg = data?.Config || {};
-      const exposedPorts = [];
-      if (cfg.ExposedPorts) {
-        for (const p of Object.keys(cfg.ExposedPorts)) {
-          const m = p.match(/^(\d+)/);
-          if (m) exposedPorts.push(parseInt(m[1], 10));
-        }
-      }
-      const volumes = [];
-      if (cfg.Volumes) {
-        for (const v of Object.keys(cfg.Volumes)) {
-          volumes.push(v);
-        }
-      }
-      return {
-        exposedPorts,
-        volumes,
-        env: cfg.Env || [],
-        entrypoint: cfg.Entrypoint || [],
-        cmd: cfg.Cmd || [],
-      };
+function parseDockerImageInspect(stdout) {
+  const raw = JSON.parse(stdout.trim());
+  const data = Array.isArray(raw) ? raw[0] : raw;
+  const cfg = data?.Config || {};
+  const exposedPorts = [];
+  if (cfg.ExposedPorts) {
+    for (const p of Object.keys(cfg.ExposedPorts)) {
+      const m = p.match(/^(\d+)/);
+      if (m) exposedPorts.push(parseInt(m[1], 10));
     }
+  }
+  const volumes = cfg.Volumes ? Object.keys(cfg.Volumes) : [];
+  return {
+    exposedPorts,
+    volumes,
+    repoDigests: Array.isArray(data?.RepoDigests) ? data.RepoDigests : [],
+    env: cfg.Env || [],
+    entrypoint: cfg.Entrypoint || [],
+    cmd: cfg.Cmd || [],
+  };
+}
+
+async function inspectDockerImage(tag) {
+  try {
+    const stdout = await new Promise((resolve, reject) => {
+      execFile(
+        "docker",
+        ["image", "inspect", tag],
+        { encoding: "utf8", timeout: 5000, maxBuffer: 2 * 1024 * 1024 },
+        (err, output) => (err ? reject(err) : resolve(output)),
+      );
+    });
+    return parseDockerImageInspect(stdout);
   } catch (err) {
     console.warn("inspectDockerImage warning:", err);
+    return { exposedPorts: [], volumes: [], repoDigests: [], env: [], entrypoint: [], cmd: [] };
   }
-  return { exposedPorts: [], volumes: [], env: [], entrypoint: [], cmd: [] };
 }
 
 function pickPrimaryHttpPort(exposedPorts) {
@@ -1740,30 +1757,110 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
     // A bare name ("nginx", "uptime-kuma") becomes its usual image; a tag the user chose is kept as given.
     if (isDirectImage) tag = normalizeImageSource(tag, project);
 
-    let imageInspect = { exposedPorts: [], volumes: [], env: [] };
+    let imageInspect = { exposedPorts: [], volumes: [], repoDigests: [], env: [] };
 
     if (isDirectImage) {
-      const pullRes = await pullWithUniversalHealing({
-        deploymentId,
-        workdir,
-        initialTag: tag,
-        projectName: project,
-        publish,
-        runStep,
-        runArgv: runStepArgv,
-      });
+      let pinnedImage = null;
+      try {
+        const deployment = db
+          .prepare("SELECT snapshot_json FROM deployments WHERE id=?")
+          .get(deploymentId);
+        pinnedImage = deployment?.snapshot_json
+          ? JSON.parse(deployment.snapshot_json)?.image_digest
+          : null;
+      } catch {}
 
-      if (!pullRes.ok) {
+      if (pinnedImage) {
+        if (!isSafeImageRef(pinnedImage) || !pinnedImage.includes("@sha256:")) {
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "stderr",
+            text: "[docker] ERROR: The recorded image digest is invalid; refusing an unsafe rollback.",
+          });
+          return 1;
+        }
         publish(deploymentId, {
           ts: Date.now(),
-          stream: "stderr",
-          text: `[docker] ERROR: Aborting deployment. No valid container image could be resolved for "${project}".`,
+          stream: "system",
+          text: `[docker] Reusing pinned image ${pinnedImage}`,
         });
-        return 1;
+        const pullCode = await runStepArgv(
+          deploymentId,
+          workdir,
+          "docker",
+          ["pull", pinnedImage],
+          {},
+        );
+        if (pullCode !== 0) {
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "stderr",
+            text: `[docker] ERROR: Could not pull recorded image digest ${pinnedImage}.`,
+          });
+          return pullCode;
+        }
+        tag = pinnedImage;
+      } else {
+        const pullRes = await pullWithUniversalHealing({
+          deploymentId,
+          workdir,
+          initialTag: tag,
+          projectName: project,
+          publish,
+          runStep,
+          runArgv: runStepArgv,
+        });
+
+        if (!pullRes.ok) {
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "stderr",
+            text: `[docker] ERROR: Aborting deployment. No valid container image could be resolved for "${project}".`,
+          });
+          return 1;
+        }
+        tag = pullRes.tag;
       }
 
-      tag = pullRes.tag;
-      imageInspect = inspectDockerImage(tag);
+      imageInspect = await inspectDockerImage(tag);
+      if (!pinnedImage) {
+        const repoDigest = imageInspect.repoDigests.find((ref) =>
+          /@sha256:[a-f0-9]{64}$/i.test(ref),
+        );
+        if (repoDigest && isSafeImageRef(repoDigest)) {
+          tag = repoDigest;
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "system",
+            text: `[docker] Pinned deployment image to ${repoDigest}`,
+          });
+          try {
+            const deployment = db
+              .prepare("SELECT snapshot_json FROM deployments WHERE id=?")
+              .get(deploymentId);
+            const snapshot = deployment?.snapshot_json
+              ? JSON.parse(deployment.snapshot_json)
+              : null;
+            if (snapshot) {
+              setPhase(deploymentId, "deploying", {
+                snapshot_json: JSON.stringify({ ...snapshot, image_digest: repoDigest }),
+              });
+            }
+          } catch (err) {
+            publish(deploymentId, {
+              ts: Date.now(),
+              stream: "stderr",
+              text: `[docker] Could not record image digest for rollback: ${err.message}`,
+            });
+          }
+        } else {
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "system",
+            text: "[docker] This registry did not provide an immutable digest; the deployment is using its image tag.",
+          });
+        }
+      }
       if (imageInspect.exposedPorts.length > 0) {
         publish(deploymentId, {
           ts: Date.now(),
@@ -1863,7 +1960,7 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
       }
 
       if (bc !== 0) return bc;
-      imageInspect = inspectDockerImage(tag);
+      imageInspect = await inspectDockerImage(tag);
     }
 
     // ── Blue/Green Zero-Downtime Deployment ──
@@ -2352,13 +2449,19 @@ async function runDeploymentHere(project, opts = {}) {
     workdir,
     environment,
   );
-  const env = { ...decryptJson(p.env_json) };
+  const environmentValues = projectsApi.readEnv(project, environment);
+  const projectEnv =
+    environment === "production" && Object.keys(environmentValues).length === 0
+      ? decryptJson(p.env_json)
+      : environmentValues;
+  const userEnvKeys = Object.keys(projectEnv).sort();
+  const env = { ...projectEnv };
   if (p.cpu_limit) env.HOSTERAX_CPU_LIMIT = String(p.cpu_limit);
   if (p.memory_mb_limit) env.HOSTERAX_MEMORY_LIMIT_MB = String(p.memory_mb_limit);
   env.HOSTERAX_ENVIRONMENT = environment;
   env.HOSTERAX_RESTART_POLICY = p.restart_policy || "on-failure";
 
-  (async () => {
+  void enqueueDeployment(project, async () => {
     try {
       // rollbacks replay the frozen snapshot so they are byte-for-byte reproducible
       const snap = opts.rollbackFrom?.snapshot ?? null;
@@ -2547,6 +2650,7 @@ async function runDeploymentHere(project, opts = {}) {
             hostname,
             source: p.source,
             environment,
+            user_env_keys: userEnvKeys,
             env_keys: Object.keys(env).sort(),
             created_at: Date.now(),
           }),
@@ -2592,7 +2696,7 @@ async function runDeploymentHere(project, opts = {}) {
       publish(id, { ts: Date.now(), stream: "stderr", text: String(e) });
       setPhase(id, "failed", { finished_at: Date.now(), exit_code: 1 });
     }
-  })();
+  });
 
   return { id, version, environment };
 }
@@ -2930,8 +3034,24 @@ function readDeploymentLog(deploymentId, lines = 0) {
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(String(deploymentId))) return "";
   const file = path.join(LOGDIR, deploymentId + ".log");
   if (!fs.existsSync(file)) return "";
-  const text = fs.readFileSync(file, "utf8");
-  return lines > 0 ? text.split("\n").slice(-lines).join("\n") : text;
+  if (lines <= 0) return fs.readFileSync(file, "utf8");
+
+  const fd = fs.openSync(file, "r");
+  try {
+    const size = fs.fstatSync(fd).size;
+    const bytesToRead = Math.min(size, 1024 * 1024);
+    const start = size - bytesToRead;
+    const buffer = Buffer.alloc(bytesToRead);
+    fs.readSync(fd, buffer, 0, bytesToRead, start);
+    let text = buffer.toString("utf8");
+    if (start > 0) {
+      const firstCompleteLine = text.indexOf("\n");
+      text = firstCompleteLine < 0 ? "" : text.slice(firstCompleteLine + 1);
+    }
+    return text.split("\n").slice(-lines).join("\n");
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function dockerCli(args, timeout = 60000) {
@@ -4145,7 +4265,15 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, safe);
     }
     if ((m = url.pathname.match(/^\/api\/deployments\/([^/]+)\/logs$/)) && req.method === "GET") {
-      const text = readDeploymentLog(m[1]);
+      const rawLines = url.searchParams.get("lines");
+      const requestedLines = Number.parseInt(rawLines || "1000", 10);
+      const lines =
+        rawLines === null
+          ? 0
+          : Number.isFinite(requestedLines)
+            ? Math.max(1, Math.min(5000, requestedLines))
+            : 1000;
+      const text = readDeploymentLog(m[1], lines);
       res.writeHead(200, { "content-type": "text/plain", "access-control-allow-origin": "*" });
       return res.end(text);
     }
@@ -5871,9 +5999,9 @@ wss.on("connection", (ws, req) => {
     if (!/^[A-Za-z0-9_-]{1,64}$/.test(deploymentId)) return closeWebSocket(ws);
     if (!subscribers.has(deploymentId)) subscribers.set(deploymentId, new Set());
     subscribers.get(deploymentId).add(ws);
-    const logPath = path.join(LOGDIR, deploymentId + ".log");
-    if (fs.existsSync(logPath)) {
-      for (const line of fs.readFileSync(logPath, "utf8").split("\n").filter(Boolean)) {
+    const logTail = readDeploymentLog(deploymentId, 1000);
+    if (logTail) {
+      for (const line of logTail.split("\n").filter(Boolean)) {
         try {
           ws.send(JSON.stringify({ deploymentId, ts: Date.now(), stream: "replay", text: line }));
         } catch {}

@@ -356,7 +356,9 @@ function ProjectPage() {
       {tab === "webhooks" && <WebhooksTab projectName={project.name} project={project} />}
       {tab === "self-heal" && <SelfHealingPanel projectName={project.name} />}
       {tab === "logs" && <LiveLogs projectName={project.name} />}
-      {tab === "env" && <EnvVars projectId={project.id} projectName={project.name} />}
+      {tab === "env" && (
+        <EnvVars projectId={project.id} projectName={project.name} environment={environment} />
+      )}
       {tab === "domains" && (
         <ProjectDomains projectId={project.id} projectName={project.name} project={project} />
       )}
@@ -770,20 +772,56 @@ function LiveLogs({ projectName }: { projectName: string }) {
 }
 
 type EnvRow = { key: string; value: string; isSecret: boolean };
+type EnvDrift = {
+  available: boolean;
+  environment: string;
+  reason?: string;
+  deployedAt?: number;
+  added?: string[];
+  removed?: string[];
+};
 
-function EnvVars({ projectId, projectName }: { projectId: string; projectName: string }) {
+function EnvVars({
+  projectId,
+  projectName,
+  environment,
+}: {
+  projectId: string;
+  projectName: string;
+  environment: string;
+}) {
   const engine = useEngine();
   const qc = useQueryClient();
-  const { data: vars = [] } = useQuery({
-    queryKey: ["envs", projectName, engine.url],
-    queryFn: async () => {
-      try {
-        return (await engine.call<EnvRow[]>("GET", `/api/projects/${projectName}/env`)) ?? [];
-      } catch {
-        return [] as EnvRow[];
-      }
-    },
-    refetchInterval: 5000,
+  const {
+    data: vars = [],
+    error: envError,
+    refetch: refetchEnv,
+  } = useQuery({
+    queryKey: ["envs", projectName, environment, engine.url, engine.token],
+    queryFn: ({ signal }) =>
+      engine.call<EnvRow[]>(
+        "GET",
+        `/api/projects/${projectName}/env?environment=${encodeURIComponent(environment)}`,
+        undefined,
+        { signal },
+      ),
+    refetchInterval: 10000,
+  });
+  const {
+    data: drift,
+    error: driftError,
+    refetch: refetchDrift,
+  } = useQuery({
+    queryKey: ["env-drift", projectName, environment, engine.url, engine.token],
+    queryFn: ({ signal }) =>
+      engine.call<EnvDrift>(
+        "GET",
+        `/api/projects/${projectName}/env-drift?environment=${encodeURIComponent(environment)}`,
+        undefined,
+        { signal },
+      ),
+    refetchInterval: 10000,
+    staleTime: 5000,
   });
 
   const [key, setKey] = useState("");
@@ -792,9 +830,10 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
 
   async function save(body: { upserts?: unknown[]; deletes?: string[] }, okMsg: string) {
     try {
-      await engine.call("PATCH", `/api/projects/${projectName}/env`, body);
+      await engine.call("PATCH", `/api/projects/${projectName}/env`, { ...body, environment });
       toast.success(okMsg);
       qc.invalidateQueries({ queryKey: ["envs"] });
+      qc.invalidateQueries({ queryKey: ["env-drift", projectName, environment] });
     } catch (e: any) {
       toast.error(e.message || "Failed to update variables");
     }
@@ -813,6 +852,49 @@ function EnvVars({ projectId, projectName }: { projectId: string; projectName: s
 
   return (
     <div className="space-y-4">
+      {envError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          Environment variables could not be loaded: {envError.message}
+          <button type="button" onClick={() => void refetchEnv()} className="underline">
+            Retry
+          </button>
+        </div>
+      )}
+      {driftError ? (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          Environment drift could not be checked: {driftError.message}
+          <button type="button" onClick={() => void refetchDrift()} className="underline">
+            Retry
+          </button>
+        </div>
+      ) : drift?.available ? (
+        drift.added?.length || drift.removed?.length ? (
+          <div
+            role="status"
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200"
+          >
+            Environment keys changed since the last successful deployment.
+            {drift.added?.length ? ` Added: ${drift.added.join(", ")}.` : ""}
+            {drift.removed?.length ? ` Removed: ${drift.removed.join(", ")}.` : ""} Values are not
+            stored for drift tracking.
+          </div>
+        ) : (
+          <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 text-xs text-emerald-300">
+            Environment variable keys match the last successful deployment. Value changes are not
+            checked.
+          </div>
+        )
+      ) : drift?.reason ? (
+        <div className="rounded-lg border border-border bg-surface/50 px-4 py-3 text-xs text-muted-foreground">
+          {drift.reason}
+        </div>
+      ) : null}
       <div className="rounded-lg border border-border bg-card p-4">
         <div className="mb-3 text-sm font-medium">Add variable</div>
         <div className="flex flex-wrap gap-2">

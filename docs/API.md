@@ -88,6 +88,13 @@ A token's scope decides what it may call: **read** (view), **deploy** (change pr
 | GET | `/api/catalog/search` | read |
 | GET | `/api/catalog/tags` | read |
 
+`GET /api/catalog/apps` accepts `q`, `tag`, and `source` filters plus `limit` and `offset` for
+pagination. The default page size is 48 and the maximum is 250. Responses include `apps`, `total`,
+`limit`, and `offset`; request the next page until `offset + apps.length >= total`.
+
+`GET /api/deployments/{id}/logs?lines=1000` returns a bounded tail (up to 5,000 lines and 1 MB).
+Omitting `lines` keeps the full log response for existing clients.
+
 ## Databases
 
 | Method | Path | Scope |
@@ -318,6 +325,7 @@ A token's scope decides what it may call: **read** (view), **deploy** (change pr
 | POST | `/api/projects/{id}/domains` | deploy |
 | POST | `/api/projects/{id}/enable` | deploy |
 | GET | `/api/projects/{id}/env` | deploy |
+| GET | `/api/projects/{id}/env-drift` | read |
 | POST | `/api/projects/{id}/env` | deploy |
 | PATCH | `/api/projects/{id}/env` | deploy |
 | DELETE | `/api/projects/{id}/env/{id}` | deploy |
@@ -368,6 +376,10 @@ A token's scope decides what it may call: **read** (view), **deploy** (change pr
 | POST | `/api/projects/{id}/webhook` | deploy |
 | GET | `/api/projects/{id}/webhook-config` | deploy |
 | POST | `/api/projects/{id}/webhook-config` | deploy |
+
+`GET /api/projects/{id}/env-drift?environment=production` compares the current variable names with
+the last successful deployment snapshot. It reports added and removed names only; variable values
+are not stored for drift tracking.
 | POST | `/api/projects/{id}/webhook-domain` | deploy |
 | POST | `/api/projects/{id}/webhooks/github` | deploy |
 | POST | `/api/projects/ensure` | deploy |

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   LayoutGrid,
@@ -29,11 +29,14 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
-import { AICopilot } from "./ai-copilot";
 import { useAuth } from "@/lib/auth-context";
 import { useOrganizations } from "@/lib/engine";
 import { useTranslation, LANGUAGES, type LanguageCode } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+
+const AICopilot = lazy(() =>
+  import("./ai-copilot").then((module) => ({ default: module.AICopilot })),
+);
 
 const NAV = [
   { to: "/dashboard", key: "projects" as const, label: "Projects", icon: LayoutGrid },
@@ -62,7 +65,39 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   const { data: orgs = [] } = useOrganizations();
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [copilotLoaded, setCopilotLoaded] = useState(false);
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const { t, language, setLanguage, isRtl } = useTranslation();
+
+  useEffect(() => {
+    if (!mobileNavigationOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMobileNavigationOpen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [mobileNavigationOpen]);
+
+  useEffect(() => {
+    const toggleCopilot = (event: KeyboardEvent) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        (event.key.toLowerCase() === "k" || event.code === "Space")
+      ) {
+        event.preventDefault();
+        setMobileNavigationOpen(false);
+        setCopilotLoaded(true);
+        setCopilotOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", toggleCopilot);
+    return () => window.removeEventListener("keydown", toggleCopilot);
+  }, []);
 
   const currentOrg = orgs.find((o) => (activeOrgId ? o.id === activeOrgId : true)) || orgs[0];
 
@@ -227,6 +262,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
                   <Link
                     key={n.to}
                     to={n.to}
+                    aria-current={active ? "page" : undefined}
                     onClick={() => setMobileNavigationOpen(false)}
                     className={cn(
                       "flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors",
@@ -244,7 +280,31 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         )}
         <div className="p-4 md:p-6">{children}</div>
       </main>
-      <AICopilot />
+      {!copilotOpen && !mobileNavigationOpen && (
+        <button
+          type="button"
+          aria-label="Open HosteraX AIOps Copilot"
+          onClick={() => {
+            setCopilotLoaded(true);
+            setCopilotOpen(true);
+          }}
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-full border border-primary/40 bg-gradient-to-r from-primary via-emerald-400 to-primary px-4 py-2.5 font-semibold text-primary-foreground shadow-xl shadow-primary/20 transition-all duration-200 hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          title="Open HosteraX AIOps Copilot (Cmd+K)"
+        >
+          <Sparkles className="h-4 w-4 animate-pulse text-background" />
+          <span className="text-xs font-mono font-bold tracking-tight text-background">
+            AI Copilot
+          </span>
+          <span className="hidden rounded bg-background/20 px-1.5 py-0.5 text-[10px] font-mono text-background sm:inline-block">
+            ⌘K
+          </span>
+        </button>
+      )}
+      {copilotLoaded && (
+        <Suspense fallback={null}>
+          <AICopilot open={copilotOpen} onOpenChange={setCopilotOpen} />
+        </Suspense>
+      )}
     </div>
   );
 }

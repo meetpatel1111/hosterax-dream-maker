@@ -55,7 +55,7 @@ export function EdgeProviderSelector() {
   const { data: edgeStatus, isLoading: statusLoading } = useQuery<EdgeStatus>({
     queryKey: ["edge-status", engine.url],
     queryFn: () => engine.call<EdgeStatus>("GET", "/api/edge/status"),
-    refetchInterval: 4000,
+    refetchInterval: 15000,
     retry: false,
   });
 

@@ -43,7 +43,7 @@ function DeploymentsPage() {
       } catch {}
       return [];
     },
-    refetchInterval: 3000,
+    refetchInterval: 5000,
   });
 
   return (

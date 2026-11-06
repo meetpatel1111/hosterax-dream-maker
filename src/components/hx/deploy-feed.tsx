@@ -53,7 +53,7 @@ export function DeployFeed() {
       } catch {}
       return [];
     },
-    refetchInterval: 2500,
+    refetchInterval: 5000,
   });
 
   const filtered = deployments.filter((d) => {
@@ -188,12 +188,17 @@ function DeployLogModal({ deploymentId, onClose }: { deploymentId: string; onClo
   const [logText, setLogText] = useState<string>("");
 
   useEffect(() => {
-    fetch(`${engine.url}/api/deployments/${deploymentId}/logs`, {
+    const controller = new AbortController();
+    fetch(`${engine.url}/api/deployments/${deploymentId}/logs?lines=1000`, {
       headers: { Authorization: `Bearer ${engine.token}` },
+      signal: controller.signal,
     })
       .then((r) => r.text())
       .then((t) => setLogText(t))
-      .catch(() => setLogText("Logs stream unavailable"));
+      .catch((error) => {
+        if (error.name !== "AbortError") setLogText("Logs stream unavailable");
+      });
+    return () => controller.abort();
   }, [deploymentId, engine.url, engine.token]);
 
   return (

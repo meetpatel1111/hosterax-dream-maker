@@ -51,8 +51,15 @@ const QUICK_PROMPTS: Array<{ label: string; prompt: string; fill?: boolean }> = 
   { label: "🛡️ SSL & DNS", prompt: "Check edge routing and SSL status" },
 ];
 
-export function AICopilot() {
-  const [isOpen, setIsOpen] = useState(false);
+export function AICopilot({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const isOpen = open;
+  const setIsOpen = onOpenChange;
   const [isExpanded, setIsExpanded] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -68,18 +75,6 @@ export function AICopilot() {
   const chatMutation = useAiChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Global Keyboard Shortcut: Cmd+K / Ctrl+K / Ctrl+Space
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K" || e.code === "Space")) {
-        e.preventDefault();
-        setIsOpen((prev) => !prev);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
 
   // Initial welcome message
   useEffect(() => {
@@ -211,25 +206,6 @@ export function AICopilot() {
 
   return (
     <>
-      {/* Floating Trigger Button (Bottom-Right) */}
-      {!isOpen && (
-        <button
-          onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-full bg-gradient-to-r from-primary via-emerald-400 to-primary px-4 py-2.5 text-primary-foreground font-semibold shadow-xl shadow-primary/20 hover:scale-105 active:scale-95 transition-all duration-200 border border-primary/40 group"
-          title="Open HosteraX AIOps Copilot (Cmd+K)"
-        >
-          <div className="relative flex items-center justify-center">
-            <Sparkles className="w-4 h-4 animate-pulse text-background" />
-          </div>
-          <span className="text-xs font-mono font-bold tracking-tight text-background">
-            AI Copilot
-          </span>
-          <span className="hidden sm:inline-block rounded bg-background/20 px-1.5 py-0.5 text-[10px] font-mono text-background">
-            ⌘K
-          </span>
-        </button>
-      )}
-
       {/* Copilot Drawer / Modal */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:justify-end sm:pr-6 pointer-events-none">

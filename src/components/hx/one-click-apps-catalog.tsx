@@ -1,5 +1,5 @@
-import { useState, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, useMemo, useEffect } from "react";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
@@ -63,17 +63,23 @@ export function OneClickAppsCatalog({
   const eng = useEngine();
   const qc = useQueryClient();
   const nav = useNavigate();
-  const { data: health } = useEngineHealth();
+  const { data: health, isLoading: isHealthLoading } = useEngineHealth();
   const { t } = useTranslation();
 
   const [selectedTag, setSelectedTag] = useState<string>("all");
   const [selectedSource, setSelectedSource] = useState<OneClickAppSource>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [installingId, setInstallingId] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState<number>(48);
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(48);
   const [viewMode, setViewMode] = useState<"scroll" | "page">("scroll");
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebouncedSearchQuery(searchQuery.trim()), 250);
+    return () => window.clearTimeout(timeout);
+  }, [searchQuery]);
 
   // Custom Docker Image Input
   const [customImage, setCustomImage] = useState("");
@@ -81,58 +87,88 @@ export function OneClickAppsCatalog({
   const [customInspectResult, setCustomInspectResult] = useState<any | null>(null);
 
   // Query installed docker apps from engine
-  const { data: installedApps = [] } = useQuery({
+  const {
+    data: installedApps = [],
+    error: installedAppsError,
+    refetch: refetchInstalledApps,
+  } = useQuery({
     queryKey: ["engine-apps", eng.url, eng.token],
-    queryFn: async () => (await eng.call<any[]>("GET", "/api/apps").catch(() => [])) ?? [],
+    queryFn: ({ signal }) => eng.call<any[]>("GET", "/api/apps", undefined, { signal }),
     enabled: !!health?.ok,
-    refetchInterval: 3000,
+    refetchInterval: 10000,
   });
+  const installedAppIds = useMemo(
+    () =>
+      new Set(
+        installedApps.flatMap((app) =>
+          [app.id, app.name].filter(Boolean).map((value) => String(value).toLowerCase()),
+        ),
+      ),
+    [installedApps],
+  );
 
-  // Query all tags with automatic fallback to static asset
+  // Tags are compact; app records are loaded separately in bounded pages.
   const { data: tagsData } = useQuery({
     queryKey: ["catalog-tags", eng.url],
-    queryFn: async () => {
-      try {
-        const res = await eng.call<any>("GET", "/api/catalog/tags");
-        if (res && res.tags?.length > 0) return res;
-      } catch {}
-      try {
-        const r = await fetch("/catalog.json");
-        const data = await r.json();
-        return { total: data.tags?.length || 0, tags: data.tags || [] };
-      } catch {}
-      return null;
-    },
+    queryFn: ({ signal }) => eng.call<any>("GET", "/api/catalog/tags", undefined, { signal }),
+    enabled: !!health?.ok,
     staleTime: 60000,
   });
 
-  // Query all apps with automatic fallback to static asset
-  const { data: catalogData, isLoading: catalogLoading } = useQuery({
-    queryKey: ["catalog-apps", eng.url, selectedTag, selectedSource, searchQuery],
-    queryFn: async () => {
-      // 1. Try engine endpoint
-      try {
-        const params = new URLSearchParams();
-        if (selectedTag && selectedTag !== "all") params.set("tag", selectedTag);
-        if (selectedSource && selectedSource !== "all") params.set("source", selectedSource);
-        if (searchQuery) params.set("q", searchQuery);
-        params.set("limit", "5000");
-        const res = await eng.call<any>("GET", `/api/catalog/apps?${params.toString()}`);
-        if (res && res.apps?.length > 0) return res;
-      } catch {}
-
-      // 2. Fallback to /catalog.json static asset
-      try {
-        const r = await fetch("/catalog.json");
-        const data = await r.json();
-        const apps = data.apps || [];
-        return { total: apps.length, apps };
-      } catch {}
-
-      return null;
+  // Preserve offline browsing, but defer downloading the bundled directory until the engine is
+  // unavailable. Connected users receive only the requested page from the engine API.
+  const offlineCatalogQuery = useQuery({
+    queryKey: ["offline-app-catalog"],
+    queryFn: async ({ signal }) => {
+      const response = await fetch("/catalog.json", { signal });
+      if (!response.ok) throw new Error(`Offline catalog request failed (${response.status})`);
+      return response.json() as Promise<{ apps: any[]; tags: any[] }>;
     },
+    enabled: !isHealthLoading && !health?.ok,
+    staleTime: Infinity,
+    gcTime: Infinity,
+    retry: false,
+  });
+
+  const catalogQuery = useInfiniteQuery({
+    queryKey: ["catalog-apps", eng.url, selectedTag, selectedSource, debouncedSearchQuery, pageSize],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam, signal }) => {
+      const params = new URLSearchParams();
+      if (selectedTag !== "all") params.set("tag", selectedTag);
+      if (selectedSource !== "all") params.set("source", selectedSource);
+      if (debouncedSearchQuery) params.set("q", debouncedSearchQuery);
+      params.set("limit", String(pageSize));
+      params.set("offset", String(pageParam));
+      return eng.call<{ apps: any[]; total: number; limit: number; offset: number }>(
+        "GET",
+        `/api/catalog/apps?${params.toString()}`,
+        undefined,
+        { signal },
+      );
+    },
+    getNextPageParam: (lastPage) => {
+      const nextOffset = lastPage.offset + lastPage.apps.length;
+      return nextOffset < lastPage.total ? nextOffset : undefined;
+    },
+    enabled: !!health?.ok,
     staleTime: 60000,
   });
+  const catalogPages = catalogQuery.data?.pages;
+  const pagedCatalogItems = useMemo(
+    () => catalogPages?.flatMap((page) => page.apps) ?? [],
+    [catalogPages],
+  );
+  const catalogItems = health?.ok ? pagedCatalogItems : (offlineCatalogQuery.data?.apps ?? []);
+  const catalogTotal = health?.ok
+    ? (catalogQuery.data?.pages[0]?.total ?? 0)
+    : (offlineCatalogQuery.data?.apps.length ?? 0);
+  const catalogLoading =
+    isHealthLoading || (health?.ok ? catalogQuery.isLoading : offlineCatalogQuery.isLoading);
+  const hasCatalogData = health?.ok ? !!catalogQuery.data : !!offlineCatalogQuery.data;
+  const catalogError =
+    (health?.ok ? catalogQuery.isError : offlineCatalogQuery.isError) && !hasCatalogData;
+  const catalogQueryError = health?.ok ? catalogQuery.error : offlineCatalogQuery.error;
 
   // Combine curated verified apps with engine results with zero duplicate entries
   const allMergedApps = useMemo(() => {
@@ -151,7 +187,7 @@ export function OneClickAppsCatalog({
     }
 
     // 2. Add fetched catalog apps
-    const rawList = catalogData?.apps || [];
+    const rawList = catalogItems;
     for (const app of rawList) {
       const k = normKey(app.name) || normKey(app.slug || app.id);
       const existing = map.get(k);
@@ -202,7 +238,7 @@ export function OneClickAppsCatalog({
     }
 
     return Array.from(map.values());
-  }, [catalogData]);
+  }, [catalogItems]);
 
   // Filter apps locally by source and query
   const filteredItems = useMemo(() => {
@@ -227,7 +263,7 @@ export function OneClickAppsCatalog({
         item.categoryLabel?.toLowerCase() === selectedTag.toLowerCase();
 
       // Search Query
-      const term = searchQuery.toLowerCase().trim();
+      const term = debouncedSearchQuery.toLowerCase();
       if (!term) return matchesSource && matchesTag;
 
       const matchesSearch =
@@ -239,10 +275,27 @@ export function OneClickAppsCatalog({
 
       return matchesSource && matchesTag && matchesSearch;
     });
-  }, [allMergedApps, selectedSource, selectedTag, searchQuery]);
+  }, [allMergedApps, selectedSource, selectedTag, debouncedSearchQuery]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const catalogResultTotal = Math.max(catalogTotal, filteredItems.length);
+  const totalPages = Math.max(1, Math.ceil(catalogResultTotal / pageSize));
   const currentPage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    if (!health?.ok || !catalogQuery.hasNextPage || catalogQuery.isFetchingNextPage) return;
+    const neededItems = viewMode === "scroll" ? visibleCount : currentPage * pageSize;
+    if (catalogItems.length < neededItems) void catalogQuery.fetchNextPage();
+  }, [
+    catalogItems.length,
+    catalogQuery.hasNextPage,
+    catalogQuery.isFetchingNextPage,
+    catalogQuery.fetchNextPage,
+    health?.ok,
+    viewMode,
+    visibleCount,
+    currentPage,
+    pageSize,
+  ]);
 
   const visibleItems = useMemo(() => {
     if (viewMode === "scroll") {
@@ -539,9 +592,12 @@ export function OneClickAppsCatalog({
           return (
             <button
               key={src.id}
+              type="button"
+              aria-pressed={isActive}
               onClick={() => {
                 setSelectedSource(src.id as OneClickAppSource);
                 setVisibleCount(48);
+                setPage(1);
               }}
               className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
                 isActive
@@ -565,9 +621,12 @@ export function OneClickAppsCatalog({
               return (
                 <button
                   key={cat.id}
+                  type="button"
+                  aria-pressed={isActive}
                   onClick={() => {
                     setSelectedTag(cat.id);
                     setVisibleCount(48);
+                    setPage(1);
                   }}
                   className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all whitespace-nowrap ${
                     isActive
@@ -586,12 +645,14 @@ export function OneClickAppsCatalog({
           <div className="relative min-w-[260px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
-              type="text"
+              type="search"
+              aria-label={t("searchAppsPlaceholder", "Search across 2,500+ self-hosted apps...")}
               placeholder={t("searchAppsPlaceholder", "Search across 2,500+ self-hosted apps...")}
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
                 setVisibleCount(48);
+                setPage(1);
               }}
               className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg bg-surface border border-border/50 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all"
             />
@@ -603,6 +664,7 @@ export function OneClickAppsCatalog({
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <Tag className="w-3.5 h-3.5 text-primary shrink-0" />
             <select
+              aria-label="Filter by app category"
               value={selectedTag}
               onChange={(e) => {
                 setSelectedTag(e.target.value);
@@ -612,11 +674,13 @@ export function OneClickAppsCatalog({
               className="flex-1 bg-surface border border-border/50 rounded-md px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary font-medium truncate"
             >
               <option value="all">🌟 All Categories (2,500+ Apps)</option>
-              {(tagsData?.tags || []).map((t: any, idx: number) => (
-                <option key={`${t.slug || t.id}-${idx}`} value={t.slug || t.id}>
-                  {t.icon || "📦"} {t.label} ({t.count} apps)
-                </option>
-              ))}
+              {((health?.ok ? tagsData?.tags : offlineCatalogQuery.data?.tags) || []).map(
+                (t: any, idx: number) => (
+                  <option key={`${t.slug || t.id}-${idx}`} value={t.slug || t.id}>
+                    {t.icon || "📦"} {t.label} ({t.count} apps)
+                  </option>
+                ),
+              )}
             </select>
           </div>
 
@@ -624,6 +688,8 @@ export function OneClickAppsCatalog({
             {/* View Mode Toggle */}
             <div className="flex items-center rounded-lg border border-border/50 bg-surface p-0.5 text-[11px]">
               <button
+                type="button"
+                aria-pressed={viewMode === "scroll"}
                 onClick={() => setViewMode("scroll")}
                 className={`px-2 py-0.5 rounded font-medium transition-colors ${
                   viewMode === "scroll"
@@ -634,6 +700,8 @@ export function OneClickAppsCatalog({
                 Infinite / Load More
               </button>
               <button
+                type="button"
+                aria-pressed={viewMode === "page"}
                 onClick={() => setViewMode("page")}
                 className={`px-2 py-0.5 rounded font-medium transition-colors ${
                   viewMode === "page"
@@ -651,9 +719,12 @@ export function OneClickAppsCatalog({
               {[48, 96, 240].map((sz) => (
                 <button
                   key={sz}
+                  type="button"
+                  aria-pressed={pageSize === sz && visibleCount === sz}
                   onClick={() => {
                     setPageSize(sz);
                     setVisibleCount(sz);
+                    setPage(1);
                   }}
                   className={`px-1.5 py-0.5 rounded border transition-colors ${
                     pageSize === sz && visibleCount === sz
@@ -664,22 +735,14 @@ export function OneClickAppsCatalog({
                   {sz}
                 </button>
               ))}
-              <button
-                onClick={() => {
-                  setVisibleCount(filteredItems.length);
-                  setPageSize(filteredItems.length);
-                }}
-                className="px-1.5 py-0.5 rounded border border-border/40 hover:bg-surface text-muted-foreground hover:text-foreground"
-                title="Display all applications at once"
-              >
-                All ({filteredItems.length})
-              </button>
             </div>
 
             {/* Quick Page Step */}
             {viewMode === "page" && totalPages > 1 && (
               <div className="flex items-center gap-1">
                 <button
+                  type="button"
+                  aria-label="Previous page"
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={currentPage <= 1}
                   className="px-2 py-0.5 rounded border border-border/50 bg-surface text-xs disabled:opacity-40"
@@ -690,6 +753,8 @@ export function OneClickAppsCatalog({
                   {currentPage} / {totalPages}
                 </span>
                 <button
+                  type="button"
+                  aria-label="Next page"
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={currentPage >= totalPages}
                   className="px-2 py-0.5 rounded border border-border/50 bg-surface text-xs disabled:opacity-40"
@@ -703,10 +768,61 @@ export function OneClickAppsCatalog({
       </div>
 
       {/* Apps Grid */}
+      {!isHealthLoading && !health?.ok && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200">
+          The engine is offline. You can browse the bundled app catalog, but connect to deploy apps.
+        </div>
+      )}
+      {health?.ok && installedAppsError && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200"
+        >
+          Running app status is unavailable: {installedAppsError.message}
+          <button
+            type="button"
+            onClick={() => void refetchInstalledApps()}
+            className="rounded-md border border-amber-500/40 px-3 py-1.5 font-medium hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {catalogQueryError && hasCatalogData && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-200"
+        >
+          Catalog refresh failed: {catalogQueryError.message}. Showing the last loaded results.
+          <button
+            type="button"
+            onClick={() => void (health?.ok ? catalogQuery.refetch() : offlineCatalogQuery.refetch())}
+            className="rounded-md border border-amber-500/40 px-3 py-1.5 font-medium hover:bg-amber-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       {catalogLoading ? (
         <div className="p-12 text-center rounded-xl border border-dashed border-border/60 bg-surface/30">
           <Loader2 className="w-8 h-8 text-primary mx-auto mb-2 animate-spin" />
           <p className="text-sm font-medium text-foreground">Loading catalog...</p>
+        </div>
+      ) : catalogError ? (
+        <div
+          role="alert"
+          className="rounded-xl border border-destructive/40 bg-destructive/10 p-8 text-center"
+        >
+          <p className="text-sm font-medium text-destructive">
+            The app catalog could not be loaded: {catalogQueryError?.message || "Please try again."}
+          </p>
+          <button
+            type="button"
+            onClick={() => void (health?.ok ? catalogQuery.refetch() : offlineCatalogQuery.refetch())}
+            className="mt-3 rounded-md border border-destructive/40 px-3 py-1.5 text-xs font-medium text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+          >
+            Retry
+          </button>
         </div>
       ) : filteredItems.length === 0 ? (
         <div className="p-12 text-center rounded-xl border border-dashed border-border/60 bg-surface/30">
@@ -720,9 +836,9 @@ export function OneClickAppsCatalog({
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {visibleItems.map((item) => {
-              const isInstalled = installedApps.some(
-                (app) => app.id === item.id || app.name?.toLowerCase() === item.id.toLowerCase(),
-              );
+              const isInstalled =
+                installedAppIds.has(item.id.toLowerCase()) ||
+                installedAppIds.has(item.name.toLowerCase());
               const isInstalling = installingId === item.id;
 
               return (
@@ -934,17 +1050,17 @@ export function OneClickAppsCatalog({
 
           {/* Enhanced Load More & Numbered Pagination Navigation Controls */}
           {viewMode === "scroll" ? (
-            visibleCount < filteredItems.length ? (
+            visibleCount < catalogResultTotal ? (
               <div className="mt-8 rounded-xl border border-border/80 bg-card p-6 shadow-sm text-center space-y-4">
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 max-w-xl mx-auto text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">
                     Showing{" "}
                     <span className="font-mono text-primary font-bold">{visibleItems.length}</span>{" "}
-                    of <span className="font-mono font-bold">{filteredItems.length}</span>{" "}
+                    of <span className="font-mono font-bold">{catalogResultTotal}</span>{" "}
                     applications
                   </span>
                   <span className="font-mono text-[11px]">
-                    {filteredItems.length - visibleCount} apps remaining
+                    {catalogResultTotal - visibleCount} apps remaining
                   </span>
                 </div>
 
@@ -953,7 +1069,7 @@ export function OneClickAppsCatalog({
                   <div
                     className="h-full bg-primary rounded-full transition-all duration-300"
                     style={{
-                      width: `${Math.min(100, Math.round((visibleItems.length / filteredItems.length) * 100))}%`,
+                      width: `${Math.min(100, Math.round((visibleItems.length / catalogResultTotal) * 100))}%`,
                     }}
                   />
                 </div>
@@ -961,31 +1077,30 @@ export function OneClickAppsCatalog({
                 {/* Buttons */}
                 <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
                   <button
-                    onClick={() => setVisibleCount((c) => Math.min(filteredItems.length, c + 48))}
+                    onClick={() => setVisibleCount((c) => Math.min(catalogResultTotal, c + pageSize))}
                     className="px-5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-xs font-semibold text-primary-foreground shadow-sm transition-all inline-flex items-center gap-2"
                   >
-                    <span>Load Next 48 Apps</span>
+                    <span>Load Next {pageSize} Apps</span>
                     <ChevronDown className="w-3.5 h-3.5" />
                   </button>
                   <button
-                    onClick={() => setVisibleCount((c) => Math.min(filteredItems.length, c + 120))}
+                    onClick={() =>
+                      setVisibleCount((c) => Math.min(catalogResultTotal, c + pageSize * 2))
+                    }
                     className="px-5 py-2 rounded-xl bg-surface-2 hover:bg-surface-3 text-xs font-semibold text-foreground border border-border/60 shadow-sm transition-all inline-flex items-center gap-2"
                   >
-                    <span>Load Next 120 Apps</span>
+                    <span>Load Next {pageSize * 2} Apps</span>
                     <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-                  </button>
-                  <button
-                    onClick={() => setVisibleCount(filteredItems.length)}
-                    className="px-5 py-2 rounded-xl bg-surface hover:bg-surface-2 text-xs font-semibold text-muted-foreground hover:text-foreground border border-border/50 transition-all inline-flex items-center gap-2"
-                  >
-                    <span>Show All ({filteredItems.length})</span>
-                    <Sparkles className="w-3.5 h-3.5 text-primary" />
                   </button>
                 </div>
               </div>
             ) : (
               <div className="mt-8 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground font-mono bg-surface/30 p-4 rounded-xl border border-border/40 max-w-md mx-auto">
-                <span>✨ All {filteredItems.length} applications loaded.</span>
+                <span>
+                  {catalogQuery.isFetchingNextPage
+                    ? "Loading more applications..."
+                    : `✨ All ${catalogResultTotal} applications loaded.`}
+                </span>
                 <button
                   onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
                   className="text-primary hover:underline text-[11px]"
@@ -999,7 +1114,7 @@ export function OneClickAppsCatalog({
               <div className="text-xs text-muted-foreground">
                 Page <span className="font-mono font-bold text-foreground">{currentPage}</span> of{" "}
                 <span className="font-mono font-bold text-foreground">{totalPages}</span> (
-                {filteredItems.length} total apps)
+                {catalogResultTotal} total apps)
               </div>
 
               <div className="flex flex-wrap items-center justify-center gap-1.5">

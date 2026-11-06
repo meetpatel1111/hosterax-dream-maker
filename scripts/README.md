@@ -31,6 +31,6 @@ node scripts/enrich-metadata.mjs
 
 All scripts automatically write synchronized, schema-validated JSON to:
 
-- `public/catalog.json` (Web App UI)
+- `public/catalog.json` (offline Web App catalog)
 - `hosterax/engine/src/awesome-selfhosted-db.json` (Backend Daemon)
 - `src/lib/awesome-selfhosted-db.json` (Frontend Library)

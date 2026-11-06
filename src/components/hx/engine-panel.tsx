@@ -241,9 +241,13 @@ export function EngineLogStream({
   const eng = useEngine();
   const [logs, setLogs] = useState<Array<{ stream: string; text: string }>>([]);
   const logRef = useRef<HTMLDivElement>(null);
+  const pendingLogsRef = useRef<Array<{ stream: string; text: string }>>([]);
+  const renderFrameRef = useRef<number | null>(null);
 
   useEffect(() => {
     setLogs([]);
+    pendingLogsRef.current = [];
+    renderFrameRef.current = null;
     const wsUrl = eng.url.replace(/^http/, "ws") + "/ws?deployment=" + deploymentId;
     let ws: WebSocket;
     try {
@@ -256,14 +260,29 @@ export function EngineLogStream({
     ws.onmessage = (e) => {
       try {
         const m = JSON.parse(e.data);
-        setLogs((prev) => [...prev, { stream: m.stream, text: m.text }]);
-        setTimeout(() => logRef.current?.scrollTo(0, logRef.current.scrollHeight), 10);
+        pendingLogsRef.current.push({ stream: m.stream, text: m.text });
+        if (renderFrameRef.current !== null) return;
+        renderFrameRef.current = requestAnimationFrame(() => {
+          renderFrameRef.current = null;
+          const pending = pendingLogsRef.current.splice(0);
+          if (pending.length) setLogs((prev) => [...prev, ...pending].slice(-1000));
+        });
       } catch {
         /* ignore */
       }
     };
-    return () => ws.close();
+    return () => {
+      ws.close();
+      if (renderFrameRef.current !== null) cancelAnimationFrame(renderFrameRef.current);
+      renderFrameRef.current = null;
+      pendingLogsRef.current = [];
+    };
   }, [deploymentId, eng.url, eng.token]);
+
+  useEffect(() => {
+    const panel = logRef.current;
+    if (panel) panel.scrollTo({ top: panel.scrollHeight, behavior: "auto" });
+  }, [logs]);
 
   return (
     <div className="rounded-xl border border-border bg-card">

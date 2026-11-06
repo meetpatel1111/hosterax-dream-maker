@@ -61,21 +61,30 @@ function Dashboard() {
   const eng = useEngine();
   const qc = useQueryClient();
   const { data: health } = useEngineHealth();
-  const { data: engineProjects = [], isLoading: isActiveLoading } = useEngineProjects();
-  const { data: archivedProjects = [], isLoading: isArchivedLoading } = useQuery({
+  const {
+    data: engineProjects = [],
+    isLoading: isActiveLoading,
+    error: activeProjectsError,
+    refetch: refetchActiveProjects,
+  } = useEngineProjects();
+  const {
+    data: archivedProjects = [],
+    isLoading: isArchivedLoading,
+    error: archivedProjectsError,
+    refetch: refetchArchivedProjects,
+  } = useQuery({
     queryKey: ["engine-projects-archived", eng.url, eng.token],
-    queryFn: async () => {
-      try {
-        const res = await eng.call<any[]>("GET", "/api/projects?archived=true");
-        return res || [];
-      } catch {
-        return [];
-      }
-    },
-    refetchInterval: 5000,
+    queryFn: ({ signal }) =>
+      eng.call<any[]>("GET", "/api/projects?archived=true", undefined, { signal }),
+    enabled: !!health?.ok,
+    refetchInterval: 10000,
   });
 
-  const { data: sys } = useEngineSystem();
+  const {
+    data: sys,
+    error: systemError,
+    refetch: refetchSystem,
+  } = useEngineSystem();
   const { data: magicDns } = useMagicDnsSettings();
   const { data: netInfo } = useNetworkInterfaces();
   const primaryLanIp =
@@ -98,21 +107,18 @@ function Dashboard() {
     localStorage.setItem("hx.starred", JSON.stringify(next));
   };
 
-  const { data: stats } = useQuery({
+  const { data: stats, error: statsError, refetch: refetchStats } = useQuery({
     queryKey: ["dashboard-stats", eng.url],
-    queryFn: async () => {
-      try {
-        const s = await eng.call<any>("GET", "/api/stats");
-        return {
-          deployments: s?.deployments?.total ?? 0,
-          successRate: s?.deployments?.success_rate ?? "100.0",
-          databases: s?.databases ?? 0,
-        };
-      } catch {
-        return { deployments: 0, successRate: "100.0", databases: 0 };
-      }
+    enabled: !!health?.ok,
+    queryFn: async ({ signal }) => {
+      const s = await eng.call<any>("GET", "/api/stats", undefined, { signal });
+      return {
+        deployments: s?.deployments?.total ?? 0,
+        successRate: s?.deployments?.success_rate ?? "0.0",
+        databases: s?.databases ?? 0,
+      };
     },
-    refetchInterval: 5000,
+    refetchInterval: 15000,
   });
 
   async function deployProject(e: React.MouseEvent, name: string) {
@@ -203,6 +209,18 @@ function Dashboard() {
 
   const totalCount = unifiedProjects.length;
   const empty = sorted.length === 0;
+  const listError =
+    (viewTab === "active" ? activeProjectsError : archivedProjectsError) ||
+    systemError ||
+    statsError;
+  const retryProjects = async () => {
+    await Promise.all([
+      refetchActiveProjects(),
+      refetchArchivedProjects(),
+      refetchSystem(),
+      refetchStats(),
+    ]);
+  };
 
   return (
     <div className="mx-auto w-full max-w-[1720px] 2xl:max-w-none space-y-6 transition-all duration-200">
@@ -260,6 +278,25 @@ function Dashboard() {
 
       <EngineBar />
 
+      {listError && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+        >
+          <span>
+            Dashboard data could not be loaded: {" "}
+            {listError instanceof Error ? listError.message : String(listError)}
+          </span>
+          <button
+            type="button"
+            onClick={() => void retryProjects()}
+            className="rounded-md border border-destructive/50 px-3 py-1.5 text-xs font-medium hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       <div className="grid gap-4 md:grid-cols-4">
         {sys ? (
           <>
@@ -286,7 +323,7 @@ function Dashboard() {
             <Metric label="Deployments" value={String(stats?.deployments ?? "—")} sub="all time" />
             <Metric
               label="Success rate"
-              value={`${stats?.successRate ?? "100"}%`}
+              value={stats ? `${stats.successRate}%` : "—"}
               sub="deploy outcomes"
               accent
             />

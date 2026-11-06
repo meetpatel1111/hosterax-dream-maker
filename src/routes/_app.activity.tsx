@@ -81,7 +81,7 @@ function ActivityPage() {
 
       return events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
     },
-    refetchInterval: 3000,
+    refetchInterval: 10000,
   });
 
   const kinds = [

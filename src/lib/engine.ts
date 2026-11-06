@@ -4,6 +4,7 @@ import { FALLBACK_ENGINE_URL, defaultEngineUrl } from "./engine-url";
 export * from "./schema";
 
 type EngineState = { url: string; token: string };
+type EngineRequestOptions = { signal?: AbortSignal };
 
 const DEFAULT_URL = FALLBACK_ENGINE_URL;
 
@@ -60,13 +61,19 @@ export function useEngine() {
   const { url, token } = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 
   const call = useCallback(
-    async <T>(method: string, path: string, body?: unknown): Promise<T> => {
+    async <T>(
+      method: string,
+      path: string,
+      body?: unknown,
+      options?: EngineRequestOptions,
+    ): Promise<T> => {
       const headers: Record<string, string> = { "content-type": "application/json" };
       if (token) headers.authorization = "Bearer " + token;
       const r = await fetch(url + path, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
+        signal: options?.signal,
       });
 
       if (r.status === 401) notifyUnauthorized();
@@ -112,11 +119,12 @@ export function useEngineHealth() {
   const eng = useEngine();
   return useQuery({
     queryKey: ["engine-health", eng.url],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        const r = await fetch(eng.url + "/health");
+        const r = await fetch(eng.url + "/health", { signal });
         return r.ok ? await r.json() : null;
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") throw error;
         return null;
       }
     },
@@ -131,7 +139,7 @@ export function useEngineProjects() {
   const health = useEngineHealth();
   return useQuery({
     queryKey: ["engine-projects", eng.url, eng.token],
-    queryFn: async () => (await eng.call<any[]>("GET", "/api/projects").catch(() => [])) ?? [],
+    queryFn: ({ signal }) => eng.call<any[]>("GET", "/api/projects", undefined, { signal }),
     enabled: !!health.data?.ok,
     refetchInterval: 10000,
     staleTime: 5000,
@@ -143,7 +151,7 @@ export function useEngineSystem() {
   const health = useEngineHealth();
   return useQuery({
     queryKey: ["engine-system", eng.url, eng.token],
-    queryFn: async () => await eng.call<any>("GET", "/api/system").catch(() => null),
+    queryFn: ({ signal }) => eng.call<any>("GET", "/api/system", undefined, { signal }),
     enabled: !!health.data?.ok,
     refetchInterval: 10000,
     staleTime: 5000,
@@ -155,10 +163,10 @@ export function useProjectMetrics(projectName: string) {
   const health = useEngineHealth();
   return useQuery({
     queryKey: ["project-metrics", projectName, eng.url, eng.token],
-    queryFn: async () =>
+    queryFn: ({ signal }) =>
       projectName
-        ? await eng.call<any>("GET", `/api/projects/${projectName}/metrics`).catch(() => null)
-        : null,
+        ? eng.call<any>("GET", `/api/projects/${projectName}/metrics`, undefined, { signal })
+        : Promise.resolve(null),
     enabled: !!health.data?.ok && !!projectName,
     refetchInterval: 10000,
     staleTime: 5000,

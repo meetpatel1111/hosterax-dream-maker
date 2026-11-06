@@ -107,8 +107,14 @@ export function createCatalogApi({ db, HOME, readBody }) {
       const tag = url.searchParams.get("tag")?.toLowerCase();
       const source = url.searchParams.get("source")?.toLowerCase();
       const q = url.searchParams.get("q")?.toLowerCase().trim();
-      const limit = parseInt(url.searchParams.get("limit") || "5000", 10);
-      const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+      const requestedLimit = Number.parseInt(url.searchParams.get("limit") || "48", 10);
+      const requestedOffset = Number.parseInt(url.searchParams.get("offset") || "0", 10);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.max(1, Math.min(250, requestedLimit))
+        : 48;
+      const offset = Number.isFinite(requestedOffset)
+        ? Math.max(0, Math.min(catalogData.apps.length, requestedOffset))
+        : 0;
 
       let filtered = catalogData.apps;
 

@@ -1308,6 +1308,58 @@ export function createProjectsApi(ctx) {
         );
       }
 
+      if (R("env-drift", "GET")) {
+        requirePerm(req, "project:read");
+        const environment = url.searchParams.get("environment") || "production";
+        if (!ENVS.includes(environment)) bad("environment invalid", "environment");
+
+        const deployment = db
+          .prepare(
+            `SELECT snapshot_json, finished_at FROM deployments
+             WHERE project=? AND environment=? AND phase='ready'
+             ORDER BY finished_at DESC LIMIT 1`,
+          )
+          .get(proj.name, environment);
+        let snapshot;
+        try {
+          snapshot = deployment?.snapshot_json ? JSON.parse(deployment.snapshot_json) : null;
+        } catch {
+          snapshot = null;
+        }
+        if (!Array.isArray(snapshot?.user_env_keys))
+          return (
+            json(res, 200, {
+              available: false,
+              environment,
+              reason: deployment
+                ? "Redeploy to start tracking environment variable changes."
+                : "No successful deployment exists for this environment yet.",
+            }),
+            true
+          );
+
+        const deployedKeys = [
+          ...new Set(snapshot.user_env_keys.filter((key) => typeof key === "string")),
+        ].sort();
+        let currentKeys = Object.keys(readEnv(proj.name, environment)).sort();
+        if (environment === "production" && currentKeys.length === 0) {
+          const projectRow = db.prepare("SELECT env_json FROM projects WHERE name=?").get(proj.name);
+          currentKeys = Object.keys(projectRow ? decryptJson(projectRow.env_json) : {}).sort();
+        }
+        const deployed = new Set(deployedKeys);
+        const current = new Set(currentKeys);
+        return (
+          json(res, 200, {
+            available: true,
+            environment,
+            deployedAt: deployment.finished_at,
+            added: currentKeys.filter((key) => !deployed.has(key)),
+            removed: deployedKeys.filter((key) => !current.has(key)),
+          }),
+          true
+        );
+      }
+
       // env
       if (R("env", "GET")) {
         requirePerm(req, "project:read");
