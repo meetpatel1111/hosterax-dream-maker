@@ -3999,7 +3999,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/self-heal/events" && req.method === "GET") {
       const proj = url.searchParams.get("project") || "all";
-      const limit = Number(url.searchParams.get("limit") || 50);
+      const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 50, 1), 500);
       return json(res, 200, selfHeal.getProjectEvents(proj, limit));
     }
     if (url.pathname === "/api/self-heal/probe" && req.method === "POST") {

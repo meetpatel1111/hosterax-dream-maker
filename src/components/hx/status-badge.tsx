@@ -11,6 +11,11 @@ const MAP: Record<string, { label: string; cls: string; dot: string }> = {
     cls: "bg-success/10 text-success border-success/30",
     dot: "bg-success",
   },
+  warning: {
+    label: "Warning",
+    cls: "bg-warning/10 text-warning border-warning/30",
+    dot: "bg-warning",
+  },
   building: {
     label: "Building",
     cls: "bg-warning/10 text-warning border-warning/30",

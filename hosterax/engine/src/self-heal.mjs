@@ -61,7 +61,9 @@ export class SelfHealEngine {
           status TEXT NOT NULL,
           created_at INTEGER NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_self_heal_proj ON self_heal_events(project);
+        CREATE INDEX IF NOT EXISTS idx_self_heal_proj_created ON self_heal_events(project, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_self_heal_created ON self_heal_events(created_at DESC);
+        DROP INDEX IF EXISTS idx_self_heal_proj;
 
         CREATE TABLE IF NOT EXISTS health_configs (
           project TEXT PRIMARY KEY,
@@ -1507,10 +1509,21 @@ export class SelfHealEngine {
   }
 
   getProjectEvents(projectName, limit = 20) {
+    const boundedLimit = Math.min(Math.max(Number(limit) || 20, 1), 500);
     if (projectName && projectName !== "all") {
-      return this.events.filter((e) => e.project === projectName).slice(0, limit);
+      return this.db
+        .prepare(
+          `SELECT id, project, event_type AS eventType, details, status, created_at AS timestamp
+           FROM self_heal_events WHERE project=? ORDER BY created_at DESC LIMIT ?`,
+        )
+        .all(projectName, boundedLimit);
     }
-    return this.events.slice(0, limit);
+    return this.db
+      .prepare(
+        `SELECT id, project, event_type AS eventType, details, status, created_at AS timestamp
+         FROM self_heal_events ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(boundedLimit);
   }
 
   async autoRemediateCrashLoop(projectName) {

@@ -2,9 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { StatusBadge } from "@/components/hx/status-badge";
 import { formatDistanceToNow } from "date-fns";
-import { Search, Shield, Trash2, Activity, HeartPulse, Rocket, PlusCircle } from "lucide-react";
+import { AlertTriangle, HeartPulse, PlusCircle, Rocket, Search, Shield } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import { useEngine, useEngineProjects } from "@/lib/engine";
 
 export const Route = createFileRoute("/_app/activity")({
@@ -12,74 +11,112 @@ export const Route = createFileRoute("/_app/activity")({
   component: ActivityPage,
 });
 
+type ActivityEvent = {
+  id: string;
+  kind: string;
+  label: string;
+  user: string;
+  ip?: string | null;
+  at?: string | null;
+  status?: "success" | "failed" | "warning" | "building";
+  meta?: string | null;
+};
+
+type ActivityFeed = { events: ActivityEvent[]; unavailableSources: string[] };
+
+function eventTime(value?: string | number | null) {
+  if (value == null) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 function ActivityPage() {
   const [q, setQ] = useState("");
   const [filterKind, setFilterKind] = useState("all");
   const engine = useEngine();
   const { data: engineProjects = [] } = useEngineProjects();
 
-  const { data = [] } = useQuery({
-    queryKey: ["activity-sqlite", engine.url, engineProjects.map((p) => p.name).join(",")],
-    queryFn: async () => {
-      const events: any[] = [];
+  const { data: feed, isPending } = useQuery<ActivityFeed>({
+    queryKey: ["activity-feed", engine.url, engine.token, engineProjects.map((p) => p.name)],
+    queryFn: async ({ signal }) => {
+      const results = await Promise.allSettled([
+        engine.call<any[]>("GET", "/api/deployments?limit=100", undefined, { signal }),
+        engine.call<any[]>("GET", "/api/self-heal/events?limit=100", undefined, { signal }),
+        engine.call<any[]>("GET", "/api/auth/events?limit=100", undefined, { signal }),
+      ]);
+      if (signal.aborted) throw new DOMException("Activity request aborted", "AbortError");
+      const unavailableSources: string[] = [];
+      const sourceRows = (index: number, source: string) => {
+        const result = results[index];
+        if (result.status === "fulfilled" && Array.isArray(result.value)) return result.value;
+        unavailableSources.push(source);
+        return [];
+      };
+      const [deployments, healEvents, authEvents] = [
+        sourceRows(0, "deployments"),
+        sourceRows(1, "self-healing"),
+        sourceRows(2, "authentication"),
+      ];
 
-      // 1. Projects
-      for (const p of engineProjects) {
+      const events: ActivityEvent[] = engineProjects.map((project) => ({
+        id: `project-${project.id || project.name}`,
+        kind: "project.created",
+        label: `Project "${project.name}" created`,
+        user: "HosteraX Engine",
+        at: eventTime(project.created_at),
+      }));
+
+      for (const deployment of deployments) {
+        const phase = String(deployment.phase || "").toLowerCase();
         events.push({
-          id: `eng-p-${p.name}`,
-          kind: "project.created",
-          label: `Project "${p.name}" initialized on HosteraX Engine`,
-          user: "Local Admin",
-          ip: "127.0.0.1",
-          at: p.created_at ? new Date(p.created_at).toISOString() : new Date().toISOString(),
+          id: `deployment-${deployment.id}`,
+          kind:
+            phase === "ready"
+              ? "deploy.success"
+              : phase === "failed"
+                ? "deploy.failed"
+                : "deploy.building",
+          label: `Deployment ${deployment.version || String(deployment.id).slice(0, 8)} (${deployment.project})`,
+          user: deployment.trigger === "git" ? "Git Webhook" : "Local Admin",
+          at: eventTime(deployment.started_at),
+          status: phase === "ready" ? "success" : phase === "failed" ? "failed" : "building",
+          meta: `${deployment.branch || "main"} · ${deployment.environment || "production"}`,
         });
       }
 
-      // 2. Deployments from SQLite
-      try {
-        const deps = await engine.call<any[]>("GET", "/api/deployments?limit=50");
-        if (deps && Array.isArray(deps)) {
-          for (const d of deps) {
-            events.push({
-              id: `dep-${d.id}`,
-              kind:
-                d.phase === "ready"
-                  ? "deploy.success"
-                  : d.phase === "failed"
-                    ? "deploy.failed"
-                    : "deploy.building",
-              label: `Deployment ${d.version || d.id.slice(0, 8)} (${d.project})`,
-              user: d.trigger === "git" ? "Git Webhook" : "Local Admin",
-              ip: "127.0.0.1",
-              at: d.started_at ? new Date(d.started_at).toISOString() : new Date().toISOString(),
-              status: d.phase === "ready" ? "success" : d.phase === "failed" ? "error" : "building",
-              meta: `${d.branch || "main"} · ${d.environment || "production"}`,
-            });
-          }
-        }
-      } catch {}
+      for (const event of healEvents) {
+        const eventType = String(event.eventType || "self_healing");
+        events.push({
+          id: `heal-${event.id}`,
+          kind: eventType.includes("circuit") ? "guard.circuit_breaker" : `heal.${eventType}`,
+          label: `${event.details || eventType} (${event.project})`,
+          user: "AutoHeal Watchdog",
+          at: eventTime(event.timestamp),
+          status: event.status === "error" ? "failed" : event.status === "warning" ? "warning" : "success",
+        });
+      }
 
-      // 3. Self-Healing & Resilience events from SQLite
-      try {
-        const healEvents = await engine.call<any[]>("GET", "/api/self-heal/events");
-        if (healEvents && Array.isArray(healEvents)) {
-          for (const h of healEvents) {
-            events.push({
-              id: `heal-${h.id}`,
-              kind:
-                h.action === "circuit_breaker_opened" ? "guard.circuit_breaker" : "heal.remediated",
-              label: `AutoHeal: ${h.action} on ${h.project} (${h.reason})`,
-              user: "AutoHeal v7 Watchdog",
-              ip: "127.0.0.1",
-              at: h.created_at ? new Date(h.created_at).toISOString() : new Date().toISOString(),
-              status: h.action === "circuit_breaker_opened" ? "warning" : "success",
-              meta: `Attempt ${h.attempt || 1}`,
-            });
-          }
-        }
-      } catch {}
+      for (const event of authEvents) {
+        const eventName = String(event.event || "authentication event");
+        const failed = /fail|denied|locked/i.test(eventName);
+        events.push({
+          id: `auth-${event.id}`,
+          kind: `auth.${eventName}`,
+          label: `Authentication ${eventName.replaceAll("_", " ")}`,
+          user: event.email || event.user_id || "Unknown user",
+          ip: event.ip || null,
+          at: eventTime(event.ts),
+          status: failed ? "failed" : "success",
+          meta: event.detail || null,
+        });
+      }
 
-      return events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+      events.sort((a, b) => {
+        const timeA = a.at ? new Date(a.at).getTime() : 0;
+        const timeB = b.at ? new Date(b.at).getTime() : 0;
+        return timeB - timeA;
+      });
+      return { events, unavailableSources };
     },
     refetchInterval: 10000,
   });
@@ -89,19 +126,23 @@ function ActivityPage() {
     { id: "project", label: "Projects" },
     { id: "deploy", label: "Deployments" },
     { id: "heal", label: "Self-Healing" },
+    { id: "auth", label: "Authentication" },
   ];
 
-  const filtered = data.filter((e) => {
-    const matchQ =
-      !q ||
-      e.label.toLowerCase().includes(q.toLowerCase()) ||
-      e.user.toLowerCase().includes(q.toLowerCase());
+  const filtered = (feed?.events || []).filter((event) => {
+    const query = q.trim().toLowerCase();
+    const matchQuery =
+      !query ||
+      event.label.toLowerCase().includes(query) ||
+      event.user.toLowerCase().includes(query) ||
+      event.ip?.toLowerCase().includes(query);
     const matchKind =
       filterKind === "all" ||
-      (filterKind === "project" && e.kind.startsWith("project")) ||
-      (filterKind === "deploy" && e.kind.startsWith("deploy")) ||
-      (filterKind === "heal" && (e.kind.startsWith("heal") || e.kind.startsWith("guard")));
-    return matchQ && matchKind;
+      (filterKind === "project" && event.kind.startsWith("project")) ||
+      (filterKind === "deploy" && event.kind.startsWith("deploy")) ||
+      (filterKind === "heal" && (event.kind.startsWith("heal") || event.kind.startsWith("guard"))) ||
+      (filterKind === "auth" && event.kind.startsWith("auth"));
+    return matchQuery && matchKind;
   });
 
   return (
@@ -110,80 +151,105 @@ function ActivityPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Audit Log & Activity</h1>
           <p className="text-sm text-muted-foreground">
-            Complete immutable audit trail of deployments, self-healing events, and configuration
-            changes from SQLite.
+            Recent project, deployment, self-healing, and authentication events from the engine.
           </p>
         </div>
       </div>
 
+      {!!feed?.unavailableSources.length && (
+        <div
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+          <span>
+            Could not load {feed.unavailableSources.join(", ")} events. Other available events are
+            still shown.
+          </span>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 min-w-[240px]">
+        <div className="relative min-w-[240px] flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <input
+            aria-label="Search activity"
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(event) => setQ(event.target.value)}
             placeholder="Search events, actors, projects..."
-            className="w-full rounded-md border border-input bg-input/40 pl-9 pr-3 py-2 text-sm outline-none focus:border-primary"
+            className="w-full rounded-md border border-input bg-input/40 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
           />
         </div>
-        <div className="flex gap-1 rounded-lg border border-border bg-card p-1">
-          {kinds.map((k) => (
+        <div className="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1" role="group" aria-label="Filter activity by type">
+          {kinds.map((kind) => (
             <button
-              key={k.id}
-              onClick={() => setFilterKind(k.id)}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${filterKind === k.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              key={kind.id}
+              type="button"
+              aria-pressed={filterKind === kind.id}
+              onClick={() => setFilterKind(kind.id)}
+              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${filterKind === kind.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
-              {k.label}
+              {kind.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-        {filtered.length === 0 ? (
+      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+        {isPending ? (
+          <div className="p-12 text-center text-sm text-muted-foreground" role="status">
+            Loading activity…
+          </div>
+        ) : filtered.length === 0 ? (
           <div className="p-12 text-center text-sm text-muted-foreground">
             No activity matches your filters.
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {filtered.map((e: any) => (
+            {filtered.map((event) => (
               <div
-                key={e.id}
-                className="flex items-center justify-between p-4 hover:bg-accent/40 transition-colors"
+                key={event.id}
+                className="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-accent/40"
               >
-                <div className="flex items-center gap-3.5">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-surface-2 text-muted-foreground">
-                    {e.kind.startsWith("deploy") ? (
+                <div className="flex min-w-0 items-center gap-3.5">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted-foreground">
+                    {event.kind.startsWith("deploy") ? (
                       <Rocket className="h-4 w-4 text-primary" />
-                    ) : e.kind.startsWith("heal") || e.kind.startsWith("guard") ? (
+                    ) : event.kind.startsWith("heal") || event.kind.startsWith("guard") ? (
                       <HeartPulse className="h-4 w-4 text-emerald-500" />
+                    ) : event.kind.startsWith("auth") ? (
+                      <Shield className="h-4 w-4 text-sky-500" />
                     ) : (
                       <PlusCircle className="h-4 w-4 text-amber-500" />
                     )}
                   </div>
-                  <div>
-                    <div className="text-sm font-medium text-foreground">{e.label}</div>
+                  <div className="min-w-0">
+                    <div className="break-words text-sm font-medium text-foreground">{event.label}</div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span>{e.user}</span>
-                      <span>·</span>
-                      <span className="font-mono">{e.ip}</span>
-                      {e.meta && (
+                      <span>{event.user}</span>
+                      {event.ip && (
                         <>
                           <span>·</span>
-                          <span>{e.meta}</span>
+                          <span className="font-mono">{event.ip}</span>
+                        </>
+                      )}
+                      {event.meta && (
+                        <>
+                          <span>·</span>
+                          <span>{event.meta}</span>
                         </>
                       )}
                     </div>
                   </div>
                 </div>
-                <div className="text-right">
-                  {e.status && (
+                <div className="shrink-0 text-right">
+                  {event.status && (
                     <div className="mb-1 flex justify-end">
-                      <StatusBadge status={e.status} />
+                      <StatusBadge status={event.status} />
                     </div>
                   )}
                   <div className="text-xs text-muted-foreground">
-                    {formatDistanceToNow(new Date(e.at), { addSuffix: true })}
+                    {event.at ? formatDistanceToNow(new Date(event.at), { addSuffix: true }) : "Time unavailable"}
                   </div>
                 </div>
               </div>
