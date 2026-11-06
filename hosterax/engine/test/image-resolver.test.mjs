@@ -82,22 +82,38 @@ test("when the registry keeps failing, no other publisher's image is tried", asy
   assert.ok(!pulled.some((ref) => /linuxserver|bitnami/.test(ref)));
 });
 
-test("an image that really does not exist still falls through to the alternatives, and says so", async () => {
-  const { result, pulled, published } = run(
-    (ref) => (ref === "linuxserver/demo:latest" ? { rc: 0, out: "ok" } : { rc: 1, out: NOT_FOUND }),
-    "demo:1.0",
-  );
+test("a missing explicit registry image fails closed without trying another publisher", async () => {
+  const requested = "registry.example:5000/critical/private-web:release-2026";
+  const { result, pulled, published } = run(() => ({ rc: 1, out: NOT_FOUND }), requested);
   const r = await result;
-  assert.deepEqual(r, { ok: true, tag: "linuxserver/demo:latest" });
-  assert.equal(pulled[0], "demo:1.0", "the requested name goes first");
+  assert.equal(r.ok, false);
+  assert.deepEqual(pulled, [requested]);
   assert.ok(
-    published.some((m) =>
-      /⚠ "demo:1\.0" was not available under that name, so linuxserver\/demo:latest is being used instead/.test(
-        m,
-      ),
-    ),
-    "a different image than the one asked for is announced",
+    published.some((m) => /Substitution is disabled/.test(m)),
+    "the exact image failure is reported without silently substituting an image",
   );
+});
+
+test("explicit references never use fuzzy registry discovery, even when enabled", async () => {
+  const requested = "registry.example:5000/critical/private-web:release-2026";
+  const oldDiscovery = process.env.HOSTERAX_IMAGE_DISCOVERY;
+  const oldFetch = globalThis.fetch;
+  process.env.HOSTERAX_IMAGE_DISCOVERY = "1";
+  globalThis.fetch = async () => {
+    throw new Error("the Docker Hub search must not run for an explicit reference");
+  };
+  try {
+    const { result, pulled, published } = run(() => ({ rc: 1, out: NOT_FOUND }), requested);
+    const resolved = await result;
+    assert.equal(resolved.ok, false);
+    assert.deepEqual(pulled, [requested]);
+    assert.ok(published.some((line) => /Substitution is disabled/.test(line)));
+    assert.ok(!published.some((line) => /Querying Docker Hub/.test(line)));
+  } finally {
+    if (oldDiscovery === undefined) delete process.env.HOSTERAX_IMAGE_DISCOVERY;
+    else process.env.HOSTERAX_IMAGE_DISCOVERY = oldDiscovery;
+    globalThis.fetch = oldFetch;
+  }
 });
 
 test("the requested image succeeding says nothing about substitution", async () => {
@@ -140,6 +156,13 @@ test("the image that was asked for is the first one tried, before any guess", ()
     "ghcr.io/org/app:2",
   ])
     assert.equal(generateCandidateImageTags(ref, "p")[0], ref, ref);
+  for (const ref of [
+    "demo:1.0",
+    "registry.local:5000/team/app:3.1",
+    "ghcr.io/org/private-app",
+    `nginx@sha256:${"a".repeat(64)}`,
+  ])
+    assert.deepEqual(generateCandidateImageTags(ref, "different-project"), [ref], ref);
   assert.ok(
     !generateCandidateImageTags("demo:1.0", "p")
       .slice(0, 1)

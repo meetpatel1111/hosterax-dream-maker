@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -184,6 +184,25 @@ test("projects CRUD", async () => {
   const list2 = await api("GET", "/api/projects");
   const leftover = list2.find((p) => p.name === name);
   assert.ok(!leftover || leftover.isArchived === true);
+});
+
+test("archiving a project removes its generated edge routes", async () => {
+  const name = `route-cleanup-${Date.now()}`;
+  await api("POST", "/api/projects", {
+    name,
+    source: "https://github.com/example/route-cleanup",
+    target: "process",
+    port: 19091,
+  });
+  await api("POST", `/api/projects/${name}/routing/retry`);
+  await api("POST", "/api/edge/sync");
+
+  const caddyfile = join(home, "edge", "Caddyfile");
+  assert.match(readFileSync(caddyfile, "utf8"), new RegExp(`${name}\\.localhost`));
+
+  const archived = await api("DELETE", `/api/projects/${name}`);
+  assert.equal(archived.archived, name);
+  assert.doesNotMatch(readFileSync(caddyfile, "utf8"), new RegExp(`${name}\\.localhost`));
 });
 
 test("authenticated WebSockets stream deployment and project runtime logs", async () => {

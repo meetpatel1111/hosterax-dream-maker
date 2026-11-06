@@ -270,11 +270,17 @@ export function normalizeImageSource(source, projectName = "") {
   return `${bare}:latest`;
 }
 
+function isExplicitImageRef(ref) {
+  const value = String(ref || "").trim();
+  const lastSlash = value.lastIndexOf("/");
+  const lastColon = value.lastIndexOf(":");
+  return value.includes("/") || value.includes("@") || lastColon > lastSlash;
+}
+
 /**
  * Generates an ordered, comprehensive list of candidate Docker image tags for any given target/project name.
  */
 export function generateCandidateImageTags(rawTarget, projectName = "") {
-  const candidates = new Set();
   const raw = (rawTarget || projectName || "").trim();
   if (!raw) return [];
 
@@ -285,8 +291,17 @@ export function generateCandidateImageTags(rawTarget, projectName = "") {
     cleaned = parts[0];
   }
 
-  // What was asked for is tried first, as written. The lookups below are for names that were only a guess.
-  if (/[:@/]/.test(cleaned) && isSafeImageRef(cleaned)) candidates.add(cleaned);
+  // A complete reference (registry/repository, an explicit tag, or a digest) is an identity chosen
+  // by the user. Never reinterpret a typo, private image, or missing tag as a different publisher's
+  // image. Bare names still go through the curated alias map in normalizeImageSource().
+  if (isExplicitImageRef(cleaned)) {
+    return isSafeImageRef(cleaned) ? [cleaned] : [];
+  }
+
+  const candidates = new Set();
+
+  // Bare names are interpreted only through the curated aliases below. The optional live search
+  // fallback remains separately gated by HOSTERAX_IMAGE_DISCOVERY.
 
   const norm = (s) => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
   const normKey = norm(cleaned);
@@ -507,6 +522,15 @@ export async function pullWithUniversalHealing({
       });
       return { ok: false, transient: true, error: "The registry did not answer; try again later" };
     }
+  }
+
+  if (isExplicitImageRef(initialTag)) {
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "stderr",
+      text: `[docker] ERROR: Could not pull the exact image reference "${initialTag}". Substitution is disabled for explicit image references.`,
+    });
+    return { ok: false, error: "Exact image pull failed; substitution disabled" };
   }
 
   // Phase 2: Live Docker Hub Registry Search Discovery.

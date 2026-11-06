@@ -183,6 +183,7 @@ export function createProjectsApi(ctx) {
     running,
     runtimeLogs,
     applyRoute,
+    syncRoutes,
     parseCompose,
     syncComposeServices,
     DETECTORS,
@@ -757,6 +758,14 @@ export function createProjectsApi(ctx) {
     }));
   }
 
+  async function refreshPublishedRoutes() {
+    try {
+      await syncRoutes?.();
+    } catch (err) {
+      console.warn(`[project-delete] edge route sync failed:`, err.message);
+    }
+  }
+
   /** Archives (default) or permanently purges a project, its containers, disk and database records. */
   async function removeProject(idOrName, isPermanent = false) {
     const proj = db
@@ -853,6 +862,7 @@ export function createProjectsApi(ctx) {
           targetName,
         );
       } catch {}
+      await refreshPublishedRoutes();
       return { ok: true, deleted: targetName, permanent: true };
     } else {
       // Soft delete (Archive): free all disk space and containers, but preserve DB records, envs & history for 1-click restore
@@ -865,6 +875,7 @@ export function createProjectsApi(ctx) {
           targetName,
         );
       } catch {}
+      await refreshPublishedRoutes();
       return { ok: true, archived: targetName, permanent: false };
     }
   }

@@ -269,7 +269,11 @@ export class EdgeManager {
    */
   async syncRoutes() {
     const settings = this.getSettings();
-    const projects = this.db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all();
+    const projects = this.db
+      .prepare(
+        "SELECT * FROM projects WHERE COALESCE(status,'') <> 'archived' AND COALESCE(enabled,1)=1 ORDER BY created_at DESC",
+      )
+      .all();
     const domains = this.db.prepare("SELECT * FROM domains ORDER BY created_at DESC").all();
     const activeIps = this.getLocalIps();
 
