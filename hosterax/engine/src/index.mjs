@@ -3622,6 +3622,40 @@ const server = http.createServer(async (req, res) => {
   }
 
   // ── Real-Time Metrics & Log Analytics API Endpoints ──
+  if (url.pathname === "/api/metrics/prometheus" && req.method === "GET") {
+    const system = metricsManager.getSystemMetrics();
+    const services = metricsManager.getServiceMetrics();
+    const numeric = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+    // Keep this intentionally low-cardinality. Per-project values remain available through the
+    // authenticated JSON endpoint instead of creating unbounded Prometheus time series.
+    const body = [
+      "# HELP hosterax_host_cpu_usage_percent Current host CPU usage percentage.",
+      "# TYPE hosterax_host_cpu_usage_percent gauge",
+      `hosterax_host_cpu_usage_percent ${numeric(system.cpuUsagePercent)}`,
+      "# HELP hosterax_host_memory_used_bytes Current host memory usage in bytes.",
+      "# TYPE hosterax_host_memory_used_bytes gauge",
+      `hosterax_host_memory_used_bytes ${numeric(system.memory?.usedMb) * 1024 * 1024}`,
+      "# HELP hosterax_host_memory_total_bytes Total host memory in bytes.",
+      "# TYPE hosterax_host_memory_total_bytes gauge",
+      `hosterax_host_memory_total_bytes ${numeric(system.memory?.totalMb) * 1024 * 1024}`,
+      "# HELP hosterax_active_containers Number of HosteraX containers with collected metrics.",
+      "# TYPE hosterax_active_containers gauge",
+      `hosterax_active_containers ${numeric(system.activeContainers)}`,
+      "# HELP hosterax_active_alerts Number of active HosteraX alerts.",
+      "# TYPE hosterax_active_alerts gauge",
+      `hosterax_active_alerts ${numeric(system.activeAlertsCount)}`,
+      "# HELP hosterax_observed_services Number of services currently observed by the metrics collector.",
+      "# TYPE hosterax_observed_services gauge",
+      `hosterax_observed_services ${Object.keys(services.services || {}).length}`,
+      "",
+    ].join("\n");
+    res.writeHead(200, {
+      "content-type": "text/plain; version=0.0.4; charset=utf-8",
+      "cache-control": "no-store",
+    });
+    return res.end(body);
+  }
+
   if (url.pathname === "/api/metrics" && req.method === "GET") {
     return json(res, 200, {
       system: metricsManager.getSystemMetrics(),

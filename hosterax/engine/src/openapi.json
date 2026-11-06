@@ -1888,6 +1888,17 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/metrics/prometheus": {
+      "get": {
+        "summary": "GET /api/metrics/prometheus",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/network/interfaces": {
       "get": {
         "summary": "GET /api/network/interfaces",

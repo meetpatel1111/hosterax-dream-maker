@@ -217,6 +217,17 @@ test("the engine serves its OpenAPI description to authenticated callers only", 
   assert.equal(anon.status, 401);
 });
 
+test("metrics are available in Prometheus text format", async () => {
+  const response = await fetch(`${baseUrl}/api/metrics/prometheus`, {
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("content-type") || "", /^text\/plain/);
+  const body = await response.text();
+  assert.match(body, /^# HELP hosterax_host_cpu_usage_percent/m);
+  assert.match(body, /^hosterax_active_alerts \d+$/m);
+});
+
 test("catalog endpoints serve from bundled JSON", async () => {
   const tags = await api("GET", "/api/catalog/tags");
   assert.ok(Array.isArray(tags.tags) && tags.tags.length > 0);
