@@ -9,11 +9,10 @@ type EngineRequestOptions = { signal?: AbortSignal };
 const DEFAULT_URL = FALLBACK_ENGINE_URL;
 
 function read(): EngineState {
-  if (typeof window === "undefined")
-    return { url: DEFAULT_URL, token: "hxt_live_admin_access_token_hosterax" };
+  if (typeof window === "undefined") return { url: DEFAULT_URL, token: "" };
   return {
     url: localStorage.getItem("hx.url") || defaultEngineUrl(),
-    token: localStorage.getItem("hx.token") || "hxt_live_admin_access_token_hosterax",
+    token: localStorage.getItem("hx.token") || "",
   };
 }
 
@@ -156,6 +155,63 @@ export function useEngineSystem() {
     enabled: !!health.data?.ok,
     refetchInterval: 10000,
     staleTime: 5000,
+  });
+}
+
+export interface SystemTelemetrySnapshot {
+  timestamp: number;
+  cpuUsagePercent: number;
+  memoryPercent: number;
+  memoryUsedMb?: number;
+  memoryTotalMb?: number;
+  load1m?: number;
+  uptimeSeconds?: number;
+}
+
+export interface EngineMetricsData {
+  system: {
+    cpuUsagePercent: number;
+    cores: number;
+    loadAverage: {
+      "1m": number;
+      "5m": number;
+      "15m": number;
+    };
+    memory: {
+      totalMb: number;
+      usedMb: number;
+      freeMb: number;
+      usedPercent: number;
+    };
+    uptimeSeconds: number;
+    activeContainers?: number;
+    activeAlertsCount?: number;
+  };
+  history?: SystemTelemetrySnapshot[];
+  services?: Record<string, { current: any; dataPointsCount: number }>;
+  activeAlerts?: any[];
+}
+
+export function useEngineMetrics(options?: { refetchInterval?: number; enabled?: boolean }) {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  const refetchInterval = options?.refetchInterval ?? 3000;
+  const isEnabled = (options?.enabled ?? true) && !!health.data?.ok;
+
+  return useQuery<EngineMetricsData>({
+    queryKey: ["engine-metrics", eng.url, eng.token],
+    queryFn: async ({ signal }) => {
+      try {
+        return await eng.call<EngineMetricsData>("GET", "/api/metrics", undefined, { signal });
+      } catch (err: any) {
+        const res = await fetch("/api/metrics", { signal });
+        if (!res.ok) throw err;
+        return (await res.json()) as EngineMetricsData;
+      }
+    },
+    enabled: isEnabled,
+    refetchInterval,
+    staleTime: Math.min(2000, refetchInterval),
   });
 }
 

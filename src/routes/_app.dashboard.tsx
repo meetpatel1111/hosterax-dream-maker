@@ -5,6 +5,8 @@ import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
 import { StatusBadge } from "@/components/hx/status-badge";
 import { EngineBar } from "@/components/hx/engine-panel";
+import { ResourceMonitor } from "@/components/hx/resource-monitor";
+import { SystemLogsPanel } from "@/components/hx/system-logs-panel";
 import { STACKS } from "@/lib/stacks";
 import {
   Plus,
@@ -277,6 +279,12 @@ function Dashboard() {
       </div>
 
       <EngineBar />
+
+      {/* Real-time CPU and RAM Resource Monitor via /api/metrics */}
+      <ResourceMonitor />
+
+      {/* Live System Logs stream via /ws?system=true with INFO/WARN/ERROR filtering */}
+      <SystemLogsPanel />
 
       {listError && (
         <div

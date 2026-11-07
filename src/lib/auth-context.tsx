@@ -50,9 +50,7 @@ type WhoAmI = {
 
 const readUrl = () =>
   (typeof window !== "undefined" && localStorage.getItem("hx.url")) || defaultEngineUrl();
-const readToken = () =>
-  (typeof window !== "undefined" && localStorage.getItem("hx.token")) ||
-  "hxt_live_admin_access_token_hosterax";
+const readToken = () => (typeof window !== "undefined" && localStorage.getItem("hx.token")) || "";
 
 /**
  * Asks the ENGINE who we are. The dashboard has no accounts of its own: what you may do is decided
@@ -60,9 +58,12 @@ const readToken = () =>
  */
 async function whoAmI(url: string, token: string): Promise<AuthSession | null> {
   try {
-    const r = await fetch(url.replace(/\/$/, "") + "/api/auth/me", {
+    let r = await fetch(url.replace(/\/$/, "") + "/api/auth/me", {
       headers: token ? { authorization: "Bearer " + token } : {},
     });
+    if (!r.ok && token) {
+      r = await fetch(url.replace(/\/$/, "") + "/api/auth/me");
+    }
     if (!r.ok) return null;
     const me = (await r.json()) as WhoAmI;
     const account = me.user ?? null;

@@ -16,6 +16,8 @@ export class MetricsManager {
 
     // In-memory ring buffers: projectName -> Array of max 30 metrics snapshots
     this.metricsHistory = new Map();
+    // System-wide historical telemetry ring buffer (last 30 minutes)
+    this.systemHistory = [];
     // In-memory active alerts: projectName -> [alerts]
     this.activeAlerts = new Map();
     this.isCollecting = false;
@@ -471,11 +473,41 @@ export class MetricsManager {
     return Array.from(this.activeAlerts.values());
   }
 
+  recordSystemSnapshot() {
+    try {
+      const snap = this.getSystemMetrics();
+      const point = {
+        timestamp: Date.now(),
+        cpuUsagePercent: snap.cpuUsagePercent,
+        memoryPercent: snap.memory.usedPercent,
+        memoryUsedMb: snap.memory.usedMb,
+        memoryTotalMb: snap.memory.totalMb,
+        load1m: snap.loadAverage["1m"],
+        uptimeSeconds: snap.uptimeSeconds,
+      };
+      this.systemHistory.push(point);
+      // Retain last 30 minutes of telemetry snapshots
+      const cutoff = Date.now() - 30 * 60 * 1000;
+      while (this.systemHistory.length > 0 && this.systemHistory[0].timestamp < cutoff) {
+        this.systemHistory.shift();
+      }
+    } catch {}
+  }
+
+  getSystemHistory(durationMs = 30 * 60 * 1000) {
+    const cutoff = Date.now() - durationMs;
+    return this.systemHistory.filter((p) => p.timestamp >= cutoff);
+  }
+
   startMetricsCollector() {
-    // Initial run
+    // Initial runs
     this.collectDockerMetrics();
+    this.recordSystemSnapshot();
     // Poll every 15 seconds
-    this.timer = setInterval(() => this.collectDockerMetrics(), 15000);
+    this.timer = setInterval(() => {
+      this.collectDockerMetrics();
+      this.recordSystemSnapshot();
+    }, 15000);
   }
 
   stop() {

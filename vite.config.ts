@@ -43,6 +43,7 @@ function hosteraxEnginePlugin() {
             env: {
               ...process.env,
               HOSTERAX_DEV: "1",
+              HOSTERAX_TUNNEL_HOST: "127.0.0.1",
             },
           });
           proc.unref();
@@ -52,8 +53,60 @@ function hosteraxEnginePlugin() {
   };
 }
 
+function silenceDirectivesPlugin() {
+  return {
+    name: "silence-module-level-directives",
+    onLog(level: any, log: any) {
+      if (
+        log?.code === "MODULE_LEVEL_DIRECTIVE" ||
+        (typeof log?.message === "string" && log.message.includes('"use client"')) ||
+        String(log).includes('"use client"')
+      ) {
+        return false;
+      }
+    },
+  };
+}
+
 export default defineConfig({
-  plugins: [hosteraxEnginePlugin()],
+  plugins: [hosteraxEnginePlugin(), silenceDirectivesPlugin()],
+  nitro: {
+    // @ts-expect-error - rolldownConfig is supported by Nitro >=3.0
+    rolldownConfig: {
+      onLog(level: any, log: any, defaultHandler: any) {
+        if (
+          log?.code === "MODULE_LEVEL_DIRECTIVE" ||
+          (typeof log?.message === "string" && log.message.includes('"use client"')) ||
+          String(log).includes('"use client"')
+        ) {
+          return;
+        }
+        defaultHandler?.(level, log);
+      },
+      onwarn(warning: any, defaultHandler: any) {
+        if (
+          warning?.code === "MODULE_LEVEL_DIRECTIVE" ||
+          (typeof warning?.message === "string" && warning.message.includes('"use client"')) ||
+          String(warning).includes('"use client"')
+        ) {
+          return;
+        }
+        defaultHandler?.(warning);
+      },
+    },
+    rollupConfig: {
+      onwarn(warning: any, defaultHandler: any) {
+        if (
+          warning?.code === "MODULE_LEVEL_DIRECTIVE" ||
+          (typeof warning?.message === "string" && warning.message.includes('"use client"')) ||
+          String(warning).includes('"use client"')
+        ) {
+          return;
+        }
+        defaultHandler?.(warning);
+      },
+    },
+  },
   vite: {
     server: {
       allowedHosts: true,
@@ -83,6 +136,7 @@ export default defineConfig({
               proxyReq.removeHeader("x-forwarded-for");
               proxyReq.removeHeader("x-forwarded-host");
               proxyReq.removeHeader("x-forwarded-proto");
+              proxyReq.removeHeader("x-forwarded-port");
               proxyReq.removeHeader("forwarded");
               proxyReq.removeHeader("origin");
               proxyReq.setHeader("host", "127.0.0.1:7777");
@@ -110,9 +164,58 @@ export default defineConfig({
               proxyReq.removeHeader("x-forwarded-host");
               proxyReq.removeHeader("x-forwarded-proto");
               proxyReq.removeHeader("origin");
+              proxyReq.removeHeader("sec-fetch-site");
+              proxyReq.removeHeader("sec-fetch-mode");
               proxyReq.setHeader("host", "127.0.0.1:7777");
             });
           },
+        },
+      },
+    },
+    build: {
+      rollupOptions: {
+        onwarn(warning, defaultHandler) {
+          if (
+            warning.code === "MODULE_LEVEL_DIRECTIVE" ||
+            warning.message?.includes('"use client"') ||
+            String(warning).includes('"use client"')
+          ) {
+            return;
+          }
+          defaultHandler(warning);
+        },
+        onLog(level, log, defaultHandler) {
+          if (
+            log.code === "MODULE_LEVEL_DIRECTIVE" ||
+            log.message?.includes('"use client"') ||
+            String(log).includes('"use client"')
+          ) {
+            return;
+          }
+          defaultHandler?.(level, log);
+        },
+      },
+      // @ts-expect-error - rolldownOptions when rolldown is utilized
+      rolldownOptions: {
+        onLog(level: any, log: any, defaultHandler: any) {
+          if (
+            log?.code === "MODULE_LEVEL_DIRECTIVE" ||
+            log?.message?.includes('"use client"') ||
+            String(log).includes('"use client"')
+          ) {
+            return;
+          }
+          defaultHandler?.(level, log);
+        },
+        onwarn(warning: any, defaultHandler: any) {
+          if (
+            warning?.code === "MODULE_LEVEL_DIRECTIVE" ||
+            warning?.message?.includes('"use client"') ||
+            String(warning).includes('"use client"')
+          ) {
+            return;
+          }
+          defaultHandler?.(warning);
         },
       },
     },

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useEngine, useServerNodes, type HostKeyScan, type ServerNode } from "@/lib/engine";
 import { AddServerDialog } from "@/components/hx/add-server-dialog";
+import { ResourceMonitor } from "@/components/hx/resource-monitor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -248,6 +249,9 @@ function ServersPage() {
           </div>
         </div>
       </div>
+
+      {/* Local Engine Resource Monitor */}
+      <ResourceMonitor title="HosteraX Local Engine — Resource Monitor" />
 
       {/* Servers Grid */}
       <div className="space-y-4">
