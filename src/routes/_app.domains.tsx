@@ -29,6 +29,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { MagicDnsSelector } from "@/components/hx/magic-dns-selector";
+import { EdgeMiddlewaresManager } from "@/components/hx/edge-middlewares-manager";
 
 export const Route = createFileRoute("/_app/domains")({
   head: () => ({
@@ -67,6 +68,7 @@ function DomainsPage() {
   const [q, setQ] = useState("");
   const [hostname, setHostname] = useState("");
   const [selectedProject, setSelectedProject] = useState("");
+  const [subTab, setSubTab] = useState<"domains" | "middlewares">("domains");
 
   // Modal states
   const [customSslModalDomain, setCustomSslModalDomain] = useState<Domain | null>(null);
@@ -344,230 +346,275 @@ function DomainsPage() {
         </Link>
       </div>
 
-      {/* Magic Wildcard DNS Provider Selection */}
-      <MagicDnsSelector />
+      {/* Subtab Navigation Toolbar */}
+      <div className="flex gap-2 border-b border-border/60 pb-2">
+        <button
+          onClick={() => setSubTab("domains")}
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+            subTab === "domains"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-surface hover:text-foreground"
+          }`}
+        >
+          <Globe className="w-4 h-4" />
+          <span>Custom Domains & SSL ({domains.length})</span>
+        </button>
 
-      {/* Add Domain Form */}
-      <div className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-3">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <Globe className="h-4 w-4 text-primary" /> Register Custom Domain
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Attach a public domain or subdomain to any deployed service. HosteraX will automatically
-          manage DNS verification and SSL certificates.
-        </p>
-        <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
-          <input
-            value={hostname}
-            onChange={(e) => setHostname(e.target.value)}
-            placeholder="api.mycompany.com"
-            className="rounded-lg border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary font-mono"
-          />
-          <select
-            value={selectedProject}
-            onChange={(e) => setSelectedProject(e.target.value)}
-            className="rounded-lg border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
+        <button
+          onClick={() => setSubTab("middlewares")}
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg transition-all ${
+            subTab === "middlewares"
+              ? "bg-primary text-primary-foreground shadow-sm"
+              : "text-muted-foreground hover:bg-surface hover:text-foreground"
+          }`}
+        >
+          <ShieldCheck className="w-4 h-4" />
+          <span>Edge Middlewares & Security</span>
+          <span
+            className={`text-[10px] font-bold px-1.5 py-0.2 rounded-md ${
+              subTab === "middlewares"
+                ? "bg-primary-foreground/20 text-primary-foreground"
+                : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+            }`}
           >
-            <option value="">Select Project Target…</option>
-            {projects.map((p) => (
-              <option key={p.id || p.name} value={p.name}>
-                {p.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={addDomain}
-            className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition shadow-sm"
-          >
-            <Plus className="h-4 w-4" /> Add Domain
-          </button>
-        </div>
+            Gateway
+          </span>
+        </button>
       </div>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search domains, projects, or SSL status..."
-          className="w-full rounded-lg border border-input bg-input/40 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
-        />
-      </div>
+      {subTab === "domains" ? (
+        <div className="space-y-6">
+          {/* Magic Wildcard DNS Provider Selection */}
+          <MagicDnsSelector />
 
-      {/* Domains Table */}
-      <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
-        {filtered.length === 0 ? (
-          <div className="p-12 text-center text-sm text-muted-foreground">
-            <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-primary mb-3">
-              <Globe className="h-5 w-5" />
+          {/* Add Domain Form */}
+          <div className="rounded-xl border border-border bg-card p-5 shadow-sm space-y-3">
+            <div className="flex items-center gap-2 text-sm font-semibold">
+              <Globe className="h-4 w-4 text-primary" /> Register Custom Domain
             </div>
-            {q ? "No domains match your search." : "No custom domains configured yet."}
-            <div className="mt-1 text-xs">
-              Add a domain above to enable automatic TLS / SSL and Edge Gateway routing.
+            <p className="text-xs text-muted-foreground">
+              Attach a public domain or subdomain to any deployed service. HosteraX will
+              automatically manage DNS verification and SSL certificates.
+            </p>
+            <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+              <input
+                value={hostname}
+                onChange={(e) => setHostname(e.target.value)}
+                placeholder="api.mycompany.com"
+                className="rounded-lg border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary font-mono"
+              />
+              <select
+                value={selectedProject}
+                onChange={(e) => setSelectedProject(e.target.value)}
+                className="rounded-lg border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
+              >
+                <option value="">Select Project Target…</option>
+                {projects.map((p) => (
+                  <option key={p.id || p.name} value={p.name}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={addDomain}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary px-5 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 transition shadow-sm"
+              >
+                <Plus className="h-4 w-4" /> Add Domain
+              </button>
             </div>
           </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {filtered.map((d) => (
-              <div
-                key={d.id}
-                className="flex flex-wrap items-center justify-between gap-4 p-5 hover:bg-accent/40 transition-colors"
-              >
-                <div className="flex items-start gap-3.5 min-w-0">
-                  <div className="mt-0.5">{sslStatusIcon(d.ssl_status)}</div>
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono text-sm font-semibold text-foreground">
-                        {d.hostname}
-                      </span>
-                      {d.is_primary && (
-                        <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary font-semibold">
-                          PRIMARY
-                        </span>
-                      )}
-                      <a
-                        href={`https://${d.hostname}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="text-muted-foreground hover:text-primary transition"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
-                    </div>
 
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      {d.projects && (
-                        <Link
-                          to="/p/$slug"
-                          params={{ slug: d.projects.slug }}
-                          className="font-medium text-primary hover:underline"
-                        >
-                          {d.projects.name}
-                        </Link>
-                      )}
-                      <span>•</span>
-                      {d.verified ? (
-                        <span className="flex items-center gap-1 text-emerald-500 font-medium">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> DNS Verified
-                        </span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-amber-500 font-medium">
-                          <XCircle className="h-3.5 w-3.5" /> DNS Pending
-                        </span>
-                      )}
-                      <span>•</span>
-                      <span className="uppercase text-[10px] font-mono">
-                        SSL: <span className="font-semibold text-foreground">{d.ssl_status}</span>
-                      </span>
-                      {d.ssl_issuer && d.ssl_issuer !== "none" && (
-                        <>
-                          <span>•</span>
-                          <span className="text-[11px] font-mono text-muted-foreground">
-                            {d.ssl_issuer}
-                          </span>
-                        </>
-                      )}
-                      {d.ssl_expires_at ? (
-                        <>
-                          <span>•</span>
-                          <span className="text-[11px]">
-                            expires {formatDistanceToNow(new Date(Number(d.ssl_expires_at)))}
-                          </span>
-                        </>
-                      ) : null}
-                    </div>
+          {/* Search */}
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search domains, projects, or SSL status..."
+              className="w-full rounded-lg border border-input bg-input/40 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
+            />
+          </div>
 
-                    {!d.verified && (
-                      <div className="mt-2 rounded-lg border border-border/70 bg-muted/30 p-2.5 text-xs space-y-1">
-                        <div className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5">
-                          <Info className="h-3.5 w-3.5 text-primary" /> Required DNS Verification
-                          Record:
-                        </div>
-                        <div className="flex items-center justify-between gap-2 font-mono text-[11px] bg-card p-1.5 rounded border border-border">
-                          <span>
-                            Type: <strong>TXT</strong> | Name:{" "}
-                            <strong>_hosterax-challenge.{d.hostname}</strong> | Value:{" "}
-                            <strong>{d.challenge_token}</strong>
-                          </span>
-                          <button
-                            onClick={() => {
-                              navigator.clipboard.writeText(d.challenge_token);
-                              toast.success("Verification token copied to clipboard!");
-                            }}
-                            className="text-muted-foreground hover:text-foreground"
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+          {/* Domains Table */}
+          <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
+            {filtered.length === 0 ? (
+              <div className="p-12 text-center text-sm text-muted-foreground">
+                <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-primary mb-3">
+                  <Globe className="h-5 w-5" />
                 </div>
-
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {!d.verified && (
-                    <button
-                      onClick={() => verifyDomain(d.id)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium hover:border-primary/60 hover:text-primary transition shadow-sm"
-                    >
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Verify DNS
-                    </button>
-                  )}
-
-                  {d.verified && (
-                    <button
-                      onClick={() => provisionSSL(d.id)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium hover:border-primary/60 hover:text-primary transition shadow-sm"
-                    >
-                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
-                      {d.ssl_status === "active" ? "Renew SSL" : "Provision SSL"}
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => {
-                      setCustomSslModalDomain(d);
-                      setCertPem("");
-                      setKeyPem("");
-                    }}
-                    className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium hover:border-primary/60 hover:text-primary transition shadow-sm"
-                  >
-                    <Upload className="h-3.5 w-3.5 text-muted-foreground" /> Custom Cert
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      setSecurityModalDomain(d);
-                      setForceHttps(d.force_https !== false);
-                      setHstsEnabled(d.hsts_enabled !== false);
-                    }}
-                    className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition"
-                  >
-                    <SlidersHorizontal className="h-3.5 w-3.5" /> Security
-                  </button>
-
-                  {!d.is_primary && (
-                    <button
-                      onClick={() => setPrimary(d.id)}
-                      className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium hover:border-amber-500/60 hover:text-amber-500 transition"
-                    >
-                      <Star className="h-3.5 w-3.5" /> Set Primary
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => deleteDomain(d.id)}
-                    className="inline-flex items-center rounded-lg border border-border bg-card p-1.5 text-xs text-muted-foreground hover:border-destructive/60 hover:text-destructive transition"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                {q ? "No domains match your search." : "No custom domains configured yet."}
+                <div className="mt-1 text-xs">
+                  Add a domain above to enable automatic TLS / SSL and Edge Gateway routing.
                 </div>
               </div>
-            ))}
+            ) : (
+              <div className="divide-y divide-border">
+                {filtered.map((d) => (
+                  <div
+                    key={d.id}
+                    className="flex flex-wrap items-center justify-between gap-4 p-5 hover:bg-accent/40 transition-colors"
+                  >
+                    <div className="flex items-start gap-3.5 min-w-0">
+                      <div className="mt-0.5">{sslStatusIcon(d.ssl_status)}</div>
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-mono text-sm font-semibold text-foreground">
+                            {d.hostname}
+                          </span>
+                          {d.is_primary && (
+                            <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] text-primary font-semibold">
+                              PRIMARY
+                            </span>
+                          )}
+                          <a
+                            href={`https://${d.hostname}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-muted-foreground hover:text-primary transition"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                          {d.projects && (
+                            <Link
+                              to="/p/$slug"
+                              params={{ slug: d.projects.slug }}
+                              className="font-medium text-primary hover:underline"
+                            >
+                              {d.projects.name}
+                            </Link>
+                          )}
+                          <span>•</span>
+                          {d.verified ? (
+                            <span className="flex items-center gap-1 text-emerald-500 font-medium">
+                              <CheckCircle2 className="h-3.5 w-3.5" /> DNS Verified
+                            </span>
+                          ) : (
+                            <span className="flex items-center gap-1 text-amber-500 font-medium">
+                              <XCircle className="h-3.5 w-3.5" /> DNS Pending
+                            </span>
+                          )}
+                          <span>•</span>
+                          <span className="uppercase text-[10px] font-mono">
+                            SSL:{" "}
+                            <span className="font-semibold text-foreground">{d.ssl_status}</span>
+                          </span>
+                          {d.ssl_issuer && d.ssl_issuer !== "none" && (
+                            <>
+                              <span>•</span>
+                              <span className="text-[11px] font-mono text-muted-foreground">
+                                {d.ssl_issuer}
+                              </span>
+                            </>
+                          )}
+                          {d.ssl_expires_at ? (
+                            <>
+                              <span>•</span>
+                              <span className="text-[11px]">
+                                expires {formatDistanceToNow(new Date(Number(d.ssl_expires_at)))}
+                              </span>
+                            </>
+                          ) : null}
+                        </div>
+
+                        {!d.verified && (
+                          <div className="mt-2 rounded-lg border border-border/70 bg-muted/30 p-2.5 text-xs space-y-1">
+                            <div className="text-[11px] font-semibold text-muted-foreground flex items-center gap-1.5">
+                              <Info className="h-3.5 w-3.5 text-primary" /> Required DNS
+                              Verification Record:
+                            </div>
+                            <div className="flex items-center justify-between gap-2 font-mono text-[11px] bg-card p-1.5 rounded border border-border">
+                              <span>
+                                Type: <strong>TXT</strong> | Name:{" "}
+                                <strong>_hosterax-challenge.{d.hostname}</strong> | Value:{" "}
+                                <strong>{d.challenge_token}</strong>
+                              </span>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(d.challenge_token);
+                                  toast.success("Verification token copied to clipboard!");
+                                }}
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                <Copy className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {!d.verified && (
+                        <button
+                          onClick={() => verifyDomain(d.id)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium hover:border-primary/60 hover:text-primary transition shadow-sm"
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> Verify DNS
+                        </button>
+                      )}
+
+                      {d.verified && (
+                        <button
+                          onClick={() => provisionSSL(d.id)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium hover:border-primary/60 hover:text-primary transition shadow-sm"
+                        >
+                          <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+                          {d.ssl_status === "active" ? "Renew SSL" : "Provision SSL"}
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => {
+                          setCustomSslModalDomain(d);
+                          setCertPem("");
+                          setKeyPem("");
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium hover:border-primary/60 hover:text-primary transition shadow-sm"
+                      >
+                        <Upload className="h-3.5 w-3.5 text-muted-foreground" /> Custom Cert
+                      </button>
+
+                      <button
+                        onClick={() => {
+                          setSecurityModalDomain(d);
+                          setForceHttps(d.force_https !== false);
+                          setHstsEnabled(d.hsts_enabled !== false);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition"
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5" /> Security
+                      </button>
+
+                      {!d.is_primary && (
+                        <button
+                          onClick={() => setPrimary(d.id)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium hover:border-amber-500/60 hover:text-amber-500 transition"
+                        >
+                          <Star className="h-3.5 w-3.5" /> Set Primary
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => deleteDomain(d.id)}
+                        className="inline-flex items-center rounded-lg border border-border bg-card p-1.5 text-xs text-muted-foreground hover:border-destructive/60 hover:text-destructive transition"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        <EdgeMiddlewaresManager
+          availableDomains={domains.map((d) => ({ hostname: d.hostname, project: d.project }))}
+        />
+      )}
 
       {/* Custom SSL Certificate Modal */}
       {customSslModalDomain && (
