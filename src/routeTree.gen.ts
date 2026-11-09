@@ -13,7 +13,9 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AppActivityRouteImport } from './routes/_app.activity'
+import { Route as AppAiMcpRouteImport } from './routes/_app.ai-mcp'
 import { Route as AppAppsRouteImport } from './routes/_app.apps'
+import { Route as AppBackupsRouteImport } from './routes/_app.backups'
 import { Route as AppDashboardRouteImport } from './routes/_app.dashboard'
 import { Route as AppDatabasesRouteImport } from './routes/_app.databases'
 import { Route as AppDeploymentsRouteImport } from './routes/_app.deployments'
@@ -26,11 +28,15 @@ import { Route as AppMailRouteImport } from './routes/_app.mail'
 import { Route as AppNewRouteImport } from './routes/_app.new'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
+import { Route as AppPreviewsRouteImport } from './routes/_app.previews'
 import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
+import { Route as AppStacksRouteImport } from './routes/_app.stacks'
 import { Route as AppTeamRouteImport } from './routes/_app.team'
+import { Route as AppTerminalRouteImport } from './routes/_app.terminal'
 import { Route as AppTokensRouteImport } from './routes/_app.tokens'
 import { Route as AppUsersRouteImport } from './routes/_app.users'
+import { Route as AppVaultRouteImport } from './routes/_app.vault'
 import { Route as AppPSlugRouteImport } from './routes/_app.p.$slug'
 
 const IndexRoute = IndexRouteImport.update({
@@ -52,9 +58,19 @@ const AppActivityRoute = AppActivityRouteImport.update({
   path: '/activity',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAiMcpRoute = AppAiMcpRouteImport.update({
+  id: '/ai-mcp',
+  path: '/ai-mcp',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAppsRoute = AppAppsRouteImport.update({
   id: '/apps',
   path: '/apps',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppBackupsRoute = AppBackupsRouteImport.update({
+  id: '/backups',
+  path: '/backups',
   getParentRoute: () => AppRoute,
 } as any)
 const AppDashboardRoute = AppDashboardRouteImport.update({
@@ -117,6 +133,11 @@ const AppOauthRoute = AppOauthRouteImport.update({
   path: '/oauth',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPreviewsRoute = AppPreviewsRouteImport.update({
+  id: '/previews',
+  path: '/previews',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppServersRoute = AppServersRouteImport.update({
   id: '/servers',
   path: '/servers',
@@ -127,9 +148,19 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
+const AppStacksRoute = AppStacksRouteImport.update({
+  id: '/stacks',
+  path: '/stacks',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppTeamRoute = AppTeamRouteImport.update({
   id: '/team',
   path: '/team',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppTerminalRoute = AppTerminalRouteImport.update({
+  id: '/terminal',
+  path: '/terminal',
   getParentRoute: () => AppRoute,
 } as any)
 const AppTokensRoute = AppTokensRouteImport.update({
@@ -142,6 +173,11 @@ const AppUsersRoute = AppUsersRouteImport.update({
   path: '/users',
   getParentRoute: () => AppRoute,
 } as any)
+const AppVaultRoute = AppVaultRouteImport.update({
+  id: '/vault',
+  path: '/vault',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPSlugRoute = AppPSlugRouteImport.update({
   id: '/p/$slug',
   path: '/p/$slug',
@@ -152,7 +188,9 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/activity': typeof AppActivityRoute
+  '/ai-mcp': typeof AppAiMcpRoute
   '/apps': typeof AppAppsRoute
+  '/backups': typeof AppBackupsRoute
   '/dashboard': typeof AppDashboardRoute
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
@@ -165,18 +203,24 @@ export interface FileRoutesByFullPath {
   '/new': typeof AppNewRoute
   '/notifications': typeof AppNotificationsRoute
   '/oauth': typeof AppOauthRoute
+  '/previews': typeof AppPreviewsRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
+  '/stacks': typeof AppStacksRoute
   '/team': typeof AppTeamRoute
+  '/terminal': typeof AppTerminalRoute
   '/tokens': typeof AppTokensRoute
   '/users': typeof AppUsersRoute
+  '/vault': typeof AppVaultRoute
   '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
   '/activity': typeof AppActivityRoute
+  '/ai-mcp': typeof AppAiMcpRoute
   '/apps': typeof AppAppsRoute
+  '/backups': typeof AppBackupsRoute
   '/dashboard': typeof AppDashboardRoute
   '/databases': typeof AppDatabasesRoute
   '/deployments': typeof AppDeploymentsRoute
@@ -189,11 +233,15 @@ export interface FileRoutesByTo {
   '/new': typeof AppNewRoute
   '/notifications': typeof AppNotificationsRoute
   '/oauth': typeof AppOauthRoute
+  '/previews': typeof AppPreviewsRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
+  '/stacks': typeof AppStacksRoute
   '/team': typeof AppTeamRoute
+  '/terminal': typeof AppTerminalRoute
   '/tokens': typeof AppTokensRoute
   '/users': typeof AppUsersRoute
+  '/vault': typeof AppVaultRoute
   '/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRoutesById {
@@ -202,7 +250,9 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/auth': typeof AuthRoute
   '/_app/activity': typeof AppActivityRoute
+  '/_app/ai-mcp': typeof AppAiMcpRoute
   '/_app/apps': typeof AppAppsRoute
+  '/_app/backups': typeof AppBackupsRoute
   '/_app/dashboard': typeof AppDashboardRoute
   '/_app/databases': typeof AppDatabasesRoute
   '/_app/deployments': typeof AppDeploymentsRoute
@@ -215,11 +265,15 @@ export interface FileRoutesById {
   '/_app/new': typeof AppNewRoute
   '/_app/notifications': typeof AppNotificationsRoute
   '/_app/oauth': typeof AppOauthRoute
+  '/_app/previews': typeof AppPreviewsRoute
   '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
+  '/_app/stacks': typeof AppStacksRoute
   '/_app/team': typeof AppTeamRoute
+  '/_app/terminal': typeof AppTerminalRoute
   '/_app/tokens': typeof AppTokensRoute
   '/_app/users': typeof AppUsersRoute
+  '/_app/vault': typeof AppVaultRoute
   '/_app/p/$slug': typeof AppPSlugRoute
 }
 export interface FileRouteTypes {
@@ -228,7 +282,9 @@ export interface FileRouteTypes {
     | '/'
     | '/auth'
     | '/activity'
+    | '/ai-mcp'
     | '/apps'
+    | '/backups'
     | '/dashboard'
     | '/databases'
     | '/deployments'
@@ -241,18 +297,24 @@ export interface FileRouteTypes {
     | '/new'
     | '/notifications'
     | '/oauth'
+    | '/previews'
     | '/servers'
     | '/settings'
+    | '/stacks'
     | '/team'
+    | '/terminal'
     | '/tokens'
     | '/users'
+    | '/vault'
     | '/p/$slug'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/auth'
     | '/activity'
+    | '/ai-mcp'
     | '/apps'
+    | '/backups'
     | '/dashboard'
     | '/databases'
     | '/deployments'
@@ -265,11 +327,15 @@ export interface FileRouteTypes {
     | '/new'
     | '/notifications'
     | '/oauth'
+    | '/previews'
     | '/servers'
     | '/settings'
+    | '/stacks'
     | '/team'
+    | '/terminal'
     | '/tokens'
     | '/users'
+    | '/vault'
     | '/p/$slug'
   id:
     | '__root__'
@@ -277,7 +343,9 @@ export interface FileRouteTypes {
     | '/_app'
     | '/auth'
     | '/_app/activity'
+    | '/_app/ai-mcp'
     | '/_app/apps'
+    | '/_app/backups'
     | '/_app/dashboard'
     | '/_app/databases'
     | '/_app/deployments'
@@ -290,11 +358,15 @@ export interface FileRouteTypes {
     | '/_app/new'
     | '/_app/notifications'
     | '/_app/oauth'
+    | '/_app/previews'
     | '/_app/servers'
     | '/_app/settings'
+    | '/_app/stacks'
     | '/_app/team'
+    | '/_app/terminal'
     | '/_app/tokens'
     | '/_app/users'
+    | '/_app/vault'
     | '/_app/p/$slug'
   fileRoutesById: FileRoutesById
 }
@@ -334,11 +406,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppActivityRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/ai-mcp': {
+      id: '/_app/ai-mcp'
+      path: '/ai-mcp'
+      fullPath: '/ai-mcp'
+      preLoaderRoute: typeof AppAiMcpRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/apps': {
       id: '/_app/apps'
       path: '/apps'
       fullPath: '/apps'
       preLoaderRoute: typeof AppAppsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/backups': {
+      id: '/_app/backups'
+      path: '/backups'
+      fullPath: '/backups'
+      preLoaderRoute: typeof AppBackupsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/dashboard': {
@@ -425,6 +511,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppOauthRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/previews': {
+      id: '/_app/previews'
+      path: '/previews'
+      fullPath: '/previews'
+      preLoaderRoute: typeof AppPreviewsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/servers': {
       id: '/_app/servers'
       path: '/servers'
@@ -439,11 +532,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/stacks': {
+      id: '/_app/stacks'
+      path: '/stacks'
+      fullPath: '/stacks'
+      preLoaderRoute: typeof AppStacksRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/team': {
       id: '/_app/team'
       path: '/team'
       fullPath: '/team'
       preLoaderRoute: typeof AppTeamRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/terminal': {
+      id: '/_app/terminal'
+      path: '/terminal'
+      fullPath: '/terminal'
+      preLoaderRoute: typeof AppTerminalRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/tokens': {
@@ -460,6 +567,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppUsersRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/vault': {
+      id: '/_app/vault'
+      path: '/vault'
+      fullPath: '/vault'
+      preLoaderRoute: typeof AppVaultRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/p/$slug': {
       id: '/_app/p/$slug'
       path: '/p/$slug'
@@ -472,7 +586,9 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppActivityRoute: typeof AppActivityRoute
+  AppAiMcpRoute: typeof AppAiMcpRoute
   AppAppsRoute: typeof AppAppsRoute
+  AppBackupsRoute: typeof AppBackupsRoute
   AppDashboardRoute: typeof AppDashboardRoute
   AppDatabasesRoute: typeof AppDatabasesRoute
   AppDeploymentsRoute: typeof AppDeploymentsRoute
@@ -485,17 +601,23 @@ interface AppRouteChildren {
   AppNewRoute: typeof AppNewRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
   AppOauthRoute: typeof AppOauthRoute
+  AppPreviewsRoute: typeof AppPreviewsRoute
   AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
+  AppStacksRoute: typeof AppStacksRoute
   AppTeamRoute: typeof AppTeamRoute
+  AppTerminalRoute: typeof AppTerminalRoute
   AppTokensRoute: typeof AppTokensRoute
   AppUsersRoute: typeof AppUsersRoute
+  AppVaultRoute: typeof AppVaultRoute
   AppPSlugRoute: typeof AppPSlugRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
   AppActivityRoute: AppActivityRoute,
+  AppAiMcpRoute: AppAiMcpRoute,
   AppAppsRoute: AppAppsRoute,
+  AppBackupsRoute: AppBackupsRoute,
   AppDashboardRoute: AppDashboardRoute,
   AppDatabasesRoute: AppDatabasesRoute,
   AppDeploymentsRoute: AppDeploymentsRoute,
@@ -508,11 +630,15 @@ const AppRouteChildren: AppRouteChildren = {
   AppNewRoute: AppNewRoute,
   AppNotificationsRoute: AppNotificationsRoute,
   AppOauthRoute: AppOauthRoute,
+  AppPreviewsRoute: AppPreviewsRoute,
   AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,
+  AppStacksRoute: AppStacksRoute,
   AppTeamRoute: AppTeamRoute,
+  AppTerminalRoute: AppTerminalRoute,
   AppTokensRoute: AppTokensRoute,
   AppUsersRoute: AppUsersRoute,
+  AppVaultRoute: AppVaultRoute,
   AppPSlugRoute: AppPSlugRoute,
 }
 
