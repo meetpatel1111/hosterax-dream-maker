@@ -32,6 +32,7 @@ import { Route as AppPreviewsRouteImport } from './routes/_app.previews'
 import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppStacksRouteImport } from './routes/_app.stacks'
+import { Route as AppStatusRouteImport } from './routes/_app.status'
 import { Route as AppTeamRouteImport } from './routes/_app.team'
 import { Route as AppTerminalRouteImport } from './routes/_app.terminal'
 import { Route as AppTokensRouteImport } from './routes/_app.tokens'
@@ -153,6 +154,11 @@ const AppStacksRoute = AppStacksRouteImport.update({
   path: '/stacks',
   getParentRoute: () => AppRoute,
 } as any)
+const AppStatusRoute = AppStatusRouteImport.update({
+  id: '/status',
+  path: '/status',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppTeamRoute = AppTeamRouteImport.update({
   id: '/team',
   path: '/team',
@@ -207,6 +213,7 @@ export interface FileRoutesByFullPath {
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/stacks': typeof AppStacksRoute
+  '/status': typeof AppStatusRoute
   '/team': typeof AppTeamRoute
   '/terminal': typeof AppTerminalRoute
   '/tokens': typeof AppTokensRoute
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/stacks': typeof AppStacksRoute
+  '/status': typeof AppStatusRoute
   '/team': typeof AppTeamRoute
   '/terminal': typeof AppTerminalRoute
   '/tokens': typeof AppTokensRoute
@@ -269,6 +277,7 @@ export interface FileRoutesById {
   '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/stacks': typeof AppStacksRoute
+  '/_app/status': typeof AppStatusRoute
   '/_app/team': typeof AppTeamRoute
   '/_app/terminal': typeof AppTerminalRoute
   '/_app/tokens': typeof AppTokensRoute
@@ -301,6 +310,7 @@ export interface FileRouteTypes {
     | '/servers'
     | '/settings'
     | '/stacks'
+    | '/status'
     | '/team'
     | '/terminal'
     | '/tokens'
@@ -331,6 +341,7 @@ export interface FileRouteTypes {
     | '/servers'
     | '/settings'
     | '/stacks'
+    | '/status'
     | '/team'
     | '/terminal'
     | '/tokens'
@@ -362,6 +373,7 @@ export interface FileRouteTypes {
     | '/_app/servers'
     | '/_app/settings'
     | '/_app/stacks'
+    | '/_app/status'
     | '/_app/team'
     | '/_app/terminal'
     | '/_app/tokens'
@@ -539,6 +551,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppStacksRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/status': {
+      id: '/_app/status'
+      path: '/status'
+      fullPath: '/status'
+      preLoaderRoute: typeof AppStatusRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/team': {
       id: '/_app/team'
       path: '/team'
@@ -605,6 +624,7 @@ interface AppRouteChildren {
   AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppStacksRoute: typeof AppStacksRoute
+  AppStatusRoute: typeof AppStatusRoute
   AppTeamRoute: typeof AppTeamRoute
   AppTerminalRoute: typeof AppTerminalRoute
   AppTokensRoute: typeof AppTokensRoute
@@ -634,6 +654,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppStacksRoute: AppStacksRoute,
+  AppStatusRoute: AppStatusRoute,
   AppTeamRoute: AppTeamRoute,
   AppTerminalRoute: AppTerminalRoute,
   AppTokensRoute: AppTokensRoute,
