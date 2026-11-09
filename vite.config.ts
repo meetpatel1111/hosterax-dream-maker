@@ -12,7 +12,19 @@ import http from "node:http";
 function hosteraxEnginePlugin() {
   return {
     name: "hosterax-engine-daemon",
-    configureServer() {
+    configureServer(server: any) {
+      server?.middlewares?.use((req: any, res: any, next: any) => {
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.setHeader("Access-Control-Allow-Methods", "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS");
+        res.setHeader("Access-Control-Allow-Headers", "*");
+        if (req.method === "OPTIONS") {
+          res.statusCode = 204;
+          res.end();
+          return;
+        }
+        next();
+      });
+
       // 1. Ensure Docker socket daemon is running for container simulation
       try {
         if (!fs.existsSync("/var/run/docker.sock")) {
@@ -110,6 +122,12 @@ export default defineConfig({
   vite: {
     server: {
       allowedHosts: true,
+      cors: true,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+      },
       proxy: {
         "/api": {
           target: "http://127.0.0.1:7777",
