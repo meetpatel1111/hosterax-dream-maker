@@ -32,6 +32,7 @@ import {
   Lock,
   Bot,
   Radio,
+  ShieldAlert,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
@@ -54,6 +55,7 @@ const NAV = [
   { to: "/monitoring", key: "monitoring" as const, label: "Monitoring & Logs", icon: LineChart },
   { to: "/terminal", key: "terminal" as any, label: "Web Terminal", icon: Terminal },
   { to: "/status", key: "status" as any, label: "Status Page", icon: Radio },
+  { to: "/security", key: "security" as any, label: "Security & CVEs", icon: ShieldAlert },
   { to: "/jobs", key: "jobs" as const, label: "Jobs & Schedules", icon: Clock },
   { to: "/domains", key: "domains" as any, label: "Domains & SSL", icon: Globe },
   { to: "/expose", key: "expose" as any, label: "Public access", icon: Share2 },

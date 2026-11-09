@@ -33,6 +33,8 @@ dist-ssr
 
 # Playwright MCP (test artifacts)
 .playwright-mcp/
+.playwright-cli/
+.aistudio/
 
 # Engine & Desktop runtime data
 hosterax/engine/*.db

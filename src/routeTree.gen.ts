@@ -29,6 +29,7 @@ import { Route as AppNewRouteImport } from './routes/_app.new'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppOauthRouteImport } from './routes/_app.oauth'
 import { Route as AppPreviewsRouteImport } from './routes/_app.previews'
+import { Route as AppSecurityRouteImport } from './routes/_app.security'
 import { Route as AppServersRouteImport } from './routes/_app.servers'
 import { Route as AppSettingsRouteImport } from './routes/_app.settings'
 import { Route as AppStacksRouteImport } from './routes/_app.stacks'
@@ -139,6 +140,11 @@ const AppPreviewsRoute = AppPreviewsRouteImport.update({
   path: '/previews',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSecurityRoute = AppSecurityRouteImport.update({
+  id: '/security',
+  path: '/security',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppServersRoute = AppServersRouteImport.update({
   id: '/servers',
   path: '/servers',
@@ -210,6 +216,7 @@ export interface FileRoutesByFullPath {
   '/notifications': typeof AppNotificationsRoute
   '/oauth': typeof AppOauthRoute
   '/previews': typeof AppPreviewsRoute
+  '/security': typeof AppSecurityRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/stacks': typeof AppStacksRoute
@@ -241,6 +248,7 @@ export interface FileRoutesByTo {
   '/notifications': typeof AppNotificationsRoute
   '/oauth': typeof AppOauthRoute
   '/previews': typeof AppPreviewsRoute
+  '/security': typeof AppSecurityRoute
   '/servers': typeof AppServersRoute
   '/settings': typeof AppSettingsRoute
   '/stacks': typeof AppStacksRoute
@@ -274,6 +282,7 @@ export interface FileRoutesById {
   '/_app/notifications': typeof AppNotificationsRoute
   '/_app/oauth': typeof AppOauthRoute
   '/_app/previews': typeof AppPreviewsRoute
+  '/_app/security': typeof AppSecurityRoute
   '/_app/servers': typeof AppServersRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/stacks': typeof AppStacksRoute
@@ -307,6 +316,7 @@ export interface FileRouteTypes {
     | '/notifications'
     | '/oauth'
     | '/previews'
+    | '/security'
     | '/servers'
     | '/settings'
     | '/stacks'
@@ -338,6 +348,7 @@ export interface FileRouteTypes {
     | '/notifications'
     | '/oauth'
     | '/previews'
+    | '/security'
     | '/servers'
     | '/settings'
     | '/stacks'
@@ -370,6 +381,7 @@ export interface FileRouteTypes {
     | '/_app/notifications'
     | '/_app/oauth'
     | '/_app/previews'
+    | '/_app/security'
     | '/_app/servers'
     | '/_app/settings'
     | '/_app/stacks'
@@ -530,6 +542,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPreviewsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/security': {
+      id: '/_app/security'
+      path: '/security'
+      fullPath: '/security'
+      preLoaderRoute: typeof AppSecurityRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/servers': {
       id: '/_app/servers'
       path: '/servers'
@@ -621,6 +640,7 @@ interface AppRouteChildren {
   AppNotificationsRoute: typeof AppNotificationsRoute
   AppOauthRoute: typeof AppOauthRoute
   AppPreviewsRoute: typeof AppPreviewsRoute
+  AppSecurityRoute: typeof AppSecurityRoute
   AppServersRoute: typeof AppServersRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppStacksRoute: typeof AppStacksRoute
@@ -651,6 +671,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppNotificationsRoute: AppNotificationsRoute,
   AppOauthRoute: AppOauthRoute,
   AppPreviewsRoute: AppPreviewsRoute,
+  AppSecurityRoute: AppSecurityRoute,
   AppServersRoute: AppServersRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppStacksRoute: AppStacksRoute,
