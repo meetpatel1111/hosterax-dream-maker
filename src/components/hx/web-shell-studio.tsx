@@ -22,6 +22,8 @@ import {
   CornerDownLeft,
 } from "lucide-react";
 import { toast } from "sonner";
+import { confirmAction } from "./confirm-modal";
+import { appLogger } from "../../utils/app-logger";
 import {
   useEngine,
   useDockerContainers,
@@ -236,9 +238,21 @@ export function WebShellStudio() {
   };
 
   // Clear Terminal Output
-  const handleClearTerminal = () => {
+  const handleClearTerminal = async () => {
     if (!activeTab) return;
+    if (activeTabHistory.length > 0) {
+      const ok = await confirmAction({
+        title: `Clear Terminal Output (${activeTab.containerName})`,
+        description: `Are you sure you want to clear the terminal output buffer (${activeTabHistory.length} command results)?`,
+        confirmLabel: "Clear Buffer",
+      });
+      if (!ok) return;
+    }
     setHistory((prev) => prev.filter((h) => h.containerName !== activeTab.containerName));
+    appLogger.logUi(
+      `Terminal Cleared: ${activeTab.containerName}`,
+      `Cleared buffer for tab ${activeTab.containerName}`,
+    );
     toast.success("Terminal output cleared.");
   };
 

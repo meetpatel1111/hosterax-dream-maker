@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { Bell, Plus, Send, Trash2 } from "lucide-react";
 import { useEngine } from "@/lib/engine";
+import { confirmAction } from "@/components/hx/confirm-modal";
 
 export const Route = createFileRoute("/_app/notifications")({
   head: () => ({
@@ -121,7 +122,13 @@ function Notifications() {
   }
 
   async function remove(c: Channel) {
-    if (!confirm(`Remove "${c.name}"?`)) return;
+    const ok = await confirmAction({
+      title: `Remove Notification Channel "${c.name}"`,
+      description: `Are you sure you want to remove notification channel "${c.name}"? Real-time alert dispatches to this endpoint will cease immediately.`,
+      variant: "destructive",
+      confirmLabel: "Remove Channel",
+    });
+    if (!ok) return;
     await engine.call("DELETE", `/api/notifications/${c.id}`).catch((e) => toast.error(e.message));
     refresh();
   }

@@ -20,6 +20,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useEngine, useEngineProjects } from "../../lib/engine";
+import { confirmAction } from "./confirm-modal";
+import { appLogger } from "../../utils/app-logger";
 import {
   generateCaddyTrafficSplitSnippet,
   generateNginxTrafficSplitSnippet,
@@ -139,14 +141,38 @@ export function TrafficSplittingManager() {
   };
 
   // Handler: Instant Rollback
-  const handleInstantRollback = () => {
+  const handleInstantRollback = async () => {
+    const ok = await confirmAction({
+      title: "Emergency Canary Rollback",
+      description:
+        "Are you sure you want to execute an emergency instant rollback? This will immediately drop Canary traffic weight to 0% and route all incoming traffic exclusively to Stable.",
+      variant: "destructive",
+      confirmLabel: "Execute Rollback",
+    });
+    if (!ok) return;
+
     setCanaryWeight(0);
+    appLogger.logUi(
+      "Canary Emergency Rollback",
+      `Instant rollback executed for ${domain || "canary target"}, shifted 100% traffic to stable.`,
+    );
     toast.error("Instant Rollback Executed: 100% traffic shifted back to Stable.");
   };
 
   // Handler: Promote to 100%
-  const handlePromoteToFull = () => {
+  const handlePromoteToFull = async () => {
+    const ok = await confirmAction({
+      title: "Promote Canary to 100%",
+      description: `Are you sure you want to promote Canary (${canaryVersion}) to receive 100% of production traffic?`,
+      confirmLabel: "Promote to 100%",
+    });
+    if (!ok) return;
+
     setCanaryWeight(100);
+    appLogger.logUi(
+      "Canary Promoted to 100%",
+      `Canary ${canaryVersion} on ${domain} promoted to 100% traffic.`,
+    );
     toast.success(`Canary ${canaryVersion} promoted to 100% rollout!`);
   };
 

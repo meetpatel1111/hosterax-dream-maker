@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useEngine, useServerNodes, type HostKeyScan, type ServerNode } from "@/lib/engine";
 import { AddServerDialog } from "@/components/hx/add-server-dialog";
+import { confirmAction } from "@/components/hx/confirm-modal";
 import { ResourceMonitor } from "@/components/hx/resource-monitor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -133,8 +134,13 @@ function ServersPage() {
       toast.error("Cannot delete local master node.");
       return;
     }
-    if (!confirm(`Are you sure you want to remove compute node "${server.name}" (${server.host})?`))
-      return;
+    const ok = await confirmAction({
+      title: `Remove Compute Node "${server.name}"`,
+      description: `Are you sure you want to remove compute node "${server.name}" (${server.host})? Managed containers or deployments running on this node must be drained first.`,
+      variant: "destructive",
+      confirmLabel: "Remove Node",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/servers/${server.id}`);
       toast.success(`Server node "${server.name}" removed.`);

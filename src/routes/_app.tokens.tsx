@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { KeyRound, Plus, Trash2, Copy } from "lucide-react";
 import { useEngine } from "@/lib/engine";
+import { confirmAction } from "@/components/hx/confirm-modal";
 
 export const Route = createFileRoute("/_app/tokens")({
   head: () => ({
@@ -67,7 +68,13 @@ function Tokens() {
   }
 
   async function revoke(t: TokenRow) {
-    if (!confirm(`Revoke "${t.name}"? Anything using it will start failing immediately.`)) return;
+    const ok = await confirmAction({
+      title: `Revoke Token "${t.name}"`,
+      description: `Are you sure you want to revoke "${t.name}"? Anything using this access token will start failing immediately.`,
+      variant: "destructive",
+      confirmLabel: "Revoke Token",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/tokens/${t.id}`);
       qc.invalidateQueries({ queryKey: ["tokens"] });

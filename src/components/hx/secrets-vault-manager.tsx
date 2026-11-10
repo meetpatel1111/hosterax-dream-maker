@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useEngine } from "@/lib/engine";
+import { confirmAction } from "@/components/hx/confirm-modal";
+import { appLogger } from "@/utils/app-logger";
 import {
   parseDotEnv,
   exportToDotEnv,
@@ -167,18 +169,43 @@ export function SecretsVaultManager() {
     updateActiveGroup({ secrets: nextSecrets });
   };
 
-  const removeSecretRow = (secretId: string) => {
+  const removeSecretRow = async (secretId: string) => {
     if (!activeGroup) return;
+    const secret = activeGroup.secrets.find((s) => s.id === secretId);
+    const confirmed = await confirmAction({
+      title: `Delete Secret "${secret?.key || "Variable"}"`,
+      description: "Are you sure you want to remove this variable from the vault group?",
+      variant: "destructive",
+      confirmLabel: "Delete Variable",
+    });
+    if (!confirmed) return;
     updateActiveGroup({ secrets: activeGroup.secrets.filter((s) => s.id !== secretId) });
+    appLogger.logUi(
+      `Secret Removed: ${secret?.key}`,
+      `Deleted secret from group ${activeGroup.name}`,
+    );
+    toast.success(`Removed "${secret?.key || "Variable"}"`);
   };
 
-  const deleteGroup = (groupId: string) => {
-    if (!confirm("Are you sure you want to delete this secret group?")) return;
+  const deleteGroup = async (groupId: string) => {
+    const target = groups.find((g) => g.id === groupId);
+    const confirmed = await confirmAction({
+      title: `Delete Secret Group "${target?.name || groupId}"`,
+      description:
+        "Are you sure you want to delete this secret group? Any linked environments using these variables will no longer inherit them.",
+      variant: "destructive",
+      confirmLabel: "Delete Group",
+    });
+    if (!confirmed) return;
     const next = groups.filter((g) => g.id !== groupId);
     saveGroups(next);
     if (selectedGroupId === groupId && next.length > 0) {
       setSelectedGroupId(next[0].id);
     }
+    appLogger.logUi(
+      `Secret Group Deleted: ${target?.name}`,
+      `User deleted secret group ${groupId}`,
+    );
     toast.info("Secret group deleted");
   };
 

@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { useEngine } from "@/lib/engine";
+import { confirmAction } from "@/components/hx/confirm-modal";
 import {
   Globe,
   Plus,
@@ -184,7 +185,14 @@ function DomainsPage() {
   }
 
   async function deleteDomain(id: string) {
-    if (!confirm("Delete this domain? TLS routes and certificates will be removed.")) return;
+    const ok = await confirmAction({
+      title: "Delete Custom Domain",
+      description:
+        "Are you sure you want to delete this domain? Edge TLS routes and certificates associated with this domain will be permanently removed.",
+      variant: "destructive",
+      confirmLabel: "Delete Domain",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/domains/${id}`);
       toast.success("Domain removed from Edge Gateway");

@@ -6,6 +6,7 @@ import { formatDistanceToNow } from "date-fns";
 import { Lock, ShieldCheck, Trash2, UserPlus, UserCog } from "lucide-react";
 import { useEngine } from "@/lib/engine";
 import { useAuth } from "@/lib/auth-context";
+import { confirmAction } from "@/components/hx/confirm-modal";
 
 export const Route = createFileRoute("/_app/users")({
   head: () => ({
@@ -360,12 +361,14 @@ function UsersPage() {
                     {u.twoFactorEnabled && (
                       <button
                         disabled={busy}
-                        onClick={() => {
-                          if (
-                            confirm(
-                              `Remove two-factor authentication for ${u.email}? They will be signed out.`,
-                            )
-                          )
+                        onClick={async () => {
+                          const ok = await confirmAction({
+                            title: `Reset 2FA for ${u.email}`,
+                            description: `Are you sure you want to remove two-factor authentication for ${u.email}? They will be signed out from all active sessions.`,
+                            variant: "warning",
+                            confirmLabel: "Reset 2FA",
+                          });
+                          if (ok)
                             act(
                               () => engine.call("POST", `/api/users/${u.id}/2fa-reset`),
                               "Two-factor removed",
@@ -378,8 +381,14 @@ function UsersPage() {
                     )}
                     <button
                       disabled={busy}
-                      onClick={() => {
-                        if (confirm(`Delete ${u.email}? This cannot be undone.`))
+                      onClick={async () => {
+                        const ok = await confirmAction({
+                          title: `Delete User ${u.email}`,
+                          description: `Are you sure you want to delete user account "${u.email}"? This action cannot be undone.`,
+                          variant: "destructive",
+                          confirmLabel: "Delete User",
+                        });
+                        if (ok)
                           act(() => engine.call("DELETE", `/api/users/${u.id}`), "User deleted");
                       }}
                       className="p-1.5 text-muted-foreground hover:text-destructive"

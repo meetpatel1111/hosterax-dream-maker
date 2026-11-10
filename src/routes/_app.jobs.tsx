@@ -28,6 +28,7 @@ import {
   type CronJob,
   type JobRun,
 } from "@/lib/engine";
+import { confirmAction } from "@/components/hx/confirm-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -224,7 +225,13 @@ function JobsPage() {
   }
 
   async function handleDeleteJob(job: CronJob) {
-    if (!confirm(`Are you sure you want to delete scheduled job "${job.name}"?`)) return;
+    const ok = await confirmAction({
+      title: `Delete Scheduled Job "${job.name}"`,
+      description: `Are you sure you want to delete scheduled cron job "${job.name}"? It will no longer execute automatically.`,
+      variant: "destructive",
+      confirmLabel: "Delete Job",
+    });
+    if (!ok) return;
     try {
       await eng.call("DELETE", `/api/jobs/${job.id}`);
       toast.success(`Job "${job.name}" deleted`);
