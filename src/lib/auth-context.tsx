@@ -123,14 +123,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const mounted = useRef(true);
 
   useEffect(() => {
-    mounted.current = true;
+    let active = true;
     (async () => {
-      // After an explicit sign-out we don't silently re-enter through local trust.
-      const signedOut = localStorage.getItem("hx.signed_out") === "1";
-      const s = signedOut ? null : await whoAmI(readUrl(), readToken());
-      if (mounted.current) {
-        setSession(s);
-        setLoading(false);
+      try {
+        // After an explicit sign-out we don't silently re-enter through local trust.
+        const signedOut = localStorage.getItem("hx.signed_out") === "1";
+        const s = signedOut ? null : await whoAmI(readUrl(), readToken());
+        if (active) {
+          setSession(s);
+        }
+      } catch {
+        if (active) setSession(null);
+      } finally {
+        if (active) setLoading(false);
       }
     })();
 
@@ -141,7 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     window.addEventListener("hx:unauthorized", onUnauthorized);
     return () => {
-      mounted.current = false;
+      active = false;
       window.removeEventListener("hx:unauthorized", onUnauthorized);
     };
   }, []);

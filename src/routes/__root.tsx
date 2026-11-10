@@ -13,6 +13,8 @@ import { Toaster } from "sonner";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider } from "@/lib/auth-context";
+import { ConfirmDialogProvider } from "@/components/hx/confirm-modal";
+import { appLogger, createLogEntry } from "@/utils/app-logger";
 
 function NotFoundComponent() {
   return (
@@ -47,6 +49,12 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
 
   useEffect(() => {
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
+    appLogger.log(
+      createLogEntry("system", "error", "Component Crash", errorMessage, {
+        error: String(error),
+        path: typeof window !== "undefined" ? window.location.pathname : "",
+      }),
+    );
     if (isChunkError && typeof window !== "undefined") {
       const reloadKey = "hx_chunk_reload";
       const last = sessionStorage.getItem(reloadKey);
@@ -56,7 +64,7 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
         window.location.reload();
       }
     }
-  }, [error, isChunkError]);
+  }, [error, isChunkError, errorMessage]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -137,12 +145,55 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+
+  // Automatic global UI interaction tracking
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const handleGlobalClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      const clickable = target.closest(
+        "button, a, input[type='checkbox'], select, [role='button'], [data-action]",
+      );
+      if (clickable) {
+        const text = (
+          clickable.textContent ||
+          clickable.getAttribute("aria-label") ||
+          clickable.getAttribute("title") ||
+          clickable.getAttribute("placeholder") ||
+          clickable.tagName
+        )
+          .trim()
+          .slice(0, 50);
+
+        const tag = clickable.tagName.toLowerCase();
+        appLogger.logUi(
+          `Click: <${tag}> ${text ? `"${text}"` : ""}`.trim(),
+          `User interacted with ${tag} on ${window.location.pathname}`,
+          {
+            element: tag,
+            text,
+            path: window.location.pathname,
+            id: clickable.id || undefined,
+            role: clickable.getAttribute("role") || undefined,
+          },
+        );
+      }
+    };
+
+    window.addEventListener("click", handleGlobalClick, { capture: true, passive: true });
+    return () => window.removeEventListener("click", handleGlobalClick, { capture: true });
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <Outlet />
-        <Toaster theme="dark" position="top-right" richColors />
-      </AuthProvider>
+      <ConfirmDialogProvider>
+        <AuthProvider>
+          <Outlet />
+          <Toaster theme="dark" position="top-right" richColors />
+        </AuthProvider>
+      </ConfirmDialogProvider>
     </QueryClientProvider>
   );
 }
