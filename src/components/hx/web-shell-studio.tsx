@@ -111,7 +111,7 @@ export function WebShellStudio() {
   const activeTabHistory = useMemo(() => {
     if (!activeTab) return [];
     return history.filter((h) => h.containerName === activeTab.containerName);
-  }, [history, activeTab?.containerName]);
+  }, [history, activeTab]);
 
   // Filtered audit list
   const filteredAudit = useMemo(() => {
