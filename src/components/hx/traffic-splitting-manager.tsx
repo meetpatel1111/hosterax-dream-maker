@@ -56,30 +56,45 @@ export function TrafficSplittingManager() {
     }
   }, [projects, selectedProject]);
 
-  // Live Simulated Health Probes
-  const [probes, setProbes] = useState<HealthProbeResult[]>([
-    { statusCode: 200, latencyMs: 38, timestamp: Date.now() - 4000, endpoint: "/healthz" },
-    { statusCode: 200, latencyMs: 44, timestamp: Date.now() - 3000, endpoint: "/healthz" },
-    { statusCode: 200, latencyMs: 35, timestamp: Date.now() - 2000, endpoint: "/healthz" },
-    { statusCode: 200, latencyMs: 41, timestamp: Date.now() - 1000, endpoint: "/healthz" },
-    { statusCode: 200, latencyMs: 39, timestamp: Date.now(), endpoint: "/healthz" },
-  ]);
+  // Real live health probes to the HosteraX control plane & projects
+  const [probes, setProbes] = useState<HealthProbeResult[]>([]);
 
-  // Periodic simulated probe tick
   useEffect(() => {
-    const timer = setInterval(() => {
-      setProbes((prev) => {
-        const isHealthy = Math.random() > 0.03; // 97% healthy
-        const newProbe: HealthProbeResult = {
-          statusCode: isHealthy ? 200 : 502,
-          latencyMs: isHealthy ? Math.floor(Math.random() * 30) + 30 : 650,
-          timestamp: Date.now(),
-          endpoint: "/healthz",
-        };
-        return [newProbe, ...prev.slice(0, 19)];
-      });
-    }, 4000);
-    return () => clearInterval(timer);
+    let cancelled = false;
+    const executeProbe = async () => {
+      const start = performance.now();
+      try {
+        const res = await fetch("/health");
+        const latencyMs = Math.max(1, Math.round(performance.now() - start));
+        if (!cancelled) {
+          const newProbe: HealthProbeResult = {
+            statusCode: res.status,
+            latencyMs,
+            timestamp: Date.now(),
+            endpoint: "/health",
+          };
+          setProbes((prev) => [newProbe, ...prev.slice(0, 19)]);
+        }
+      } catch {
+        if (!cancelled) {
+          const latencyMs = Math.max(1, Math.round(performance.now() - start));
+          const newProbe: HealthProbeResult = {
+            statusCode: 503,
+            latencyMs,
+            timestamp: Date.now(),
+            endpoint: "/health",
+          };
+          setProbes((prev) => [newProbe, ...prev.slice(0, 19)]);
+        }
+      }
+    };
+
+    executeProbe();
+    const timer = setInterval(executeProbe, 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, []);
 
   // Compute evaluation

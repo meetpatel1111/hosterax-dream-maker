@@ -120,16 +120,90 @@ test("evaluateSecurityPolicy blocks when critical threshold is exceeded", () => 
   assert.ok(res.violations.some((v) => v.includes("critical")));
 });
 
+const testScans: ContainerImageScan[] = [
+  {
+    id: "scan-1",
+    imageName: "caddy",
+    imageTag: "2.8-alpine",
+    containerName: "caddy_edge",
+    scannedAt: Date.now(),
+    osName: "Alpine Linux",
+    totalPackages: 18,
+    sbomPackageCount: 18,
+    grade: "A+",
+    securityScore: 100,
+    status: "passed",
+    vulnerabilities: [],
+  },
+  {
+    id: "scan-2",
+    imageName: "postgres",
+    imageTag: "16-alpine",
+    containerName: "pg_db",
+    scannedAt: Date.now(),
+    osName: "Alpine Linux",
+    totalPackages: 42,
+    sbomPackageCount: 42,
+    grade: "A",
+    securityScore: 94,
+    status: "passed",
+    vulnerabilities: [
+      {
+        id: "CVE-2024-4317",
+        packageName: "postgresql-common",
+        installedVersion: "16.3-r0",
+        fixedVersion: "16.4-r0",
+        severity: "medium",
+        score: 5.3,
+        title: "Test CVE",
+        description: "Test description",
+        cwe: "CWE-200",
+        remediation: "Upgrade",
+        publishedDate: "2024-05-09",
+      },
+    ],
+  },
+  {
+    id: "scan-3",
+    imageName: "node",
+    imageTag: "18-slim",
+    containerName: "api",
+    scannedAt: Date.now(),
+    osName: "Debian",
+    totalPackages: 80,
+    sbomPackageCount: 80,
+    grade: "B",
+    securityScore: 78,
+    status: "warning",
+    vulnerabilities: [
+      {
+        id: "CVE-2024-21626",
+        packageName: "runc",
+        installedVersion: "1.1.10",
+        fixedVersion: "1.1.11",
+        severity: "high",
+        score: 8.6,
+        title: "Test high CVE",
+        description: "Test description",
+        cwe: "CWE-403",
+        remediation: "Upgrade",
+        publishedDate: "2024-01-31",
+      },
+    ],
+  },
+];
+
 test("calculateFleetVulnerabilityStats computes accurate fleet totals", () => {
-  const stats = calculateFleetVulnerabilityStats(DEFAULT_CONTAINER_SCANS);
-  assert.equal(stats.totalScanned, DEFAULT_CONTAINER_SCANS.length);
-  assert.ok(stats.totalVulnerabilities >= 3);
-  assert.ok(stats.cleanImagesCount >= 2); // Caddy and Redis are clean
-  assert.ok(stats.high >= 1);
+  const stats = calculateFleetVulnerabilityStats(testScans);
+  assert.equal(stats.totalScanned, 3);
+  assert.equal(stats.totalVulnerabilities, 2);
+  assert.equal(stats.cleanImagesCount, 1);
+  assert.equal(stats.high, 1);
+  assert.equal(stats.medium, 1);
 });
 
 test("generateCycloneDxSbom generates valid CycloneDX 1.5 JSON", () => {
-  const scan = DEFAULT_CONTAINER_SCANS[1]; // Postgres
+  const scan = testScans[1]; // Postgres
   const sbomRaw = generateCycloneDxSbom(scan);
   assert.ok(sbomRaw.length > 50);
 
@@ -142,8 +216,8 @@ test("generateCycloneDxSbom generates valid CycloneDX 1.5 JSON", () => {
   assert.equal(parsed.vulnerabilities[0].id, "CVE-2024-4317");
 });
 
-test("DEFAULT_CONTAINER_SCANS and DEFAULT_SECURITY_POLICY are valid", () => {
-  assert.ok(DEFAULT_CONTAINER_SCANS.length >= 4);
+test("DEFAULT_CONTAINER_SCANS is an initialized array and DEFAULT_SECURITY_POLICY is valid", () => {
+  assert.ok(Array.isArray(DEFAULT_CONTAINER_SCANS));
   assert.ok(DEFAULT_SECURITY_POLICY.id.length > 0);
   assert.equal(DEFAULT_SECURITY_POLICY.maxAllowedCritical, 0);
   assert.equal(DEFAULT_SECURITY_POLICY.disallowRootUser, true);

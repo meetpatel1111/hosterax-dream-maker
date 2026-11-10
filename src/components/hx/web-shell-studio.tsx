@@ -63,83 +63,32 @@ export function WebShellStudio() {
       });
     }
 
-    // Default container options if Docker API is still polling
-    return [
-      {
-        id: "c-edge",
-        name: "hx_edge",
-        image: "caddy:2.8-alpine",
-        category: "edge" as const,
-        state: "running",
-        ports: [80, 443],
-      },
-      {
-        id: "c-engine",
-        name: "hosterax-engine",
-        image: "hosterax/engine:latest",
-        category: "system" as const,
-        state: "running",
-        ports: [7777],
-      },
-      {
-        id: "c-postgres",
-        name: "hx_postgres_cluster",
-        image: "postgres:16-alpine",
-        category: "database" as const,
-        state: "running",
-        ports: [5432],
-      },
-      {
-        id: "c-redis",
-        name: "hx_redis_cache",
-        image: "redis:7-alpine",
-        category: "database" as const,
-        state: "running",
-        ports: [6379],
-      },
-    ];
+    // Only real containers returned by Docker API
+    return [];
   }, [containers]);
 
   // Terminal Tabs
-  const [tabs, setTabs] = useState<TerminalTab[]>([
-    { id: "tab-1", title: "Edge Gateway", containerName: "hx_edge", shell: "sh", active: true },
-    {
-      id: "tab-2",
-      title: "PostgreSQL",
-      containerName: "hx_postgres_cluster",
-      shell: "psql",
-      active: false,
-    },
-    {
-      id: "tab-3",
-      title: "Redis Cache",
-      containerName: "hx_redis_cache",
-      shell: "redis-cli",
-      active: false,
-    },
-  ]);
+  const [tabs, setTabs] = useState<TerminalTab[]>([]);
+
+  useEffect(() => {
+    if (tabs.length === 0 && containerOptions.length > 0) {
+      const first = containerOptions[0];
+      setTabs([
+        {
+          id: `tab-${first.id}`,
+          title: first.name,
+          containerName: first.name,
+          shell: "sh",
+          active: true,
+        },
+      ]);
+    }
+  }, [containerOptions, tabs.length]);
 
   const activeTab = useMemo(() => tabs.find((t) => t.active) || tabs[0], [tabs]);
 
   // Terminal history state per session
-  const [history, setHistory] = useState<TerminalHistoryItem[]>([
-    {
-      id: "hist-init-1",
-      containerName: "hx_edge",
-      command: "caddy version",
-      output: "v2.8.4 h1:gzqpnj12w0u/7bB0UeI0eJ",
-      exitCode: 0,
-      timestamp: Date.now() - 60000,
-    },
-    {
-      id: "hist-init-2",
-      containerName: "hx_postgres_cluster",
-      command: "pg_isready -h 127.0.0.1",
-      output: "127.0.0.1:5432 - accepting connections",
-      exitCode: 0,
-      timestamp: Date.now() - 30000,
-    },
-  ]);
+  const [history, setHistory] = useState<TerminalHistoryItem[]>([]);
 
   // Command input & terminal UI state
   const [cmdInput, setCmdInput] = useState("");
@@ -160,8 +109,9 @@ export function WebShellStudio() {
 
   // Filtered history for the active tab
   const activeTabHistory = useMemo(() => {
+    if (!activeTab) return [];
     return history.filter((h) => h.containerName === activeTab.containerName);
-  }, [history, activeTab.containerName]);
+  }, [history, activeTab?.containerName]);
 
   // Filtered audit list
   const filteredAudit = useMemo(() => {
@@ -231,24 +181,10 @@ export function WebShellStudio() {
         exitCode = res.exitCode;
         outputText = res.output;
       } catch (err: any) {
-        // Fallback simulation for offline/preview environments
-        if (cmd === "df -h") {
-          outputText =
-            "Filesystem      Size  Used Avail Use% Mounted on\n/dev/sda1        80G   14G   63G  18% /\ntmpfs           3.9G     0  3.9G   0% /dev/shm\n/dev/sdb1       200G   42G  148G  23% /var/lib/docker/volumes";
-        } else if (cmd === "free -m") {
-          outputText =
-            "               total        used        free      shared  buff/cache   available\nMem:            7982        2140        4312         124        1530        5418\nSwap:           2047           0        2047";
-        } else if (cmd.includes("psql") || cmd.includes("pg_isready")) {
-          outputText =
-            "127.0.0.1:5432 - accepting connections\nPostgreSQL 16.2 on x86_64-alpine-linux";
-        } else if (cmd.includes("redis-cli")) {
-          outputText = "PONG\nused_memory_human:42.15M\nconnected_clients:8";
-        } else if (cmd.includes("caddy")) {
-          outputText =
-            "2026/11/09 11:42:00.120 INFO configuration file is valid\n2026/11/09 11:42:00.121 INFO edge proxy healthy";
-        } else {
-          outputText = err?.message || `Executed: ${cmd} (Exit Code: 0)`;
-        }
+        exitCode = 1;
+        outputText =
+          err?.message ||
+          `Error: failed to execute "${cmd}" on container ${activeTab?.containerName || "unknown"}`;
       }
 
       const durationMs = Date.now() - startMs;
@@ -301,6 +237,7 @@ export function WebShellStudio() {
 
   // Clear Terminal Output
   const handleClearTerminal = () => {
+    if (!activeTab) return;
     setHistory((prev) => prev.filter((h) => h.containerName !== activeTab.containerName));
     toast.success("Terminal output cleared.");
   };
@@ -415,20 +352,24 @@ export function WebShellStudio() {
           </div>
 
           {/* Active Container Metadata & Clear Button */}
-          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              <Server className="h-3.5 w-3.5 text-primary" />
-              <span>Container:</span>
-              <strong className="text-foreground">{activeTab.containerName}</strong>
+          {activeTab ? (
+            <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <Server className="h-3.5 w-3.5 text-primary" />
+                <span>Container:</span>
+                <strong className="text-foreground">{activeTab.containerName}</strong>
+              </div>
+              <button
+                onClick={handleClearTerminal}
+                className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+                title="Clear terminal output buffer"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Clear
+              </button>
             </div>
-            <button
-              onClick={handleClearTerminal}
-              className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
-              title="Clear terminal output buffer"
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Clear
-            </button>
-          </div>
+          ) : (
+            <div className="text-[11px] text-muted-foreground">No active session</div>
+          )}
         </div>
 
         {/* Curated Runbook Snippets Shelf */}
@@ -440,7 +381,8 @@ export function WebShellStudio() {
             <button
               key={snippet.id}
               onClick={() => handleRunCommand(snippet.command)}
-              className="inline-flex items-center gap-1 rounded bg-[#1c1e27] hover:bg-primary/20 hover:text-primary px-2.5 py-1 text-[11px] text-muted-foreground border border-border/50 shrink-0 transition-colors"
+              disabled={!activeTab}
+              className="inline-flex items-center gap-1 rounded bg-[#1c1e27] hover:bg-primary/20 hover:text-primary px-2.5 py-1 text-[11px] text-muted-foreground border border-border/50 shrink-0 transition-colors disabled:opacity-40"
               title={`${snippet.description} (${snippet.command})`}
             >
               <Play className="h-2.5 w-2.5 opacity-70" />
@@ -449,73 +391,93 @@ export function WebShellStudio() {
           ))}
         </div>
 
-        {/* Terminal Output Area */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs text-[#d1d5db] font-mono leading-relaxed max-h-[460px]">
-          {/* Welcome Message */}
-          <div className="text-muted-foreground/80 space-y-1 text-[11px] border-b border-border/30 pb-3">
-            <div>HosteraX Container Terminal Studio · Session Connected</div>
-            <div>
-              Target: <span className="text-emerald-400 font-bold">{activeTab.containerName}</span>{" "}
-              · Architecture: x86_64 Linux
+        {!activeTab ? (
+          <div className="p-16 text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-[#1c1e27] border border-border flex items-center justify-center mx-auto text-muted-foreground">
+              <TerminalIcon className="w-6 h-6 text-primary/70" />
             </div>
-            <div>Type any command or use the quick runbooks above. Press Up/Down for history.</div>
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-foreground">No active containers found</h3>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                No running containers detected. Deploy an application or start a database to launch
+                an interactive shell session.
+              </p>
+            </div>
           </div>
-
-          {/* Execution History */}
-          {activeTabHistory.map((item) => (
-            <div key={item.id} className="space-y-1">
-              {/* Command Prompt Line */}
-              <div className="flex items-center gap-2 text-foreground font-semibold">
-                <span className="text-emerald-400">{activeTab.containerName}</span>
-                <span className="text-muted-foreground">$</span>
-                <span className="text-sky-300">{item.command}</span>
-                <span
-                  className={`ml-auto text-[10px] font-mono px-1.5 py-0.2 rounded ${
-                    item.exitCode === 0
-                      ? "text-emerald-400 bg-emerald-500/10"
-                      : "text-destructive bg-destructive/10"
-                  }`}
-                >
-                  Exit: {item.exitCode} {item.durationMs ? `(${item.durationMs}ms)` : ""}
-                </span>
+        ) : (
+          <>
+            {/* Terminal Output Area */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 text-xs text-[#d1d5db] font-mono leading-relaxed max-h-[460px]">
+              {/* Welcome Message */}
+              <div className="text-muted-foreground/80 space-y-1 text-[11px] border-b border-border/30 pb-3">
+                <div>HosteraX Container Terminal Studio · Session Connected</div>
+                <div>
+                  Target:{" "}
+                  <span className="text-emerald-400 font-bold">{activeTab.containerName}</span> ·
+                  Architecture: x86_64 Linux
+                </div>
+                <div>
+                  Type any command or use the quick runbooks above. Press Up/Down for history.
+                </div>
               </div>
 
-              {/* Formatted Output */}
-              <pre className="whitespace-pre-wrap text-muted-foreground/90 font-mono text-[11px] pl-4 border-l border-border/40 py-0.5">
-                {stripAnsiCodes(item.output)}
-              </pre>
+              {/* Execution History */}
+              {activeTabHistory.map((item) => (
+                <div key={item.id} className="space-y-1">
+                  {/* Command Prompt Line */}
+                  <div className="flex items-center gap-2 text-foreground font-semibold">
+                    <span className="text-emerald-400">{activeTab.containerName}</span>
+                    <span className="text-muted-foreground">$</span>
+                    <span className="text-sky-300">{item.command}</span>
+                    <span
+                      className={`ml-auto text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                        item.exitCode === 0
+                          ? "text-emerald-400 bg-emerald-500/10"
+                          : "text-destructive bg-destructive/10"
+                      }`}
+                    >
+                      Exit: {item.exitCode} {item.durationMs ? `(${item.durationMs}ms)` : ""}
+                    </span>
+                  </div>
+
+                  {/* Formatted Output */}
+                  <pre className="whitespace-pre-wrap text-muted-foreground/90 font-mono text-[11px] pl-4 border-l border-border/40 py-0.5">
+                    {stripAnsiCodes(item.output)}
+                  </pre>
+                </div>
+              ))}
+
+              <div ref={terminalEndRef} />
             </div>
-          ))}
 
-          <div ref={terminalEndRef} />
-        </div>
-
-        {/* Live Terminal Input Prompt */}
-        <div className="border-t border-border/80 bg-[#14151b] px-4 py-3 flex items-center gap-2">
-          <span className="text-emerald-400 font-bold text-xs select-none">
-            {activeTab.containerName}
-          </span>
-          <span className="text-muted-foreground font-bold select-none">$</span>
-          <input
-            ref={inputRef}
-            type="text"
-            value={cmdInput}
-            onChange={(e) => setCmdInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isExecuting}
-            placeholder="Type a shell command (e.g. ls -la, curl localhost:80, df -h)..."
-            className="flex-1 bg-transparent text-xs text-foreground outline-none font-mono placeholder:text-muted-foreground/40"
-            autoFocus
-          />
-          <button
-            disabled={isExecuting || !cmdInput.trim()}
-            onClick={() => handleRunCommand()}
-            className="inline-flex items-center gap-1 rounded bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 px-3 py-1 text-xs font-semibold disabled:opacity-40 transition-colors"
-          >
-            <CornerDownLeft className="h-3 w-3" />
-            <span>Run</span>
-          </button>
-        </div>
+            {/* Live Terminal Input Prompt */}
+            <div className="border-t border-border/80 bg-[#14151b] px-4 py-3 flex items-center gap-2">
+              <span className="text-emerald-400 font-bold text-xs select-none">
+                {activeTab.containerName}
+              </span>
+              <span className="text-muted-foreground font-bold select-none">$</span>
+              <input
+                ref={inputRef}
+                type="text"
+                value={cmdInput}
+                onChange={(e) => setCmdInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                disabled={isExecuting}
+                placeholder="Type a shell command (e.g. ls -la, curl localhost:80, df -h)..."
+                className="flex-1 bg-transparent text-xs text-foreground outline-none font-mono placeholder:text-muted-foreground/40"
+                autoFocus
+              />
+              <button
+                disabled={isExecuting || !cmdInput.trim()}
+                onClick={() => handleRunCommand()}
+                className="inline-flex items-center gap-1 rounded bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 px-3 py-1 text-xs font-semibold disabled:opacity-40 transition-colors"
+              >
+                <CornerDownLeft className="h-3 w-3" />
+                <span>Run</span>
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Modal: Open Session in Another Container */}

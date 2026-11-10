@@ -42,55 +42,8 @@ export function PreviewEnvironmentsManager() {
   const projects = useMemo(() => projectsQuery.data || [], [projectsQuery.data]);
   const rawPreviews = useMemo(() => previewsQuery.data || [], [previewsQuery.data]);
 
-  // Demo fallback / seed previews so the user immediately experiences the rich UI
-  // even before connecting a GitHub webhook repo.
-  const [localEphemeralPreviews, setLocalEphemeralPreviews] = useState<PRPreview[]>([
-    {
-      id: "prev-demo-1",
-      project_name: "hosterax-dashboard",
-      pr_number: 142,
-      pr_title: "Add dark-mode syntax highlighting for SQL workbench",
-      branch: "feat/sql-highlighter",
-      commit_sha: "4f8a19d2e7b3",
-      subdomain: "pr-142-feat-sql-highlighter",
-      preview_url: "https://pr-142-sql.preview.hosterax.net",
-      container_name: "hx_preview_dashboard_pr142",
-      port: 3000,
-      status: "live",
-      created_at: Date.now() - 4200000,
-      updated_at: Date.now() - 1200000,
-    },
-    {
-      id: "prev-demo-2",
-      project_name: "api-backend",
-      pr_number: 89,
-      pr_title: "Stripe billing webhook and customer portal integration",
-      branch: "feat/stripe-webhooks",
-      commit_sha: "b7e2c91a03f4",
-      subdomain: "pr-89-feat-stripe-webhooks",
-      preview_url: "https://pr-89-stripe.preview.hosterax.net",
-      container_name: "hx_preview_api_pr89",
-      port: 8080,
-      status: "stopped",
-      created_at: Date.now() - 86400000,
-      updated_at: Date.now() - 7200000,
-    },
-    {
-      id: "prev-demo-3",
-      project_name: "analytics-engine",
-      pr_number: 24,
-      pr_title: "Kafka clickstream consumer throughput optimization",
-      branch: "perf/kafka-consumer",
-      commit_sha: "93d8a21f5e6b",
-      subdomain: "pr-24-perf-kafka-consumer",
-      preview_url: "https://pr-24-kafka.preview.hosterax.net",
-      container_name: "hx_preview_analytics_pr24",
-      port: 9092,
-      status: "deploying",
-      created_at: Date.now() - 90000,
-      updated_at: Date.now() - 90000,
-    },
-  ]);
+  // Only real previews tracked by engine or launched in current session
+  const [localEphemeralPreviews, setLocalEphemeralPreviews] = useState<PRPreview[]>([]);
 
   // Combined fleet
   const allPreviews = useMemo(() => {

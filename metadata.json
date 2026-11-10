@@ -2,7 +2,5 @@
   "name": "HosteraX",
   "description": "Push-to-deploy from any git repo. Auto-detects stack, provisions SSL, and manages databases on your own infrastructure.",
   "permissions": [],
-  "capabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

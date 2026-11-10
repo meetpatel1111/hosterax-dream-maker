@@ -75,7 +75,7 @@ export function SecretsVaultManager() {
     } catch {
       // fallback
     }
-    return PRESET_SECRET_GROUPS;
+    return [];
   });
 
   const saveGroups = (updated: SecretGroup[]) => {
@@ -348,62 +348,84 @@ export function SecretsVaultManager() {
           </div>
 
           <div className="space-y-2.5">
-            {filteredGroups.map((grp) => {
-              const isSelected = grp.id === selectedGroupId;
-              const envMeta = ENV_COLORS[grp.environment] || ENV_COLORS.global;
-              const secretCount = grp.secrets.filter((s) => s.isSecret).length;
-
-              return (
-                <div
-                  key={grp.id}
-                  onClick={() => setSelectedGroupId(grp.id)}
-                  className={`p-3.5 rounded-xl border transition-all cursor-pointer relative ${
-                    isSelected
-                      ? "bg-card border-primary shadow-md ring-1 ring-primary/40"
-                      : "bg-card/50 border-border hover:bg-card hover:border-border/80"
-                  }`}
+            {filteredGroups.length === 0 ? (
+              <div className="p-8 rounded-xl border border-dashed border-border/80 bg-card/40 text-center space-y-3">
+                <div className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center mx-auto text-muted-foreground">
+                  <KeyRound className="w-5 h-5 opacity-60" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs font-semibold text-foreground">No secret groups found</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Create a group or import a .env file to organize encrypted secrets.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCreateGroupModalOpen(true)}
+                  className="px-3 py-1.5 text-xs font-medium rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-all inline-flex items-center gap-1.5"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-bold text-sm text-foreground">{grp.name}</h4>
-                        <span
-                          className={`text-[9px] uppercase font-bold px-1.5 py-0.2 rounded ${envMeta.bg} ${envMeta.text}`}
-                        >
-                          {grp.environment}
-                        </span>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>New Group</span>
+                </button>
+              </div>
+            ) : (
+              filteredGroups.map((grp) => {
+                const isSelected = grp.id === selectedGroupId;
+                const envMeta = ENV_COLORS[grp.environment] || ENV_COLORS.global;
+                const secretCount = grp.secrets.filter((s) => s.isSecret).length;
+
+                return (
+                  <div
+                    key={grp.id}
+                    onClick={() => setSelectedGroupId(grp.id)}
+                    className={`p-3.5 rounded-xl border transition-all cursor-pointer relative ${
+                      isSelected
+                        ? "bg-card border-primary shadow-md ring-1 ring-primary/40"
+                        : "bg-card/50 border-border hover:bg-card hover:border-border/80"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-bold text-sm text-foreground">{grp.name}</h4>
+                          <span
+                            className={`text-[9px] uppercase font-bold px-1.5 py-0.2 rounded ${envMeta.bg} ${envMeta.text}`}
+                          >
+                            {grp.environment}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
+                          {grp.description}
+                        </p>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
-                        {grp.description}
-                      </p>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteGroup(grp.id);
+                        }}
+                        className="text-muted-foreground/60 hover:text-rose-400 p-1 rounded hover:bg-rose-500/10 transition-all"
+                        title="Delete group"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteGroup(grp.id);
-                      }}
-                      className="text-muted-foreground/60 hover:text-rose-400 p-1 rounded hover:bg-rose-500/10 transition-all"
-                      title="Delete group"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    <div className="mt-3 pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
+                      <span className="font-mono text-[11px]">
+                        {grp.secrets.length} vars ({secretCount} locked)
+                      </span>
+                      <span className="text-[11px] flex items-center gap-1 text-primary font-medium">
+                        <FolderSync className="w-3 h-3" />
+                        {grp.attachedProjects.length} project
+                        {grp.attachedProjects.length !== 1 ? "s" : ""}
+                      </span>
+                    </div>
                   </div>
-
-                  <div className="mt-3 pt-2 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
-                    <span className="font-mono text-[11px]">
-                      {grp.secrets.length} vars ({secretCount} locked)
-                    </span>
-                    <span className="text-[11px] flex items-center gap-1 text-primary font-medium">
-                      <FolderSync className="w-3 h-3" />
-                      {grp.attachedProjects.length} project
-                      {grp.attachedProjects.length !== 1 ? "s" : ""}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </div>
 

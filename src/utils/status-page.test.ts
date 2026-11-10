@@ -14,34 +14,73 @@ import {
   type Incident,
 } from "./status-page";
 
+const testFixtureComp1: MonitoredComponent = {
+  id: "comp-edge",
+  name: "Edge Gateway & Reverse Proxy",
+  description: "Caddy TLS proxy",
+  group: "Edge & Ingress",
+  status: "operational",
+  probe: {
+    id: "prb-edge",
+    name: "Edge HTTP",
+    target: "http://127.0.0.1:80/health",
+    type: "http",
+    intervalSeconds: 15,
+    timeoutMs: 2000,
+    expectedStatus: 200,
+    enabled: true,
+  },
+  uptime90d: 99.99,
+  recentResults: [{ timestamp: Date.now(), latencyMs: 4, success: true, statusCode: 200 }],
+};
+
+const testFixtureComp2: MonitoredComponent = {
+  id: "comp-postgres",
+  name: "Primary PostgreSQL Cluster",
+  description: "Database cluster",
+  group: "Storage & Databases",
+  status: "operational",
+  probe: {
+    id: "prb-pg",
+    name: "PG TCP",
+    target: "127.0.0.1:5432",
+    type: "tcp",
+    intervalSeconds: 30,
+    timeoutMs: 3000,
+    enabled: true,
+  },
+  uptime90d: 99.98,
+  recentResults: [{ timestamp: Date.now(), latencyMs: 2, success: true }],
+};
+
 test("calculateOverallSystemStatus determines worst-case status accurately", () => {
   const allHealthy: MonitoredComponent[] = [
-    { ...DEFAULT_MONITORED_COMPONENTS[0], status: "operational" },
-    { ...DEFAULT_MONITORED_COMPONENTS[1], status: "operational" },
+    { ...testFixtureComp1, status: "operational" },
+    { ...testFixtureComp2, status: "operational" },
   ];
   assert.equal(calculateOverallSystemStatus(allHealthy), "operational");
 
   const withDegraded: MonitoredComponent[] = [
-    { ...DEFAULT_MONITORED_COMPONENTS[0], status: "operational" },
-    { ...DEFAULT_MONITORED_COMPONENTS[1], status: "degraded_performance" },
+    { ...testFixtureComp1, status: "operational" },
+    { ...testFixtureComp2, status: "degraded_performance" },
   ];
   assert.equal(calculateOverallSystemStatus(withDegraded), "degraded_performance");
 
   const withPartial: MonitoredComponent[] = [
-    { ...DEFAULT_MONITORED_COMPONENTS[0], status: "degraded_performance" },
-    { ...DEFAULT_MONITORED_COMPONENTS[1], status: "partial_outage" },
+    { ...testFixtureComp1, status: "degraded_performance" },
+    { ...testFixtureComp2, status: "partial_outage" },
   ];
   assert.equal(calculateOverallSystemStatus(withPartial), "partial_outage");
 
   const withMajor: MonitoredComponent[] = [
-    { ...DEFAULT_MONITORED_COMPONENTS[0], status: "partial_outage" },
-    { ...DEFAULT_MONITORED_COMPONENTS[1], status: "major_outage" },
+    { ...testFixtureComp1, status: "partial_outage" },
+    { ...testFixtureComp2, status: "major_outage" },
   ];
   assert.equal(calculateOverallSystemStatus(withMajor), "major_outage");
 
   const withMaintenance: MonitoredComponent[] = [
-    { ...DEFAULT_MONITORED_COMPONENTS[0], status: "operational" },
-    { ...DEFAULT_MONITORED_COMPONENTS[1], status: "under_maintenance" },
+    { ...testFixtureComp1, status: "operational" },
+    { ...testFixtureComp2, status: "under_maintenance" },
   ];
   assert.equal(calculateOverallSystemStatus(withMaintenance), "under_maintenance");
 });
@@ -124,7 +163,7 @@ test("generatePostMortemMarkdown generates structured Markdown report", () => {
     ],
   };
 
-  const md = generatePostMortemMarkdown(incident, DEFAULT_MONITORED_COMPONENTS);
+  const md = generatePostMortemMarkdown(incident, [testFixtureComp1, testFixtureComp2]);
   assert.ok(md.includes("Incident Post-Mortem: Database Connection Pool Exhaustion"));
   assert.ok(md.includes("MAJOR"));
   assert.ok(md.includes("Primary PostgreSQL Cluster"));
@@ -138,13 +177,6 @@ test("generateStatusBadgeMarkdown produces valid Shields.io link", () => {
   assert.ok(badge.includes("https://status.hosterax.io/status"));
 });
 
-test("DEFAULT_MONITORED_COMPONENTS all have valid probe configurations", () => {
-  assert.ok(DEFAULT_MONITORED_COMPONENTS.length >= 5);
-  for (const comp of DEFAULT_MONITORED_COMPONENTS) {
-    assert.ok(comp.id.length > 0);
-    assert.ok(comp.name.length > 0);
-    assert.ok(comp.probe.target.length > 0);
-    assert.ok(comp.probe.intervalSeconds > 0);
-    assert.ok(comp.recentResults.length > 0);
-  }
+test("DEFAULT_MONITORED_COMPONENTS is initialized as clean array for dynamic engine telemetry", () => {
+  assert.ok(Array.isArray(DEFAULT_MONITORED_COMPONENTS));
 });
