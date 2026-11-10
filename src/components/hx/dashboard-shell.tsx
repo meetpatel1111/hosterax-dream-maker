@@ -44,6 +44,9 @@ import { cn } from "@/lib/utils";
 const AICopilot = lazy(() =>
   import("./ai-copilot").then((module) => ({ default: module.AICopilot })),
 );
+const LiveActivityInspector = lazy(() =>
+  import("./live-activity-inspector").then((module) => ({ default: module.LiveActivityInspector })),
+);
 
 const NAV = [
   { to: "/dashboard", key: "projects" as const, label: "Projects", icon: LayoutGrid },
@@ -83,6 +86,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [copilotLoaded, setCopilotLoaded] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
+  const [activityInspectorOpen, setActivityInspectorOpen] = useState(false);
   const { t, language, setLanguage, isRtl } = useTranslation();
 
   useEffect(() => {
@@ -113,6 +117,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
     };
     window.addEventListener("keydown", toggleCopilot);
     return () => window.removeEventListener("keydown", toggleCopilot);
+  }, []);
+
+  useEffect(() => {
+    const handleOpenTelemetry = () => setActivityInspectorOpen(true);
+    window.addEventListener("hx:open-telemetry", handleOpenTelemetry);
+    return () => window.removeEventListener("hx:open-telemetry", handleOpenTelemetry);
   }, []);
 
   const currentOrg = orgs.find((o) => (activeOrgId ? o.id === activeOrgId : true)) || orgs[0];
@@ -251,6 +261,18 @@ export function DashboardShell({ children }: { children: ReactNode }) {
             </div>
           </div>
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            <button
+              type="button"
+              onClick={() => setActivityInspectorOpen(true)}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono font-medium border border-border/60 bg-card hover:bg-muted/80 text-foreground transition-colors cursor-pointer"
+              title="Open Live API & UI Telemetry Stream (Shift+L)"
+            >
+              <Activity className="h-3.5 w-3.5 text-primary animate-pulse" />
+              <span className="hidden sm:inline">Telemetry & Logs</span>
+              <span className="hidden md:inline text-[10px] text-muted-foreground font-mono">
+                ⇧L
+              </span>
+            </button>
             <span className="hidden items-center gap-1.5 md:inline-flex">
               <span className="h-1.5 w-1.5 rounded-full bg-lime-400 animate-pulse" />
               {t("systemHealthy", "Control plane · connected")}
@@ -321,6 +343,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           <AICopilot open={copilotOpen} onOpenChange={setCopilotOpen} />
         </Suspense>
       )}
+      <Suspense fallback={null}>
+        <LiveActivityInspector
+          open={activityInspectorOpen}
+          onOpenChange={setActivityInspectorOpen}
+        />
+      </Suspense>
     </div>
   );
 }
