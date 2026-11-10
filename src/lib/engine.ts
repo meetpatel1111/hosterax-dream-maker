@@ -1,6 +1,8 @@
 import { useSyncExternalStore, useCallback, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { FALLBACK_ENGINE_URL, defaultEngineUrl } from "./engine-url";
+import { appLogger } from "../utils/app-logger";
 export * from "./schema";
 
 type EngineState = { url: string; token: string };
@@ -67,14 +69,33 @@ export function useEngine() {
       body?: unknown,
       options?: EngineRequestOptions,
     ): Promise<T> => {
+      const startTime = performance.now();
       const headers: Record<string, string> = { "content-type": "application/json" };
       if (token) headers.authorization = "Bearer " + token;
-      const r = await fetch(url + path, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-        signal: options?.signal,
-      });
+
+      let r: Response;
+      try {
+        r = await fetch(url + path, {
+          method,
+          headers,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: options?.signal,
+        });
+      } catch (networkErr: any) {
+        const durationMs = performance.now() - startTime;
+        if (networkErr?.name !== "AbortError") {
+          appLogger.logApi(method, path, 0, durationMs, {
+            error: networkErr?.message || "Network error",
+            requestBody: body,
+          });
+          toast.error(`Network Error [${method.toUpperCase()} ${path}]`, {
+            description: networkErr?.message || "Could not connect to engine daemon.",
+          });
+        }
+        throw networkErr;
+      }
+
+      const durationMs = performance.now() - startTime;
 
       if (r.status === 401) notifyUnauthorized();
 
@@ -85,12 +106,40 @@ export function useEngine() {
         } catch {
           err = await r.text();
         }
-        throw new Error(
-          err?.error || (typeof err === "string" ? err : "") || `Engine error ${r.status}`,
-        );
+        const errMessage =
+          err?.error || (typeof err === "string" ? err : "") || `Engine error ${r.status}`;
+
+        appLogger.logApi(method, path, r.status, durationMs, {
+          error: errMessage,
+          requestBody: body,
+          statusText: r.statusText,
+        });
+
+        // Only show toaster for client mutations or unexpected server errors
+        if (method !== "GET" || r.status >= 500) {
+          toast.error(`API Error ${r.status}: ${method.toUpperCase()} ${path}`, {
+            description: errMessage,
+          });
+        }
+
+        throw new Error(errMessage);
       }
-      if (r.status === 204) return undefined as T;
-      return r.json();
+
+      let data: any;
+      if (r.status !== 204) {
+        data = await r.json();
+      }
+
+      appLogger.logApi(method, path, r.status, durationMs, {
+        requestBody: body,
+        responseSnippet: data
+          ? Array.isArray(data)
+            ? `Array(${data.length})`
+            : typeof data
+          : null,
+      });
+
+      return data as T;
     },
     [url, token],
   );
@@ -98,12 +147,47 @@ export function useEngine() {
   /** Uploads a binary body (e.g. a project archive) with the same auth the JSON calls use. */
   const upload = useCallback(
     async <T>(path: string, body: Blob, contentType = "application/octet-stream"): Promise<T> => {
+      const startTime = performance.now();
       const headers: Record<string, string> = { "content-type": contentType };
       if (token) headers.authorization = "Bearer " + token;
-      const r = await fetch(url + path, { method: "POST", headers, body });
+
+      let r: Response;
+      try {
+        r = await fetch(url + path, { method: "POST", headers, body });
+      } catch (networkErr: any) {
+        const durationMs = performance.now() - startTime;
+        appLogger.logApi("POST", path, 0, durationMs, {
+          error: networkErr?.message || "Upload network failure",
+          uploadSize: body.size,
+        });
+        toast.error(`Upload Failed: POST ${path}`, {
+          description: networkErr?.message || "Connection lost during archive upload.",
+        });
+        throw networkErr;
+      }
+
+      const durationMs = performance.now() - startTime;
       if (r.status === 401) notifyUnauthorized();
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data?.error || `Upload failed (${r.status})`);
+
+      if (!r.ok) {
+        const errMsg = data?.error || `Upload failed (${r.status})`;
+        appLogger.logApi("POST", path, r.status, durationMs, {
+          error: errMsg,
+          uploadSize: body.size,
+        });
+        toast.error(`Upload Error (${r.status})`, { description: errMsg });
+        throw new Error(errMsg);
+      }
+
+      appLogger.logApi("POST", path, r.status, durationMs, {
+        uploadSize: body.size,
+        success: true,
+      });
+      toast.success("Archive upload succeeded", {
+        description: `Transferred ${(body.size / 1024).toFixed(1)} KB in ${Math.round(durationMs)}ms`,
+      });
+
       return data as T;
     },
     [url, token],
