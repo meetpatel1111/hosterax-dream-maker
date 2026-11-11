@@ -52,6 +52,73 @@ Please factor these into your threat model:
 - **Restoring a database is destructive.** A PostgreSQL restore drops and recreates every database in the cluster, a Redis restore replaces its data, and a restore that fails part-way can leave the database changed. Take a fresh backup first; the restore drill proves a backup can be restored without touching the live database.
 - **Not implemented:** an inbound mail server and an OAuth provider; an agent for servers that cannot accept inbound SSH; a per-server edge proxy.
 
+## 🧭 Threat Model
+
+Scope: `meetpatel1111/hosterax-dream-maker` (default branch). Builds on the Security Architecture Highlights and Known limitations above, `ARCHITECTURE.md`, and the engine code. No separate infrastructure repository: HosteraX is self-hosted software, deployed by each operator (`Dockerfile`, `npx hosterax`, desktop app).
+
+### System overview and trust boundaries
+
+HosteraX is a self-hosted control plane (Coolify/Dokku-style). One Node engine process holds the Docker socket (root-equivalent on the host) and SSH keys to remote servers, and serves the API, MCP endpoint and dashboard on port 7777.
+
+Trust boundaries:
+
+1. **Network → engine (port 7777)**: unauthenticated internet/LAN callers vs. token/session holders. Engine has no TLS of its own (SECURITY.md).
+2. **Loopback implicit trust**: requests from the engine's own machine, over loopback, with a loopback `Host`, trusted `Origin` and no proxy headers get `["*"]` without a token (`isTrustedLocalRequest`, `hosterax/engine/src/security.mjs`). `HOSTERAX_REQUIRE_AUTH=1` disables it.
+3. **Role/scope tiers**: `read` < `deploy` < `admin` (roles viewer/developer/admin/owner, `accounts.mjs`), enforced by `requiredLevel` + `ADMIN_ONLY`/`SECRET_READS` and per MCP tool.
+4. **Engine → Docker daemon / remote servers**: anyone who can deploy can run containers (root on host); remote servers via SSH + `docker system dial-stdio`.
+5. **Deployed apps (tenants) ↔ engine/edge**: user workloads run as containers or processes on the same host, published on `HOSTERAX_BIND_HOST` (default `0.0.0.0`), routed by the edge proxy and the engine's magic-DNS proxy.
+6. **External inputs**: GitHub webhooks (HMAC), OIDC IdP, git repos/images being built, AI providers, app catalog data.
+
+### Components
+
+| Component               | Code                                                                                                                                                                                                           | Notes                                                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **Engine API**          | `hosterax/engine/src/index.mjs`, `projects-api.mjs`, `catalog-api.mjs`, `security.mjs`                                                                                                                         | HTTP router, auth, scopes, deployments, magic-DNS proxy, webhooks                                               |
+| **Auth & Accounts**     | `accounts.mjs`, `oidc.mjs`, `totp.mjs`, `secrets.mjs`                                                                                                                                                          | users, sessions (`hxs_`), API tokens (`hxt_`, SHA-256), scrypt, TOTP, OIDC PKCE, AES-256-GCM secrets            |
+| **MCP & AI Ops**        | `mcp-server.mjs`, `ai-ops.mjs`, `self-heal.mjs`                                                                                                                                                                | 46 tools gated by scope, signed confirmation tickets for destructive actions, AI copilot/auto-fix, self-healing |
+| **Deploy & Docker**     | `docker-api.mjs`, `docker-scope.mjs`, `dockerfile-generator.mjs`, `image-resolver.mjs`, `safe-exec.mjs`, `process-tree.mjs`, `cron-manager.mjs`, `scale-to-zero.mjs`, `stack-registry*.mjs`, `gpu-manager.mjs` | builds, containers, processes, jobs                                                                             |
+| **Edge & Networking**   | `edge-manager.mjs`, `tls-manager.mjs`, `domain-utils.mjs`, `gate-manager.mjs`, `tunnel-manager.mjs`, `port-check.mjs`                                                                                          | Caddy/OpenResty `hx_edge` (host network), certbot, password gate, public tunnels                                |
+| **Remote Servers**      | `server-manager.mjs`, `ssh-transport.mjs`, `ssh-bridge-worker.mjs`                                                                                                                                             | SSH key login, pinned host keys                                                                                 |
+| **Data & Integrations** | `backup-manager.mjs`, `backup-scheduler.mjs`, `s3-storage.mjs`, `email-manager.mjs`, `notification-manager.mjs`, `webhook-manager.mjs`, `org-manager.mjs`, `metrics-manager.mjs`                               | backups/restore, S3, SMTP/mail, outbound notifications (SSRF guards), GitHub webhooks                           |
+| **Dashboard & Clients** | `src/` (React/TanStack Start), `hosterax/engine/src/dashboard-server.mjs`, `hosterax/cli/`, `hosterax/desktop/`, `scripts/`                                                                                    | web UI served by engine, CLI `htx`, Electron app (contextIsolation on), release/build scripts                   |
+
+### Entry points and who can reach them
+
+- **Unauthenticated**: `/health`, `/api/health`; `/api/auth/providers`, `/api/auth/login` (password, legacy token exchange), `/api/auth/oidc/login|callback`; first-run setup; `/webhooks/github[/:project]` (HMAC-SHA256 required); magic-DNS reverse proxy (`*.sslip.io`, `*.nip.io`, `*.traefik.me`, `*.ipq.co`, `*.fdns.uk`, `*.localhost` Host headers) which runs _before_ the auth check in `index.mjs`; password-gate listeners per project; public tunnels to apps.
+- **Any authenticated role (`read`)**: GET API, MCP read-only tools, logs/metrics streams (WebSocket/SSE).
+- **`deploy` (developer)**: deployments, env var reads/writes, containers, databases, backups, AI chat/execute-fix, most MCP tools.
+- **`admin`/owner**: tokens, users, servers, settings, tunnels, notifications, SMTP relays, S3 config, container exec, Docker prune, AI config.
+- **Local machine**: implicit full admin via loopback trust (unless `HOSTERAX_REQUIRE_AUTH=1`); `htx mcp:stdio`.
+
+### Assets and data sensitivity
+
+- Host root (Docker socket) and remote-server root (SSH keys, Docker group) — **critical**.
+- `secret.key` / `HOSTERAX_SECRET_KEY` and everything it encrypts: project env vars, SSH keys, S3 creds, DKIM/TLS private keys, SMTP passwords, AI keys, TOTP secrets, notification URLs — **critical**.
+- API tokens, user sessions, password hashes — **high**.
+- Database backups and S3 copies; deployed apps' data — **high**.
+- TLS certificates / domain routing integrity (domain hijack between projects) — **high**.
+- Audit/event logs, metrics — **medium**.
+
+### Attacker profiles
+
+1. **Unauthenticated network attacker** reaching port 7777, app ports, gate, tunnels or the edge (internet if exposed, else LAN).
+2. **Malicious local web page / DNS rebinding** in the operator's browser targeting loopback implicit trust.
+3. **Low-privilege user** (`viewer`/`read` token, or `developer`) escalating to admin, reading secrets, or reaching host root beyond what the role allows.
+4. **Malicious deployed workload / tenant app** on the same host (container or process) reaching the engine, edge admin API, other apps, or host.
+5. **Malicious inputs**: crafted git repo, Dockerfile, image name, catalog entry, webhook payload, OIDC response, AI/LLM output (prompt injection into copilot/MCP).
+6. **Compromised remote server** attacking the engine over SSH bridge.
+
+### Existing controls (verified in code where cited)
+
+Hashed scoped tokens (`security.mjs`); per-request session lookup; scrypt passwords; encrypted TOTP; lockouts and audit trail; OIDC code+PKCE with full ID-token verification (`oidc.mjs`); loopback trust with proxy-header, Host, Origin and Sec-Fetch-Site checks (`isTrustedLocalRequest`); global scope enforcement (`requiredLevel`); Docker driven by argv, validators for image refs/hostnames/container names (`security.mjs`); git URLs after `--`; path-traversal checks; AES-256-GCM secrets at rest; DNS-TXT domain verification; signed short-lived confirmation tickets for destructive AI/MCP actions (`mcp-server.mjs`); GitHub webhook HMAC with `timingSafeEqual`; pinned SSH host keys, key-only, generated ssh config; PBKDF2 password gate with HMAC cookies; outbound notifications http(s)-only, no link-local/metadata, no redirects; rate limiting (20/min auth, 600/min other).
+
+### Deployment assumptions and scope
+
+- **Exposure**: currently deployed on a LAN / private network; planned to be internet-facing (port 7777 and apps reachable from the internet, behind a TLS-terminating proxy). Findings are judged against the internet-facing deployment.
+- **Attackers**: every profile above is in scope.
+- **Accepted risk**: exactly the [Known limitations](#known-limitations) above; nothing else is out of scope.
+- **Finding tags** used by security scans: Component (names in the table above), CWE, Attacker, OWASP, Owner.
+
 ---
 
 ## 🚨 Reporting a Vulnerability
