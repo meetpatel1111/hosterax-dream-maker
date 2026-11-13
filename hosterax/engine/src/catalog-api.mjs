@@ -3,7 +3,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { isSafeImageRef } from "./security.mjs";
+import { isSafeImageRef, corsHeadersFor } from "./security.mjs";
 
 const execFileAsync = promisify(execFile);
 /** Runs a docker CLI command without a shell and without blocking the event loop. */
@@ -48,9 +48,9 @@ export function createCatalogApi({ db, HOME, readBody }) {
     const sendJson = (status, data) => {
       res.writeHead(status, {
         "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": "*",
+        ...corsHeadersFor(req),
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-HosteraX-Org",
       });
       res.end(JSON.stringify(data));
       return true;
@@ -58,9 +58,9 @@ export function createCatalogApi({ db, HOME, readBody }) {
 
     if (req.method === "OPTIONS") {
       res.writeHead(204, {
-        "Access-Control-Allow-Origin": "*",
+        ...corsHeadersFor(req),
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization, X-HosteraX-Org",
       });
       res.end();
       return true;

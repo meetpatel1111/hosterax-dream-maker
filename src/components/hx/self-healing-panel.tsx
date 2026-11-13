@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useEngine } from "@/lib/engine";
+import { confirmAction } from "@/components/hx/confirm-modal";
 
 interface SelfHealEvent {
   id: string;
@@ -323,13 +324,15 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
   // Trigger Chaos Drill
   const chaosMutation = useMutation({
     mutationFn: async (type: "kill" | "memory_spike" | "flapping") => {
-      if (
-        type === "kill" &&
-        !confirm(
-          `This force-kills the running container of "${projectName}" and restarts it. Expect a few seconds of downtime. Continue?`,
-        )
-      )
-        throw new Error("Cancelled");
+      if (type === "kill") {
+        const ok = await confirmAction({
+          title: `Force-Kill "${projectName}" Container`,
+          description: `This force-kills the running container of "${projectName}" and restarts it. Expect a few seconds of downtime.`,
+          confirmLabel: "Force-Kill & Restart",
+          variant: "destructive",
+        });
+        if (!ok) throw new Error("Cancelled");
+      }
       return engine.call("POST", `/api/projects/${encodeURIComponent(projectName!)}/chaos-test`, {
         type,
       });
@@ -421,7 +424,7 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   Self-healing watchdog &amp; Docker Hub image explorer
                 </h3>
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-2.5 py-0.5 text-[11px] font-medium text-success">
-                  <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
                   Watchdog active
                 </span>
               </div>
@@ -603,7 +606,7 @@ export function SelfHealingPanel({ projectName }: { projectName?: string }) {
                   </span>
                 ) : circuitState === "HALF-OPEN" ? (
                   <span className="inline-flex items-center gap-1 text-warning">
-                    <Radio className="h-4 w-4 animate-pulse" />
+                    <Radio className="h-4 w-4" />
                     HALF-OPEN (Canary)
                   </span>
                 ) : (

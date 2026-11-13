@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, Link } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   ONE_CLICK_APPS_CATALOG,
@@ -10,6 +10,7 @@ import {
 } from "@/lib/stacks";
 import { useEngine, useEngineHealth } from "@/lib/engine";
 import { AppLogo } from "@/components/hx/app-logo";
+import { confirmAction } from "@/components/hx/confirm-modal";
 import { useTranslation } from "@/lib/i18n";
 import {
   Search,
@@ -27,6 +28,7 @@ import {
   BookOpen,
   Github,
   Code2,
+  Boxes,
 } from "lucide-react";
 
 // Top featured categories for the quick bar
@@ -430,13 +432,14 @@ export function OneClickAppsCatalog({
 
     // Directory entries don't publish container images; for most of them the image below is only
     // a best guess derived from the project's repository name.
-    if (
-      item.imageVerified === false &&
-      !confirm(
-        `"${item.name}" has no verified container image.\n\nHosteraX will try "${item.image}", which is a guess based on the project's GitHub name and may not exist or may not be the official image. Only continue if you recognise this image.\n\nDeploy anyway?`,
-      )
-    ) {
-      return;
+    if (item.imageVerified === false) {
+      const ok = await confirmAction({
+        title: `Deploy Unverified Image "${item.name}"?`,
+        description: `HosteraX will try "${item.image}", which is inferred from the project repository and may not be an official image. Only continue if you recognise this image.`,
+        confirmLabel: "Deploy Anyway",
+        variant: "warning",
+      });
+      if (!ok) return;
     }
 
     try {
@@ -525,14 +528,26 @@ export function OneClickAppsCatalog({
 
       {/* Quick Deploy Any Custom Docker Image Box */}
       <div className="rounded-xl border border-border/70 bg-surface/50 p-4 shadow-sm">
-        <div className="flex items-center gap-2 mb-2">
-          <Container className="w-4 h-4 text-primary" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
-            {t("deployAnyDockerImage", "Deploy Any Docker Image (Docker Hub / GHCR / Self-Hosted)")}
-          </span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium">
-            ⚡ Smart Auto-Port & Auto-Volume
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div className="flex items-center gap-2">
+            <Container className="w-4 h-4 text-primary" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
+              {t(
+                "deployAnyDockerImage",
+                "Deploy Any Docker Image (Docker Hub / GHCR / Self-Hosted)",
+              )}
+            </span>
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20 font-medium">
+              ⚡ Smart Auto-Port & Auto-Volume
+            </span>
+          </div>
+          <Link
+            to="/dockerhub"
+            className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium"
+          >
+            <Boxes className="w-3.5 h-3.5" />
+            <span>Search Registries (Docker Hub & GHCR)</span>
+          </Link>
         </div>
 
         <div className="flex flex-col sm:flex-row items-center gap-2.5">

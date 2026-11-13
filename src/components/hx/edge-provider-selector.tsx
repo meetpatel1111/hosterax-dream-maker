@@ -155,7 +155,7 @@ export function EdgeProviderSelector() {
                     : "bg-amber-500/10 text-amber-500 border border-amber-500/20"
                 }`}
               >
-                <span className="h-1.5 w-1.5 rounded-full bg-current animate-pulse" />
+                <span className="h-1.5 w-1.5 rounded-full bg-current" />
                 {unreachable
                   ? "Engine unreachable"
                   : isRunning

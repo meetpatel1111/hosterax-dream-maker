@@ -23,6 +23,7 @@ import {
   Archive,
   RotateCcw,
   Wifi,
+  Box,
 } from "lucide-react";
 import { DeleteProjectModal } from "@/components/hx/delete-project-modal";
 import {
@@ -228,13 +229,15 @@ function Dashboard() {
     <div className="mx-auto w-full max-w-[1720px] 2xl:max-w-none space-y-6 transition-all duration-200">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight">Services & Projects</h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="whitespace-nowrap text-2xl font-semibold tracking-tight">
+              Services &amp; Projects
+            </h1>
             {/* View Mode Toggle: Active vs Archived */}
             <div className="flex items-center gap-1 rounded-xl bg-surface-2/80 p-1 border border-border">
               <button
                 onClick={() => setViewTab("active")}
-                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
                   viewTab === "active"
                     ? "bg-primary text-primary-foreground shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
@@ -248,7 +251,7 @@ function Dashboard() {
               </button>
               <button
                 onClick={() => setViewTab("archived")}
-                className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
                   viewTab === "archived"
                     ? "bg-amber-500 text-black font-bold shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
@@ -269,6 +272,13 @@ function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Link
+            to="/containers"
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-accent transition-colors"
+          >
+            <Box className="h-3.5 w-3.5 text-primary" />
+            <span>Host Containers Fleet</span>
+          </Link>
           <Link
             to="/new"
             className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground glow-primary transition-all hover:opacity-90"
@@ -306,38 +316,27 @@ function Dashboard() {
       )}
 
       <div className="grid gap-4 md:grid-cols-4">
-        {sys ? (
-          <>
-            <Metric
-              label="CPU Usage"
-              value={`${sys.cpu.percent}%`}
-              sub={`${sys.cpu.cores} cores`}
-            />
-            <Metric
-              label="Memory"
-              value={`${sys.memory.percent}%`}
-              sub={`${sys.memory.used_mb}/${sys.memory.total_mb} MB`}
-            />
-            <Metric
-              label="Disk"
-              value={`${sys.disk.percent}%`}
-              sub={`${sys.disk.used_gb}/${sys.disk.total_gb} GB`}
-            />
-            <Metric label="Host" value={sys.hostname} sub={`${sys.platform} (${sys.arch})`} />
-          </>
-        ) : (
-          <>
-            <Metric label="Projects" value={String(totalCount)} sub="control plane" />
-            <Metric label="Deployments" value={String(stats?.deployments ?? "—")} sub="all time" />
-            <Metric
-              label="Success rate"
-              value={stats ? `${stats.successRate}%` : "—"}
-              sub="deploy outcomes"
-              accent
-            />
-            <Metric label="Databases" value={String(stats?.databases ?? "—")} sub="provisioned" />
-          </>
-        )}
+        <Metric label="Projects" value={String(totalCount)} sub="control plane" />
+        <Link to="/deployments" className="block transition-transform hover:-translate-y-0.5">
+          <Metric
+            label="Deployments"
+            value={String(stats?.deployments ?? "—")}
+            sub="release history →"
+          />
+        </Link>
+        <Metric
+          label="Success rate"
+          value={stats ? `${stats.successRate}%` : "—"}
+          sub="deploy outcomes"
+          accent
+        />
+        <Link to="/databases" className="block transition-transform hover:-translate-y-0.5">
+          <Metric
+            label="Databases"
+            value={String(stats?.databases ?? "—")}
+            sub={sys ? `disk ${sys.disk.used_gb}/${sys.disk.total_gb} GB` : "provisioned →"}
+          />
+        </Link>
       </div>
 
       <div className="grid gap-3 md:grid-cols-[1fr_auto]">
@@ -516,6 +515,16 @@ function Dashboard() {
                         >
                           <Rocket className="h-3 w-3" /> Deploy
                         </button>
+                        <Link
+                          to="/containers"
+                          search={{ q: p.name } as any}
+                          onClick={(e) => e.stopPropagation()}
+                          className="inline-flex items-center gap-1 rounded border border-border bg-card px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                          title="Inspect raw container process in Fleet Manager"
+                        >
+                          <Box className="h-3 w-3 text-primary" />
+                          <span>Containers</span>
+                        </Link>
                         <button
                           onClick={(e) => {
                             e.preventDefault();

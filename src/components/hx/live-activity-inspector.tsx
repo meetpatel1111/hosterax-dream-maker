@@ -114,7 +114,7 @@ export function LiveActivityInspector({ open, onOpenChange }: LiveActivityInspec
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-5 py-4 border-b border-border/50 bg-background/60">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-xl bg-primary/10 border border-primary/20 text-primary">
-              <Activity className="h-5 w-5 animate-pulse" />
+              <Activity className="h-5 w-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">

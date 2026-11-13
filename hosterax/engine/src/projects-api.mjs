@@ -1,15 +1,24 @@
 // HosteraX — Projects API Subsystem
 // Mounted under /api by index.mjs. Every route is permission-tagged.
-import { bearerFrom, hashToken, isTrustedLocalRequest, isValidEnvKey } from "./security.mjs";
+import {
+  bearerFrom,
+  hashToken,
+  isTrustedLocalRequest,
+  isValidEnvKey,
+  corsHeadersFor,
+  sanitizeHostHeader,
+  assertSafeLocalPath,
+} from "./security.mjs";
 import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
+import { resolveOrgId } from "./enterprise-apis.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import { encryptSecret, decryptSecret, encryptJson, decryptJson, isEncrypted } from "./secrets.mjs";
 import { spawn } from "./docker-scope.mjs";
 import { runOnServer } from "./docker-scope.mjs";
-import { spawnSync } from "./safe-exec.mjs";
 
 const PM_ENUM = [
   "npm",
@@ -126,6 +135,7 @@ CREATE INDEX IF NOT EXISTS idx_server_logs_project ON server_logs(project, ts DE
     ["updated_at", "INTEGER"],
     ["status", "TEXT"],
     ["deleted_at", "INTEGER"],
+    ["org_id", "TEXT"],
   ];
   for (const [c, t] of cols) {
     try {
@@ -289,55 +299,66 @@ export function createProjectsApi(ctx) {
   const liveness = (p) =>
     isRemote(p) ? isRemoteRunning(p) : running.has(p.name) || isDockerRunning(p.name, p.port);
 
-  function isDockerRunning(name, port) {
-    const clean = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+  let runningContainersCache = { entries: [], refreshing: false, updatedAt: 0 };
+  function refreshDockerCache() {
+    if (runningContainersCache.refreshing) return;
+    runningContainersCache.refreshing = true;
     try {
-      const res = spawnSync("docker", [
-        "ps",
-        "--filter",
-        "status=running",
-        "--format",
-        "{{.Names}}\t{{.Ports}}",
-      ]);
-      if (res.stdout) {
-        const lines = res.stdout.toString().split("\n");
-        for (const line of lines) {
-          const [cName, cPorts] = line.split("\t");
-          if (!cName) continue;
-          const cn = cName.trim().toLowerCase();
-          if (
-            cn === clean ||
-            cn === `hx_${clean}` ||
-            cn.includes(`hx_${clean}`) ||
-            cn.includes(clean)
-          )
-            return true;
-          if (port && cPorts && (cPorts.includes(`:${port}->`) || cPorts.includes(`:${port}/`)))
-            return true;
-        }
-      }
-      return false;
+      execFile(
+        "docker",
+        ["ps", "--filter", "status=running", "--format", "{{.Names}}\t{{.Ports}}"],
+        { encoding: "utf8", timeout: 2500 },
+        (err, stdout) => {
+          runningContainersCache.refreshing = false;
+          if (!err && stdout !== undefined) {
+            const entries = [];
+            for (const line of String(stdout).split("\n")) {
+              const [cName, cPorts] = line.split("\t");
+              if (!cName) continue;
+              entries.push({ name: cName.trim().toLowerCase(), ports: String(cPorts || "") });
+            }
+            runningContainersCache = { entries, refreshing: false, updatedAt: Date.now() };
+          }
+        },
+      );
     } catch {
-      return false;
+      runningContainersCache.refreshing = false;
+    }
+  }
+  refreshDockerCache();
+  const dockerCacheTimer = setInterval(refreshDockerCache, 3000);
+  dockerCacheTimer.unref?.();
+
+  function isDockerRunning(name, port) {
+    if (Date.now() - runningContainersCache.updatedAt > 4000) refreshDockerCache();
+    const clean = name.toLowerCase().replace(/[^a-z0-9]/g, "_");
+    for (const { name: cn, ports: cPorts } of runningContainersCache.entries) {
+      if (cn === clean || cn === `hx_${clean}` || cn.includes(`hx_${clean}`) || cn.includes(clean))
+        return true;
+      if (port && cPorts && (cPorts.includes(`:${port}->`) || cPorts.includes(`:${port}/`)))
+        return true;
+    }
+    return false;
+  }
+
+  function parseJsonSafe(v, fallback) {
+    try {
+      return v ? JSON.parse(v) : fallback;
+    } catch {
+      return fallback;
     }
   }
 
-  function shape(p) {
-    if (!p) return null;
+  function formatProjectRow(full, route, domains) {
+    if (!full) return null;
+    const { env_json: _env, clone_token: _clone, ...p } = full; // values never leave via project JSON
     const isLive = liveness(p);
-    const parse = (v, d) => {
-      try {
-        return v ? JSON.parse(v) : d;
-      } catch {
-        return d;
-      }
-    };
-    const { env_json: _env, ...row } = p; // values are never part of a project's JSON
     return {
-      ...row,
+      ...p,
       id: p.id,
       name: p.name,
       slug: p.slug,
+      orgId: p.org_id || "default",
       enabled: p.enabled !== 0,
       location: p.location || "local",
       projectType: p.project_type || "app",
@@ -368,20 +389,20 @@ export function createProjectsApi(ctx) {
       buildImage: p.build_image,
       productionMode: p.production_mode || "host",
       port: p.port,
-      publicEndpoints: parse(p.public_endpoints_json, []),
+      publicEndpoints: parseJsonSafe(p.public_endpoints_json, []),
       hasServer: p.has_server !== 0,
       hasBuild: p.has_build === 1,
       rollbackWindow: p.rollback_window ?? 10,
       cloudArchiveStrategy: p.cloud_archive_strategy || "inplace",
-      monorepoApps: parse(p.monorepo_apps_json, []),
-      monorepoWorkspace: parse(p.monorepo_workspace_json, null),
-      monorepoSharedPaths: parse(p.monorepo_shared_paths_json, null),
-      routingConfig: parse(p.routing_config_json, null),
+      monorepoApps: parseJsonSafe(p.monorepo_apps_json, []),
+      monorepoWorkspace: parseJsonSafe(p.monorepo_workspace_json, null),
+      monorepoSharedPaths: parseJsonSafe(p.monorepo_shared_paths_json, null),
+      routingConfig: parseJsonSafe(p.routing_config_json, null),
       defaultRollbackStrategy: p.default_rollback_strategy || "git",
       target: p.target,
       healthPath: p.health_path || "/",
       sleepMode: p.sleep_mode || "auto_sleep",
-      resources: parse(p.resources_json, {
+      resources: parseJsonSafe(p.resources_json, {
         production: {
           cpuCores: p.cpu_limit ?? 1,
           memoryMb: p.memory_mb_limit ?? 512,
@@ -389,10 +410,8 @@ export function createProjectsApi(ctx) {
         },
         build: { cpuCores: 2, memoryMb: 2048, diskMb: 8192 },
       }),
-      route: db.prepare("SELECT * FROM routes WHERE project=?").get(p.name) ?? null,
-      domains: db
-        .prepare("SELECT hostname, is_primary, verified, ssl_status FROM domains WHERE project=?")
-        .all(p.name),
+      route: route ?? null,
+      domains: domains ?? [],
       status: p.status === "archived" ? "archived" : isLive ? "running" : "stopped",
       isArchived: p.status === "archived",
       deletedAt: p.deleted_at || null,
@@ -401,20 +420,27 @@ export function createProjectsApi(ctx) {
     };
   }
 
+  function shape(p) {
+    if (!p) return null;
+    const route = db.prepare("SELECT * FROM routes WHERE project=?").get(p.name) ?? null;
+    const domains = db
+      .prepare("SELECT hostname, is_primary, verified, ssl_status FROM domains WHERE project=?")
+      .all(p.name);
+    return formatProjectRow(p, route, domains);
+  }
+
   // Batch version of shape() to avoid N+1 queries when listing projects
   function shapeBatch(projects) {
     if (!projects || projects.length === 0) return [];
     const names = projects.map((p) => p.name);
     const placeholders = names.map(() => "?").join(",");
 
-    // Batch fetch routes
     const routeRows = db
       .prepare(`SELECT * FROM routes WHERE project IN (${placeholders})`)
       .all(...names);
     const routesByProject = new Map();
     for (const r of routeRows) routesByProject.set(r.project, r);
 
-    // Batch fetch domains
     const domainRows = db
       .prepare(
         `SELECT project, hostname, is_primary, verified, ssl_status FROM domains WHERE project IN (${placeholders})`,
@@ -426,81 +452,13 @@ export function createProjectsApi(ctx) {
       domainsByProject.get(d.project).push(d);
     }
 
-    const parse = (v, d) => {
-      try {
-        return v ? JSON.parse(v) : d;
-      } catch {
-        return d;
-      }
-    };
-
-    return projects.map((full) => {
-      const { env_json: _env, ...p } = full; // values are never part of a project's JSON
-      const isLive = liveness(p);
-      return {
-        ...p,
-        id: p.id,
-        name: p.name,
-        slug: p.slug,
-        enabled: p.enabled !== 0,
-        location: p.location || "local",
-        projectType: p.project_type || "app",
-        serverId: isRemote(p) ? p.server_id : "local",
-        serverName: isRemote(p)
-          ? (serverManager?.getServer(p.server_id)?.name ?? null)
-          : "Local Master Node",
-        source: p.source,
-        localPath: p.local_path,
-        git: p.git_repo
-          ? {
-              provider: p.git_provider || "github",
-              owner: p.git_owner,
-              repo: p.git_repo,
-              branch: p.git_branch || "main",
-              installationId: p.installation_id,
-              autoDeploy: p.auto_deploy === 1,
-            }
-          : null,
-        framework: p.framework,
-        packageManager: p.package_manager,
-        installCommand: p.install_command,
-        buildCommand: p.build_cmd,
-        startCommand: p.start_cmd,
-        outputDirectory: p.output_directory,
-        productionPaths: p.production_paths,
-        rootDirectory: p.root_directory,
-        buildImage: p.build_image,
-        productionMode: p.production_mode || "host",
-        port: p.port,
-        publicEndpoints: parse(p.public_endpoints_json, []),
-        hasServer: p.has_server !== 0,
-        hasBuild: p.has_build === 1,
-        rollbackWindow: p.rollback_window ?? 10,
-        cloudArchiveStrategy: p.cloud_archive_strategy || "inplace",
-        monorepoApps: parse(p.monorepo_apps_json, []),
-        monorepoWorkspace: parse(p.monorepo_workspace_json, null),
-        monorepoSharedPaths: parse(p.monorepo_shared_paths_json, null),
-        routingConfig: parse(p.routing_config_json, null),
-        defaultRollbackStrategy: p.default_rollback_strategy || "git",
-        target: p.target,
-        sleepMode: p.sleep_mode || "auto_sleep",
-        resources: parse(p.resources_json, {
-          production: {
-            cpuCores: p.cpu_limit ?? 1,
-            memoryMb: p.memory_mb_limit ?? 512,
-            diskMb: p.disk_mb ?? 2048,
-          },
-          build: { cpuCores: 2, memoryMb: 2048, diskMb: 8192 },
-        }),
-        route: routesByProject.get(p.name) ?? null,
-        domains: domainsByProject.get(p.name) ?? [],
-        status: p.status === "archived" ? "archived" : isLive ? "running" : "stopped",
-        isArchived: p.status === "archived",
-        deletedAt: p.deleted_at || null,
-        createdAt: p.created_at,
-        updatedAt: p.updated_at ?? p.created_at,
-      };
-    });
+    return projects.map((full) =>
+      formatProjectRow(
+        full,
+        routesByProject.get(full.name) ?? null,
+        domainsByProject.get(full.name) ?? [],
+      ),
+    );
   }
 
   // ---- create / update body mapping ----
@@ -581,6 +539,17 @@ export function createProjectsApi(ctx) {
     if (b.startCmd !== undefined) set.start_cmd = b.startCmd;
     if (b.source !== undefined) set.source = b.source;
     if (b.env && typeof b.env === "object") set.env_json = encryptJson(b.env);
+    if (b.orgId !== undefined && /^[A-Za-z0-9_-]{1,64}$/.test(String(b.orgId || ""))) {
+      set.org_id = String(b.orgId);
+    }
+    if (b.localPath) {
+      try {
+        b.localPath = assertSafeLocalPath(b.localPath);
+        set.local_path = b.localPath;
+      } catch (e) {
+        bad(e.message, "localPath");
+      }
+    }
     if (b.port !== undefined && b.port !== null && (b.port < 1 || b.port > 65535))
       bad("port out of range", "port");
     // source resolution
@@ -622,9 +591,10 @@ export function createProjectsApi(ctx) {
     if (isCreate) {
       const id = "proj_" + crypto.randomBytes(8).toString("hex");
       const assignedPort = b.port ? Number(b.port) : null;
+      const orgId = b.orgId && /^[A-Za-z0-9_-]{1,64}$/.test(String(b.orgId)) ? String(b.orgId) : "default";
       db.prepare(
-        `INSERT INTO projects (name, source, build_cmd, start_cmd, env_json, target, created_at, id, slug, enabled, location, git_branch, project_type, sleep_mode, auto_deploy, port)
-        VALUES (?,?,?,?,?,?,?,?,?,1,'local',?,?, 'auto_sleep', 0, ?)`,
+        `INSERT INTO projects (name, source, build_cmd, start_cmd, env_json, target, created_at, id, slug, enabled, location, git_branch, project_type, sleep_mode, auto_deploy, port, org_id)
+        VALUES (?,?,?,?,?,?,?,?,?,1,'local',?,?, 'auto_sleep', 0, ?, ?)`,
       ).run(
         name,
         source || "",
@@ -638,6 +608,7 @@ export function createProjectsApi(ctx) {
         b.gitBranch || "main",
         set.project_type || "app",
         assignedPort,
+        orgId,
       );
     }
     const entries = Object.entries(set).filter(([, v]) => v !== undefined);
@@ -889,23 +860,36 @@ export function createProjectsApi(ctx) {
       // ---------- collection ----------
       if (p === "/api/projects" && req.method === "GET") {
         requirePerm(req, "project:list");
+        const orgId = resolveOrgId(req, url);
         const isArchivedQuery = url.searchParams.get("archived") === "true";
         const isAllQuery = url.searchParams.get("all") === "true";
+        const orgFilter = url.searchParams.get("orgId") || req.headers["x-hosterax-org"];
+        const whereOrg =
+          !orgFilter || orgId === "default"
+            ? "(org_id='default' OR org_id IS NULL)"
+            : "org_id=?";
+        const orgParams = !orgFilter || orgId === "default" ? [] : [orgId];
         let rows = [];
         if (isArchivedQuery) {
           rows = db
             .prepare(
-              "SELECT * FROM projects WHERE status='archived' ORDER BY deleted_at DESC, created_at DESC",
+              `SELECT * FROM projects WHERE status='archived' AND ${whereOrg} ORDER BY deleted_at DESC, created_at DESC`,
             )
-            .all();
+            .all(...orgParams);
         } else if (isAllQuery) {
-          rows = db.prepare("SELECT * FROM projects ORDER BY created_at DESC").all();
+          rows = db
+            .prepare(
+              orgFilter
+                ? `SELECT * FROM projects WHERE ${whereOrg} ORDER BY created_at DESC`
+                : "SELECT * FROM projects ORDER BY created_at DESC",
+            )
+            .all(...(orgFilter ? orgParams : []));
         } else {
           rows = db
             .prepare(
-              "SELECT * FROM projects WHERE status != 'archived' OR status IS NULL ORDER BY created_at DESC",
+              `SELECT * FROM projects WHERE (status != 'archived' OR status IS NULL) AND ${whereOrg} ORDER BY created_at DESC`,
             )
-            .all();
+            .all(...orgParams);
         }
         return (json(res, 200, shapeBatch(rows)), true);
       }
@@ -915,15 +899,20 @@ export function createProjectsApi(ctx) {
         if (!b.name || !String(b.name).trim()) bad("name is required", "name");
         const dupe = db.prepare("SELECT 1 FROM projects WHERE name=?").get(b.name);
         if (b.gitRepo && !b.gitOwner) bad("gitOwner is required with gitRepo", "gitOwner");
-        return (json(res, dupe ? 200 : 201, shape(applyBody(b.name, b, !dupe))), true);
+        const orgId = b.orgId || resolveOrgId(req, url);
+        return (json(res, dupe ? 200 : 201, shape(applyBody(b.name, { ...b, orgId }, !dupe))), true);
       }
       if (p === "/api/projects/home" && req.method === "GET") {
         requirePerm(req, "project:list");
+        const orgId = resolveOrgId(req, url);
+        const hasOrg = Boolean(url.searchParams.get("orgId") || req.headers["x-hosterax-org"]);
         const allRows = db
           .prepare(
-            "SELECT * FROM projects WHERE status != 'archived' OR status IS NULL ORDER BY created_at DESC",
+            hasOrg && orgId !== "default"
+              ? "SELECT * FROM projects WHERE (status != 'archived' OR status IS NULL) AND org_id=? ORDER BY created_at DESC"
+              : "SELECT * FROM projects WHERE (status != 'archived' OR status IS NULL) AND (org_id='default' OR org_id IS NULL) ORDER BY created_at DESC",
           )
-          .all();
+          .all(...(hasOrg && orgId !== "default" ? [orgId] : []));
         const local = shapeBatch(allRows);
         return (json(res, 200, { local, cloud: [], projects: local }), true);
       }
@@ -1002,7 +991,12 @@ export function createProjectsApi(ctx) {
         requirePerm(req, "project:write");
         const b = await readBody(req);
         if (!b.path) bad("path is required", "path");
-        const dir = path.resolve(b.path);
+        let dir;
+        try {
+          dir = assertSafeLocalPath(b.path);
+        } catch (e) {
+          bad(e.message, "path");
+        }
         if (!fs.existsSync(dir)) notFound("path does not exist on this host");
         return (json(res, 200, { path: dir, name: path.basename(dir), ...scanDir(dir) }), true);
       }
@@ -1010,13 +1004,19 @@ export function createProjectsApi(ctx) {
         requirePerm(req, "project:write");
         const b = await readBody(req);
         if (!b.path) bad("path is required", "path");
-        const dir = path.resolve(b.path);
+        let dir;
+        try {
+          dir = assertSafeLocalPath(b.path);
+        } catch (e) {
+          bad(e.message, "path");
+        }
         if (!fs.existsSync(dir)) notFound("path does not exist on this host");
         const scan = scanDir(dir);
         const name = b.name || path.basename(dir);
         if (db.prepare("SELECT 1 FROM projects WHERE name=?").get(name))
           bad("a project with that name already exists", "name");
-        const proj = applyBody(name, { ...scan, ...b, localPath: dir }, true);
+        const orgId = b.orgId || resolveOrgId(req, url);
+        const proj = applyBody(name, { ...scan, ...b, localPath: dir, orgId }, true);
         syncComposeServices(name, dir, null);
         return (json(res, 201, shape(proj)), true);
       }
@@ -1032,7 +1032,7 @@ export function createProjectsApi(ctx) {
           "INSERT INTO upload_sessions (id, name, stack, package_manager, dir, status, created_at) VALUES (?,?,?,?,?,'open',?)",
         ).run(id, b.name ?? null, b.stack ?? null, b.packageManager ?? null, dir, Date.now());
         const rel = `/api/projects/folder/upload/${id}`;
-        const host = req.headers.host || `localhost:${process.env.HOSTERAX_PORT || 7777}`;
+        const host = sanitizeHostHeader(req.headers.host);
         return (
           json(res, 200, {
             sessionId: id,
@@ -1469,7 +1469,7 @@ export function createProjectsApi(ctx) {
         requirePerm(req, "project:admin");
         const b = await readBody(req);
         db.prepare("UPDATE projects SET clone_token=? WHERE name=?").run(
-          b.token ?? null,
+          b.token ? encryptSecret(String(b.token)) : null,
           proj.name,
         );
         return (json(res, 200, { ok: true, configured: !!b.token }), true);
@@ -1660,7 +1660,7 @@ export function createProjectsApi(ctx) {
         const last = db
           .prepare("SELECT * FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
           .get(proj.name);
-        const host = req.headers.host || `localhost:${process.env.HOSTERAX_PORT || 7777}`;
+        const host = sanitizeHostHeader(req.headers.host);
         const tok = "sess_" + crypto.randomBytes(12).toString("hex");
         streamTokens.set(tok, { project: proj.name, exp: Date.now() + 3600e3 });
         return (
@@ -1768,7 +1768,7 @@ export function createProjectsApi(ctx) {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
           connection: "keep-alive",
-          "access-control-allow-origin": "*",
+          ...corsHeadersFor(req),
         });
         const initial = [];
         const latest = db
@@ -1842,7 +1842,7 @@ export function createProjectsApi(ctx) {
           "content-type": "text/event-stream",
           "cache-control": "no-cache",
           connection: "keep-alive",
-          "access-control-allow-origin": "*",
+          ...corsHeadersFor(req),
         });
         let lastId = db
           .prepare("SELECT COALESCE(MAX(id),0) m FROM server_logs WHERE project=?")
@@ -1893,6 +1893,7 @@ export function createProjectsApi(ctx) {
           b.enabled === false ? 0 : 1,
           Date.now(),
         );
+        await refreshPublishedRoutes();
         return (json(res, 201, db.prepare("SELECT * FROM route_rules WHERE id=?").get(id)), true);
       }
       if ((m = sub.match(/^route-rules\/([^/]+)$/))) {
@@ -1913,6 +1914,7 @@ export function createProjectsApi(ctx) {
             b.enabled === undefined ? null : b.enabled ? 1 : 0,
             rule.id,
           );
+          await refreshPublishedRoutes();
           return (
             json(res, 200, db.prepare("SELECT * FROM route_rules WHERE id=?").get(rule.id)),
             true
@@ -1921,6 +1923,7 @@ export function createProjectsApi(ctx) {
         if (method === "DELETE") {
           requirePerm(req, "project:write");
           db.prepare("DELETE FROM route_rules WHERE id=?").run(rule.id);
+          await refreshPublishedRoutes();
           return (json(res, 200, { ok: true }), true);
         }
       }
@@ -2010,6 +2013,7 @@ export function createProjectsApi(ctx) {
         };
         encryptColumn("project_env", "id", "value");
         encryptColumn("projects", "name", "env_json");
+        encryptColumn("projects", "name", "clone_token");
         encryptColumn("services", "id", "env_json");
       })();
     } catch (e) {

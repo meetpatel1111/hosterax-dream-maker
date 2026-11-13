@@ -174,7 +174,7 @@ export function ServiceTopologyGraph({
                 <Globe className="h-4 w-4 text-sky-400" />
                 <span>1. Public & LAN Ingress</span>
               </div>
-              <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="flex h-2 w-2 rounded-full bg-emerald-400" />
             </div>
             <div className="space-y-1 text-[11px] font-mono text-muted-foreground">
               <div className="truncate">https://{magicHost}</div>
@@ -240,7 +240,7 @@ export function ServiceTopologyGraph({
                   SLEEPING
                 </span>
               ) : (
-                <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="flex h-2 w-2 rounded-full bg-emerald-400" />
               )}
             </div>
             <div className="space-y-1 text-[11px] font-mono text-muted-foreground">

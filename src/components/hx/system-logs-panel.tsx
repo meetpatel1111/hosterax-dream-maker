@@ -285,7 +285,7 @@ export function SystemLogsPanel() {
               connectionStatus === "connected"
                 ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20"
                 : connectionStatus === "connecting"
-                  ? "bg-amber-500/10 text-amber-500 border-amber-500/20 animate-pulse"
+                  ? "bg-amber-500/10 text-amber-500 border-amber-500/20"
                   : "bg-rose-500/10 text-rose-500 border-rose-500/20"
             }`}
           >

@@ -29,6 +29,7 @@ import {
   type BackupCursor,
   type BackupItem,
 } from "../../lib/engine";
+import { confirmAction } from "./confirm-modal";
 
 const CRON_PRESETS = [
   { cron: "0 2 * * *", label: "Every day at 02:00" },
@@ -293,13 +294,13 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   };
 
   const restoreBackup = async (b: BackupItem) => {
-    if (
-      !confirm(
-        `Restore snapshot "${b.id}" into ${b.database_name}? Current data will be overwritten with the data from ${new Date(b.created_at).toLocaleString()}.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirmAction({
+      title: `Restore "${b.database_name}"`,
+      description: `Restore snapshot "${b.id}" into ${b.database_name}? Current data will be overwritten with the data from ${new Date(b.created_at).toLocaleString()}.`,
+      confirmLabel: "Restore Snapshot",
+      variant: "destructive",
+    });
+    if (!ok) return;
 
     setRestoringId(b.id);
     const toastId = toast.loading(`Verifying checksum and restoring snapshot ${b.id}…`);
@@ -318,7 +319,13 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   };
 
   const deleteBackup = async (id: string) => {
-    if (!confirm(`Delete snapshot "${id}" from disk?`)) return;
+    const ok = await confirmAction({
+      title: "Delete Snapshot Archive",
+      description: `Delete snapshot "${id}" from disk?`,
+      confirmLabel: "Delete Snapshot",
+      variant: "destructive",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/backups/${id}`);
       toast.success(`Snapshot ${id} deleted.`);
@@ -333,6 +340,7 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   const downloadBackup = async (id: string) => {
     try {
       const r = await fetch(`${engine.url}/api/backups/${id}/download`, {
+        credentials: "include",
         headers: engine.token ? { authorization: `Bearer ${engine.token}` } : {},
       });
       if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `HTTP ${r.status}`);
@@ -396,7 +404,13 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
   };
 
   const removeSchedule = async (id: string) => {
-    if (!confirm("Delete this schedule? Backups it already took are kept.")) return;
+    const ok = await confirmAction({
+      title: "Delete Backup Schedule",
+      description: "Delete this schedule? Backups it already took are kept.",
+      confirmLabel: "Delete Schedule",
+      variant: "destructive",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/backups/schedules/${id}`);
       schedulesQuery.refetch();
@@ -870,9 +884,11 @@ export function BackupWizardModal({ onClose }: { onClose: () => void }) {
                             className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
                             title="Check the checksum and that the archive is complete and readable"
                           >
-                            <ShieldCheck
-                              className={`h-3.5 w-3.5 text-muted-foreground ${verifyingId === b.id ? "animate-pulse" : ""}`}
-                            />{" "}
+                            {verifyingId === b.id ? (
+                              <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                            ) : (
+                              <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
+                            )}{" "}
                             Verify
                           </button>
                         )}

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import crypto from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { spawn, execFile } from "./docker-scope.mjs";
 import { spawnSync } from "./safe-exec.mjs";
 import { runOnServer, currentServerId, configureDockerScope } from "./docker-scope.mjs";
@@ -13,7 +14,7 @@ import { WebSocketServer } from "ws";
 import Database from "better-sqlite3";
 import { createProjectsApi, initProjectsSchema } from "./projects-api.mjs";
 import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
-import { initSecrets, encryptJson, decryptJson } from "./secrets.mjs";
+import { initSecrets, encryptJson, decryptJson, decryptSecret } from "./secrets.mjs";
 import { AccountManager, AccountError } from "./accounts.mjs";
 import { OidcClient, OidcError, loadOidcConfig } from "./oidc.mjs";
 import { ENGINE_VERSION } from "./version.mjs";
@@ -23,6 +24,9 @@ import {
   hashToken,
   tokenPrefix,
   bearerFrom,
+  corsHeadersFor,
+  sanitizeHostHeader,
+  assertSafeLocalPath,
   isTrustedLocalRequest,
   scopesLevel,
   requiredLevel,
@@ -71,6 +75,7 @@ import { AIOpsManager } from "./ai-ops.mjs";
 import { MetricsManager } from "./metrics-manager.mjs";
 import { DockerApiClient } from "./docker-api.mjs";
 import { generateUniversalDockerfile } from "./dockerfile-generator.mjs";
+import { createEnterpriseApi } from "./enterprise-apis.mjs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -463,6 +468,7 @@ function publish(deploymentId, line) {
 const systemSubs = new Set();
 const systemLogs = [];
 const MAX_SYSTEM_LOGS = 1000;
+let enterpriseApi = null;
 
 function publishSystemLog(level, source, message, meta = null) {
   const item = {
@@ -482,6 +488,9 @@ function publishSystemLog(level, source, message, meta = null) {
       ws.send(msg);
     } catch {}
   }
+  try {
+    enterpriseApi?.forwardToSiemSinks?.(item);
+  } catch {}
   return item;
 }
 
@@ -1235,14 +1244,19 @@ function isGitSource(source) {
   return typeof source === "string" && !source.startsWith("-") && GIT_URL_RE.test(source);
 }
 
-function runGitClone(deploymentId, cwd, url, targetDir, branch = "") {
+function runGitClone(deploymentId, cwd, url, targetDir, branch = "", cloneToken = "") {
   return new Promise((resolve) => {
-    const args = ["clone", "--depth", "1"];
+    const logArgs = ["clone", "--depth", "1"];
     if (branch && /^[A-Za-z0-9._\-/]{1,200}$/.test(branch) && !branch.startsWith("-"))
-      args.push("--branch", branch);
-    args.push("--", url, targetDir);
-    publish(deploymentId, { ts: Date.now(), stream: "system", text: `$ git ${args.join(" ")}` });
-    const child = spawn("git", args, {
+      logArgs.push("--branch", branch);
+    logArgs.push("--", url, targetDir);
+    const gitArgs = [...logArgs];
+    if (cloneToken && /^https?:\/\//i.test(String(url || ""))) {
+      const basic = Buffer.from(`x-access-token:${cloneToken}`).toString("base64");
+      gitArgs.unshift("-c", `http.extraheader=AUTHORIZATION: basic ${basic}`);
+    }
+    publish(deploymentId, { ts: Date.now(), stream: "system", text: `$ git ${logArgs.join(" ")}` });
+    const child = spawn("git", gitArgs, {
       cwd,
       // never block on a credentials prompt; forbid the command-executing "ext" transport
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "http:https:ssh:git" },
@@ -1264,7 +1278,7 @@ function runGitClone(deploymentId, cwd, url, targetDir, branch = "") {
   });
 }
 
-async function fetchSource(deploymentId, source, workdir, target, branch = "") {
+async function fetchSource(deploymentId, source, workdir, target, branch = "", cloneToken = "") {
   fs.mkdirSync(workdir, { recursive: true });
   if (target === "docker" && source && !fs.existsSync(source) && !isGitSource(source)) {
     // Direct Docker image deployment (One-Click App as project)
@@ -1276,9 +1290,28 @@ async function fetchSource(deploymentId, source, workdir, target, branch = "") {
     return 0;
   }
   if (isGitSource(source)) {
-    return runGitClone(deploymentId, path.dirname(workdir), source, path.basename(workdir), branch);
+    return runGitClone(
+      deploymentId,
+      path.dirname(workdir),
+      source,
+      path.basename(workdir),
+      branch,
+      cloneToken,
+    );
   }
-  const abs = path.resolve(String(source || ""));
+  let abs;
+  try {
+    const resolved = path.resolve(String(source || ""));
+    const uploadsDir = path.join(HOME, "uploads");
+    abs = resolved.startsWith(uploadsDir + path.sep) ? resolved : assertSafeLocalPath(source);
+  } catch (e) {
+    publish(deploymentId, {
+      ts: Date.now(),
+      stream: "stderr",
+      text: `invalid local source path: ${e.message}`,
+    });
+    return 1;
+  }
   if (!source || !fs.existsSync(abs)) {
     publish(deploymentId, {
       ts: Date.now(),
@@ -1629,8 +1662,20 @@ function startStaticServer(project, rootDir, port, deploymentId) {
       }
     }
 
-    let reqPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
-    let filePath = path.join(rootDir, reqPath);
+    let reqPath;
+    try {
+      reqPath = decodeURIComponent(new URL(req.url, "http://x").pathname);
+    } catch {
+      res.writeHead(400, { "content-type": "text/plain" });
+      return res.end("400 Bad Request");
+    }
+    const resolvedRoot = path.resolve(rootDir);
+    const normalizedReq = path.posix.normalize("/" + reqPath);
+    let filePath = path.resolve(resolvedRoot, "." + normalizedReq);
+    if (!filePath.startsWith(resolvedRoot + path.sep) && filePath !== resolvedRoot) {
+      res.writeHead(403, { "content-type": "text/plain" });
+      return res.end("403 Forbidden");
+    }
 
     try {
       const stat = fs.statSync(filePath);
@@ -1643,7 +1688,7 @@ function startStaticServer(project, rootDir, port, deploymentId) {
     try {
       const stat = fs.statSync(filePath);
       if (stat.isDirectory()) {
-        filePath = path.join(rootDir, "index.html");
+        filePath = path.join(resolvedRoot, "index.html");
       }
     } catch {}
 
@@ -1658,7 +1703,7 @@ function startStaticServer(project, rootDir, port, deploymentId) {
       const stream = fs.createReadStream(filePath);
       res.writeHead(200, {
         "content-type": mime,
-        "access-control-allow-origin": "*",
+        ...corsHeadersFor(req, PORT),
         "cache-control": ext === ".html" ? "no-cache" : "public, max-age=31536000",
       });
       stream.pipe(res);
@@ -2581,7 +2626,8 @@ async function runDeploymentHere(project, opts = {}) {
 
       if (!opts.rollbackFrom) {
         setPhase(id, "fetching");
-        const code = await fetchSource(id, p.source, workdir, p.target, p.git_branch || "");
+        const cloneTok = p.clone_token ? decryptSecret(p.clone_token) : "";
+        const code = await fetchSource(id, p.source, workdir, p.target, p.git_branch || "", cloneTok);
         if (code !== 0) {
           setPhase(id, "failed", { finished_at: Date.now(), exit_code: code });
           return;
@@ -2901,18 +2947,33 @@ async function getContainerMetricsHere(projectName) {
 }
 
 // ---------- HTTP ----------
-function json(res, code, body) {
+const reqStore = new AsyncLocalStorage();
+const PORT = Number(process.env.HOSTERAX_PORT || 7777);
+
+function isHttpsRequest(req) {
+  const proto = String(req?.headers?.["x-forwarded-proto"] || "").toLowerCase();
+  return proto === "https" || Boolean(req?.socket?.encrypted);
+}
+
+function sessionCookieHeader(req, token, clear = false) {
+  const secure = isHttpsRequest(req) ? "; Secure" : "";
+  if (clear) return `hx_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0${secure}`;
+  return `hx_session=${encodeURIComponent(token)}; HttpOnly; Path=/; SameSite=Lax; Max-Age=2592000${secure}`;
+}
+
+function json(res, code, body, extraHeaders = {}) {
+  const req = reqStore.getStore();
   res.writeHead(code, {
     "content-type": "application/json",
-    "access-control-allow-origin": "*",
-    "access-control-allow-headers": "authorization, content-type",
+    ...corsHeadersFor(req, PORT),
+    "access-control-allow-headers": "authorization, content-type, x-hosterax-org",
     "access-control-allow-methods": "GET,POST,PATCH,PUT,DELETE,OPTIONS",
+    ...extraHeaders,
   });
   res.end(JSON.stringify(body));
 }
 
 const dashboard = createDashboard({ log: (m) => console.warn(m) });
-const PORT = Number(process.env.HOSTERAX_PORT || 7777);
 function readBody(req, maxSizeBytes = 10 * 1024 * 1024) {
   return new Promise((resolve, reject) => {
     let s = "";
@@ -3006,6 +3067,17 @@ function callerScopes(req) {
   const t = bearerFrom(req);
   if (t) {
     if (t.startsWith("hxs_")) return sessionOf(req)?.scopes ?? null;
+    if (t.startsWith("hx_oauth_")) {
+      const oauthRow = db
+        .prepare("SELECT scopes_json, expires_at, revoked FROM oauth_tokens WHERE token_hash=?")
+        .get(hashToken(t));
+      if (!oauthRow || oauthRow.revoked || oauthRow.expires_at < Date.now()) return null;
+      try {
+        return JSON.parse(oauthRow.scopes_json || '["read"]');
+      } catch {
+        return ["read"];
+      }
+    }
     const hash = hashToken(t);
     const row = db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hash);
     if (!row) return null;
@@ -3527,16 +3599,53 @@ const aiOpsManager = new AIOpsManager({
   runDeployment,
 });
 
-const server = http.createServer(async (req, res) => {
-  if (req.method === "OPTIONS") return json(res, 204, {});
-  const url = new URL(req.url, "http://x");
-  if (url.pathname === "/health" || url.pathname === "/api/health")
-    return json(res, 200, { ok: true, version: ENGINE_VERSION });
-  // Rate limit: 120 req/min for auth endpoints, 600/min for others
-  const isAuthEndpoint = url.pathname.startsWith("/api/auth");
-  if (rateLimit(req, isAuthEndpoint ? 20 : 600)) {
-    return json(res, 429, { error: "too many requests" });
-  }
+enterpriseApi = createEnterpriseApi({
+  db,
+  json,
+  readBody,
+  dockerApi,
+  edgeManager,
+  webhookManager,
+  backupManager,
+  projectsApi,
+  sessionOf,
+  callerScopes,
+  clientIp,
+  publishSystemLog,
+});
+
+function auditReq(req, action, resourceType, resourceId, details = null) {
+  const ses = sessionOf(req);
+  enterpriseApi?.logAudit?.({
+    orgId: String(req.headers["x-hosterax-org"] || "default"),
+    actorEmail: ses?.user?.email || (isTrustedLocalRequest(req, PORT) ? "local@hosterax" : "api-token"),
+    actorRole: aiRoleFor(req),
+    action,
+    resourceType,
+    resourceId,
+    details,
+    ip: clientIp(req),
+  });
+}
+
+const server = http.createServer((req, res) =>
+  reqStore.run(req, async () => {
+    if (req.method === "OPTIONS") return json(res, 204, {});
+    const url = new URL(req.url, "http://x");
+    if (url.pathname === "/health" || url.pathname === "/api/health")
+      return json(res, 200, { ok: true, version: ENGINE_VERSION });
+    // Public status page & OAuth token exchange endpoints
+    if (url.pathname === "/api/public/status" && req.method === "GET") {
+      if (await enterpriseApi.handle(req, res, url)) return;
+    }
+    if (url.pathname === "/api/oauth/token" && req.method === "POST") {
+      if (await enterpriseApi.handle(req, res, url)) return;
+    }
+    // Rate limit: 120 req/min for auth endpoints, 600/min for others
+    const isAuthEndpoint = url.pathname.startsWith("/api/auth");
+    if (rateLimit(req, isAuthEndpoint ? 20 : 600)) {
+      return json(res, 429, { error: "too many requests" });
+    }
   // ── public sign-in surface: password login, SSO, and what this engine offers ──
   if (url.pathname === "/api/auth/providers" && req.method === "GET") {
     const hasUsers = accounts.hasUsers();
@@ -3559,11 +3668,12 @@ const server = http.createServer(async (req, res) => {
     }
   }
   if (url.pathname === "/api/auth/oidc/callback" && req.method === "GET") {
-    const back = (location) => {
+    const back = (location, extraHeaders = {}) => {
       res.writeHead(302, {
         location,
         "cache-control": "no-store",
         "referrer-policy": "no-referrer",
+        ...extraHeaders,
       });
       res.end();
     };
@@ -3581,8 +3691,10 @@ const server = http.createServer(async (req, res) => {
         ip: clientIp(req),
         userAgent: req.headers["user-agent"],
       });
-      // the session travels in the URL fragment: it is never sent to a server or logged in a Referer
-      return back(`/auth#session=${r.token}`);
+      // the session travels in the HttpOnly cookie and URL fragment as fallback
+      return back(`/auth#session=${r.token}`, {
+        "Set-Cookie": sessionCookieHeader(req, r.token),
+      });
     } catch (e) {
       const message =
         e instanceof OidcError || e instanceof AccountError ? e.message : "single sign-on failed";
@@ -3604,7 +3716,13 @@ const server = http.createServer(async (req, res) => {
           ip: clientIp(req),
           userAgent: req.headers["user-agent"],
         });
-        return json(res, 200, { ok: true, token: r.token, expiresAt: r.expiresAt, user: r.user });
+        auditReq(req, "auth.login", "user", r.user?.email || b.email, { method: "password" });
+        return json(
+          res,
+          200,
+          { ok: true, token: r.token, expiresAt: r.expiresAt, user: r.user },
+          { "Set-Cookie": sessionCookieHeader(req, r.token) },
+        );
       } catch (e) {
         return authFail(res, e);
       }
@@ -3614,11 +3732,16 @@ const server = http.createServer(async (req, res) => {
       ? db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hashToken(b.token))
       : null;
     if (scopes) {
-      return json(res, 200, {
-        ok: true,
-        user: { id: "admin-local", email: b.email || "admin@hosterax.local", role: "admin" },
-        token: b.token,
-      });
+      return json(
+        res,
+        200,
+        {
+          ok: true,
+          user: { id: "admin-local", email: b.email || "admin@hosterax.local", role: "admin" },
+          token: b.token,
+        },
+        { "Set-Cookie": sessionCookieHeader(req, b.token) },
+      );
     }
     return json(res, 401, {
       ok: false,
@@ -3627,7 +3750,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // Reverse proxy for *.sslip.io, *.nip.io, *.traefik.me, *.ipq.co, *.fdns.uk and *.localhost subdomains
-  const rawHost = (req.headers.host || "").toLowerCase();
+  const rawHost = sanitizeHostHeader(req.headers.host, PORT).toLowerCase();
   const hostname = rawHost.split(":")[0];
   const MAGIC_DNS_SUFFIXES = [".sslip.io", ".nip.io", ".traefik.me", ".ipq.co", ".fdns.uk"];
   const isMagicDns =
@@ -3733,6 +3856,8 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (await enterpriseApi.handle(req, res, url)) return;
+
   if (url.pathname === "/api/openapi.json" && req.method === "GET") {
     try {
       const spec = fs.readFileSync(path.join(__dirname, "openapi.json"), "utf8");
@@ -3781,14 +3906,8 @@ const server = http.createServer(async (req, res) => {
 
     let contCount = 0;
     try {
-      const dCount = spawnSync("docker", ["ps", "-q"], {
-        encoding: "utf8",
-        timeout: 3000,
-        windowsHide: true,
-      });
-      if (dCount.stdout) {
-        contCount = dCount.stdout.trim().split("\n").filter(Boolean).length;
-      }
+      const runningContainers = await dockerApi.listContainers({ all: false });
+      contCount = Array.isArray(runningContainers) ? runningContainers.length : 0;
     } catch {}
 
     const projCount = db.prepare("SELECT count(*) as count FROM projects").get()?.count || 0;
@@ -3799,7 +3918,7 @@ const server = http.createServer(async (req, res) => {
     } catch {}
     let dbCount = 0;
     try {
-      dbCount = db.prepare("SELECT count(*) as count FROM databases").get()?.count || 0;
+      dbCount = db.prepare("SELECT count(*) as count FROM managed_dbs").get()?.count || 0;
     } catch {}
 
     const systemInfo = {
@@ -3981,6 +4100,52 @@ const server = http.createServer(async (req, res) => {
     }
   }
 
+  if (url.pathname === "/api/docker/containers/run" && req.method === "POST") {
+    const b = await readBody(req);
+    if (!b.image) return json(res, 400, { error: "image is required" });
+    let safeImage;
+    try {
+      safeImage = assertSafeImageRef(b.image);
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+    const name = (b.name || `container_${Date.now()}`).replace(/[^a-zA-Z0-9_.-]/g, "_");
+    if (!isSafeContainerName(name)) return json(res, 400, { error: "Invalid container name" });
+    const allowedRestart = new Set(["no", "always", "unless-stopped", "on-failure"]);
+    const restartName = String(b.restart || "unless-stopped");
+    if (!allowedRestart.has(restartName)) {
+      return json(res, 400, { error: "Invalid restart policy" });
+    }
+    const portBindings = {};
+    if (b.hostPort && b.containerPort) {
+      const hp = Number(b.hostPort);
+      const cp = Number(b.containerPort);
+      if (!Number.isInteger(hp) || hp < 1 || hp > 65535 || !Number.isInteger(cp) || cp < 1 || cp > 65535) {
+        return json(res, 400, { error: "Invalid hostPort or containerPort (must be 1..65535)" });
+      }
+      portBindings[`${cp}/tcp`] = [{ HostIp: BIND_HOST, HostPort: String(hp) }];
+    }
+    const env = Array.isArray(b.env)
+      ? b.env
+      : Object.entries(b.env || {}).map(([k, v]) => `${k}=${v}`);
+    const config = {
+      Image: safeImage,
+      Env: env,
+      HostConfig: {
+        PortBindings: portBindings,
+        RestartPolicy: { Name: restartName },
+      },
+    };
+    try {
+      const created = await dockerApi.createContainer(name, config);
+      await dockerApi.startContainer(created.Id || name);
+      auditReq(req, "docker.container_run", "container", name, { image: safeImage });
+      return json(res, 201, { ok: true, name, id: created.Id });
+    } catch (err) {
+      return json(res, 500, { error: err.message });
+    }
+  }
+
   if (url.pathname.startsWith("/api/docker/containers/") && req.method === "POST") {
     const parts = url.pathname.split("/").filter(Boolean);
     const nameOrId = parts[3];
@@ -4040,9 +4205,15 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/docker/images/pull" && req.method === "POST") {
     const b = await readBody(req);
     if (!b.image) return json(res, 400, { error: "image tag is required" });
+    let safeImage;
     try {
-      const result = await dockerApi.pullImage(b.image);
-      return json(res, 200, { ok: true, image: b.image, result });
+      safeImage = assertSafeImageRef(b.image);
+    } catch (e) {
+      return json(res, 400, { error: e.message });
+    }
+    try {
+      const result = await dockerApi.pullImage(safeImage);
+      return json(res, 200, { ok: true, image: safeImage, result });
     } catch (err) {
       return json(res, 500, { error: err.message });
     }
@@ -4106,10 +4277,6 @@ const server = http.createServer(async (req, res) => {
 
   try {
     let m;
-
-    if (url.pathname === "/api/system" && req.method === "GET") {
-      return json(res, 200, getSystemMetrics());
-    }
 
     // ────────── Self-Healing API ──────────
     if (url.pathname === "/api/self-heal/status" && req.method === "GET") {
@@ -4185,17 +4352,6 @@ const server = http.createServer(async (req, res) => {
       }
     }
     if (
-      (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/reset-circuit$/)) &&
-      req.method === "POST"
-    ) {
-      try {
-        const result = selfHeal.resetCircuit(m[1]);
-        return json(res, 200, result);
-      } catch (err) {
-        return json(res, 500, { error: err.message });
-      }
-    }
-    if (
       (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/health-config$/)) &&
       req.method === "GET"
     ) {
@@ -4212,55 +4368,6 @@ const server = http.createServer(async (req, res) => {
 
     // ────────── Projects API (Universal Management Surface) ──────────
     if (await projectsApi.handle(req, res, url)) return;
-
-    // ────────── projects (legacy engine surface) ──────────
-    if (url.pathname === "/api/projects" && req.method === "GET")
-      return json(
-        res,
-        200,
-        db
-          .prepare("SELECT * FROM projects ORDER BY created_at DESC")
-          .all()
-          .map(({ env_json: _env, ...row }) => row),
-      );
-    if (url.pathname === "/api/projects" && req.method === "POST") {
-      const b = await readBody(req);
-      if (!b.name) return json(res, 400, { error: "name required" });
-      const current = db.prepare("SELECT * FROM projects WHERE name=?").get(b.name);
-      db.prepare(
-        "INSERT OR REPLACE INTO projects (name, source, build_cmd, start_cmd, env_json, target, created_at, cpu_limit, memory_mb_limit) VALUES (?,?,?,?,?,?,?,?,?)",
-      ).run(
-        b.name,
-        b.source || "",
-        b.buildCmd || "",
-        b.startCmd || "",
-        encryptJson(b.env || {}),
-        b.target || "process",
-        current?.created_at ?? Date.now(),
-        current?.cpu_limit ?? null,
-        current?.memory_mb_limit ?? null,
-      );
-      return json(res, 200, { ok: true });
-    }
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)$/)) && req.method === "DELETE") {
-      const projName = m[1];
-      const cleanName = projName.toLowerCase().replace(/[^a-z0-9]/g, "_");
-      const removedServer = serverOf(projName);
-      db.prepare("DELETE FROM projects WHERE name=?").run(projName);
-      db.prepare("DELETE FROM deployments WHERE project=?").run(projName);
-      db.prepare("DELETE FROM domains WHERE project=?").run(projName);
-      db.prepare("DELETE FROM managed_dbs WHERE project=?").run(projName);
-      selfHeal.untrack(projName);
-      try {
-        runOnServer(removedServer, () =>
-          spawnSync("docker", ["rm", "-f", `hx_${cleanName}`], { timeout: 5000 }),
-        );
-      } catch {}
-      if (removedServer) serverManager.unforward(removedServer, projName).catch(() => {});
-      gateManager.disable(projName).catch(() => {});
-      stopProject(projName, "project deleted");
-      return json(res, 200, { ok: true });
-    }
 
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/quotas$/)) && req.method === "POST") {
       const b = await readBody(req);
@@ -4444,11 +4551,11 @@ const server = http.createServer(async (req, res) => {
             ? Math.max(1, Math.min(5000, requestedLines))
             : 1000;
       const text = readDeploymentLog(m[1], lines);
-      res.writeHead(200, { "content-type": "text/plain", "access-control-allow-origin": "*" });
+      res.writeHead(200, { "content-type": "text/plain", ...corsHeadersFor(req, PORT) });
       return res.end(text);
     }
 
-    // ────────── deployment diff ──────────
+    // ────────── deployment diff (masked values only) ──────────
     if (
       (m = url.pathname.match(/^\/api\/deployments\/([^/]+)\/diff\/([^/]+)$/)) &&
       req.method === "GET"
@@ -4456,26 +4563,36 @@ const server = http.createServer(async (req, res) => {
       const d1 = db.prepare("SELECT * FROM deployments WHERE id=?").get(m[1]);
       const d2 = db.prepare("SELECT * FROM deployments WHERE id=?").get(m[2]);
       if (!d1 || !d2) return json(res, 404, { error: "deployment not found" });
-      // load project env for each
       const p1 = db.prepare("SELECT env_json FROM projects WHERE name=?").get(d1.project);
       const p2 = db.prepare("SELECT env_json FROM projects WHERE name=?").get(d2.project);
       const env1 = p1 ? decryptJson(p1.env_json) : {};
       const env2 = p2 ? decryptJson(p2.env_json) : {};
+      const fingerprint = (val) =>
+        val === undefined || val === null
+          ? null
+          : "sha256:" + crypto.createHash("sha256").update(String(val)).digest("hex").slice(0, 8);
       const allKeys = [...new Set([...Object.keys(env1), ...Object.keys(env2)])];
       const envDiff = allKeys
-        .map((k) => ({
-          key: k,
-          base: env1[k] ?? null,
-          target: env2[k] ?? null,
-          change:
-            env1[k] === env2[k]
-              ? "unchanged"
-              : !env1[k]
+        .map((k) => {
+          const has1 = Object.prototype.hasOwnProperty.call(env1, k) && env1[k] !== undefined;
+          const has2 = Object.prototype.hasOwnProperty.call(env2, k) && env2[k] !== undefined;
+          const change =
+            has1 && has2
+              ? env1[k] === env2[k]
+                ? "unchanged"
+                : "modified"
+              : !has1
                 ? "added"
-                : !env2[k]
-                  ? "removed"
-                  : "modified",
-        }))
+                : "removed";
+          return {
+            key: k,
+            base: has1 ? `•••••••• (${fingerprint(env1[k])})` : null,
+            target: has2 ? `•••••••• (${fingerprint(env2[k])})` : null,
+            baseFingerprint: fingerprint(env1[k]),
+            targetFingerprint: fingerprint(env2[k]),
+            change,
+          };
+        })
         .filter((d) => d.change !== "unchanged");
 
       return json(res, 200, {
@@ -4502,68 +4619,6 @@ const server = http.createServer(async (req, res) => {
           (d2.finished_at ?? 0) -
           (d2.started_at ?? 0) -
           ((d1.finished_at ?? 0) - (d1.started_at ?? 0)),
-      });
-    }
-
-    // ────────── metrics ──────────
-    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/metrics$/)) && req.method === "GET") {
-      const p = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
-      if (!p) return json(res, 404, { error: "project not found" });
-      const sys = getSystemMetrics();
-      const deployCount = db
-        .prepare("SELECT COUNT(*) c FROM deployments WHERE project=?")
-        .get(m[1]).c;
-      const lastDeploy = db
-        .prepare("SELECT * FROM deployments WHERE project=? ORDER BY started_at DESC LIMIT 1")
-        .get(m[1]);
-      const proc = running.get(m[1]);
-      return json(res, 200, {
-        project: m[1],
-        process_running: !!proc && !proc.killed,
-        pid: proc?.pid ?? null,
-        deploy_count: deployCount,
-        last_deploy: lastDeploy ?? null,
-        system: sys,
-      });
-    }
-    if (url.pathname === "/api/metrics" && req.method === "GET") {
-      return json(res, 200, getSystemMetrics());
-    }
-
-    // ────────── stats ──────────
-    if (url.pathname === "/api/stats" && req.method === "GET") {
-      const totalProjects = db.prepare("SELECT COUNT(*) c FROM projects").get().c;
-      const totalDeploys = db.prepare("SELECT COUNT(*) c FROM deployments").get().c;
-      const successDeploys = db
-        .prepare("SELECT COUNT(*) c FROM deployments WHERE phase='ready'")
-        .get().c;
-      const failedDeploys = db
-        .prepare("SELECT COUNT(*) c FROM deployments WHERE phase='failed'")
-        .get().c;
-      const avgDuration = db
-        .prepare(
-          "SELECT AVG(finished_at - started_at) a FROM deployments WHERE finished_at IS NOT NULL",
-        )
-        .get().a;
-      const totalDomains = db.prepare("SELECT COUNT(*) c FROM domains").get().c;
-      const totalDbs = db.prepare("SELECT COUNT(*) c FROM managed_dbs").get().c;
-      const totalBackups = db.prepare("SELECT COUNT(*) c FROM backups").get().c;
-      const runningProcs = [...running.entries()].filter(([, p]) => !p.killed).length;
-      return json(res, 200, {
-        projects: totalProjects,
-        deployments: {
-          total: totalDeploys,
-          success: successDeploys,
-          failed: failedDeploys,
-          success_rate:
-            totalDeploys > 0 ? ((successDeploys / totalDeploys) * 100).toFixed(1) : "0.0",
-        },
-        avg_duration_ms: Math.round(avgDuration ?? 0),
-        domains: totalDomains,
-        databases: totalDbs,
-        backups: totalBackups,
-        running_processes: runningProcs,
-        system: getSystemMetrics(),
       });
     }
 
@@ -5228,6 +5283,7 @@ const server = http.createServer(async (req, res) => {
           rawBodyText: rawText,
           signatureHeader: sig,
           projectName,
+          deliveryGuid: req.headers["x-github-delivery"] || null,
         });
         return json(res, 200, result);
       } catch (err) {
@@ -5252,8 +5308,35 @@ const server = http.createServer(async (req, res) => {
     if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/previews$/)) && req.method === "GET") {
       return json(res, 200, webhookManager.listPreviews(m[1]));
     }
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/previews$/)) && req.method === "POST") {
+      const proj = db.prepare("SELECT * FROM projects WHERE name=?").get(m[1]);
+      if (!proj) return json(res, 404, { error: "Project not found" });
+      const b = await readBody(req);
+      const prNumber = Number(b.prNumber) || Math.floor((Date.now() % 8999) + 1000);
+      const prTitle = String(b.prTitle || `Preview #${prNumber}`).trim();
+      const branch = String(b.branch || `preview-${prNumber}`).trim();
+      const commitSha = String(b.commitSha || "HEAD").trim();
+      const created = await webhookManager.provisionPreview({
+        project: proj,
+        prNumber,
+        prTitle,
+        branch,
+        commitSha,
+      });
+      return json(res, 201, created);
+    }
     if (url.pathname === "/api/previews" && req.method === "GET") {
       return json(res, 200, webhookManager.listPreviews());
+    }
+    if ((m = url.pathname.match(/^\/api\/previews\/([^/]+)\/sleep$/)) && req.method === "POST") {
+      const updated = webhookManager.sleepPreview(m[1]);
+      if (!updated) return json(res, 404, { error: "Preview not found" });
+      return json(res, 200, updated);
+    }
+    if ((m = url.pathname.match(/^\/api\/previews\/([^/]+)\/wake$/)) && req.method === "POST") {
+      const updated = webhookManager.wakePreview(m[1]);
+      if (!updated) return json(res, 404, { error: "Preview not found" });
+      return json(res, 200, updated);
     }
     if ((m = url.pathname.match(/^\/api\/previews\/([^/]+)$/)) && req.method === "DELETE") {
       const ok = webhookManager.deletePreview(m[1]);
@@ -5312,7 +5395,8 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       try {
         const proto = req.headers["x-forwarded-proto"] || "http";
-        const invite = orgManager.createInvite(m[1], b, `${proto}://${req.headers.host}`);
+        const host = sanitizeHostHeader(req.headers.host, PORT);
+        const invite = orgManager.createInvite(m[1], b, `${proto}://${host}`);
         return json(res, 201, invite);
       } catch (err) {
         return json(res, 400, { error: err.message });
@@ -5796,7 +5880,12 @@ const server = http.createServer(async (req, res) => {
           userAgent: req.headers["user-agent"],
           method: "setup",
         });
-        return json(res, 201, { ok: true, user, token: s.token, expiresAt: s.expiresAt });
+        return json(
+          res,
+          201,
+          { ok: true, user, token: s.token, expiresAt: s.expiresAt },
+          { "Set-Cookie": sessionCookieHeader(req, s.token) },
+        );
       } catch (e) {
         return authFail(res, e);
       }
@@ -5804,7 +5893,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/auth/logout" && req.method === "POST") {
       const t = bearerFrom(req);
       if (t.startsWith("hxs_")) accounts.revokeSession(t);
-      return json(res, 200, { ok: true });
+      return json(res, 200, { ok: true }, { "Set-Cookie": sessionCookieHeader(req, "", true) });
     }
     const needSession = () =>
       sessionOf(req)
@@ -5952,6 +6041,7 @@ const server = http.createServer(async (req, res) => {
         JSON.stringify(requested),
         tokenPrefix(t),
       );
+      auditReq(req, "token.created", "token", tokenPrefix(t), { name: b.name || "token", scopes: requested });
       return json(res, 200, { token: t, scopes: requested });
     }
     if ((m = url.pathname.match(/^\/api\/tokens\/([^/]+)$/)) && req.method === "DELETE") {
@@ -5959,6 +6049,7 @@ const server = http.createServer(async (req, res) => {
       if (remaining === 0)
         return json(res, 409, { error: "cannot revoke the last token — create another first" });
       db.prepare("DELETE FROM tokens WHERE token=?").run(m[1]);
+      auditReq(req, "token.revoked", "token", m[1].slice(0, 12));
       return json(res, 200, { ok: true });
     }
 
@@ -6157,9 +6248,11 @@ const server = http.createServer(async (req, res) => {
     // ────────── AIOps Conversational Platform Control & Diagnostics ──────────
     if (url.pathname === "/api/ai/chat" && req.method === "POST") {
       const b = await readBody(req);
-      // The role comes from the caller's token — never from the request body.
+      // The role and actor email come from the caller's session/token — never trusted from body.
       const userRole = aiRoleFor(req);
-      const userEmail = String(b.userEmail || "admin@hosterax.local").slice(0, 120);
+      const userEmail =
+        sessionOf(req)?.user?.email ||
+        (isTrustedLocalRequest(req, PORT) ? "local@hosterax" : "api-token");
       const r = await aiOpsManager.handleChatTurn({
         prompt: b.prompt,
         conversationHistory: b.conversationHistory || [],
@@ -6206,14 +6299,14 @@ const server = http.createServer(async (req, res) => {
   } catch (e) {
     return json(res, 500, { error: String(e) });
   }
-});
+  }),
+);
 
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 /**
  * Browser WebSockets cannot set an Authorization header. The dashboard therefore sends an API token
- * or session token as a WebSocket subprotocol (never in a URL); proxies and access logs commonly
- * retain URLs. Native clients may still send a normal bearer header.
+ * or session token via HttpOnly cookie or WebSocket subprotocol (never in URL).
  */
 function websocketScopes(req) {
   if (isTrustedLocalRequest(req, PORT)) return ["*"];
@@ -6222,17 +6315,20 @@ function websocketScopes(req) {
     .map((value) => value.trim())
     .filter(Boolean);
   const token = bearerFrom(req) || protocolTokens.find((value) => value !== "hosterax") || "";
-  const ip = req.socket?.remoteAddress || "";
-  if (
-    (token === "local" || !token) &&
-    (ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1")
-  ) {
-    return ["*"];
-  }
+  if (!token) return null;
   if (token.startsWith("hxs_")) return accounts.resolveSession(token)?.scopes ?? null;
-  const row = token
-    ? db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hashToken(token))
-    : null;
+  if (token.startsWith("hx_oauth_")) {
+    const oauthRow = db
+      .prepare("SELECT scopes_json, expires_at, revoked FROM oauth_tokens WHERE token_hash=?")
+      .get(hashToken(token));
+    if (!oauthRow || oauthRow.revoked || oauthRow.expires_at < Date.now()) return null;
+    try {
+      return JSON.parse(oauthRow.scopes_json || '["read"]');
+    } catch {
+      return ["read"];
+    }
+  }
+  const row = db.prepare("SELECT scopes_json FROM tokens WHERE token=?").get(hashToken(token));
   if (!row) return null;
   try {
     return row.scopes_json ? JSON.parse(row.scopes_json) : ["*"];
@@ -6241,20 +6337,94 @@ function websocketScopes(req) {
   }
 }
 
-function closeWebSocket(ws) {
-  ws.close(1008, "unauthorized");
+function closeWebSocket(ws, reason = "unauthorized") {
+  ws.close(1008, reason);
 }
 
-wss.on("connection", (ws, req) => {
+wss.on("connection", async (ws, req) => {
   const url = new URL(req.url, "http://x");
   const deploymentId = url.searchParams.get("deployment");
   const projectRef = url.searchParams.get("project");
+  const isShell = url.searchParams.get("shell") === "1";
+  const shellContainer = url.searchParams.get("container");
   const isSystem =
     url.searchParams.get("system") === "true" ||
     url.searchParams.get("system") === "1" ||
     url.searchParams.get("stream") === "system";
 
-  if (scopesLevel(websocketScopes(req) || []) < 1) return closeWebSocket(ws);
+  const scopes = websocketScopes(req) || [];
+  if (scopesLevel(scopes) < 1) return closeWebSocket(ws);
+
+  if (isShell) {
+    if (scopesLevel(scopes) < 3) return closeWebSocket(ws, "admin scope required for interactive shell");
+    if (!shellContainer || !isSafeContainerName(shellContainer)) {
+      return closeWebSocket(ws, "invalid container name");
+    }
+    const cols = Math.min(Math.max(Number(url.searchParams.get("cols") || 100), 20), 400);
+    const rows = Math.min(Math.max(Number(url.searchParams.get("rows") || 30), 5), 200);
+    let execSession = null;
+    try {
+      const requestedShell = url.searchParams.get("cmd") === "bash" ? ["/bin/bash"] : ["/bin/sh"];
+      execSession = await dockerApi.createInteractiveExec(shellContainer, {
+        cmd: requestedShell,
+        cols,
+        rows,
+      });
+    } catch (err) {
+      try {
+        ws.send(
+          JSON.stringify({
+            type: "error",
+            message: err?.message || `Unable to open shell inside "${shellContainer}"`,
+          }),
+        );
+      } catch {}
+      ws.close(1011, "container shell unavailable");
+      return;
+    }
+    auditReq(req, "shell.attached", "container", shellContainer, { cols, rows });
+    try {
+      ws.send(JSON.stringify({ type: "ready", container: shellContainer, execId: execSession.execId }));
+    } catch {}
+    execSession.socket.on("data", (chunk) => {
+      try {
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: "output", data: chunk.toString("utf8") }));
+        }
+      } catch {}
+    });
+    execSession.socket.on("close", () => {
+      try {
+        ws.send(JSON.stringify({ type: "exit" }));
+      } catch {}
+      try {
+        ws.close(1000, "shell exited");
+      } catch {}
+    });
+    execSession.socket.on("error", () => {
+      try {
+        ws.close(1011, "docker exec stream error");
+      } catch {}
+    });
+    ws.on("message", (raw) => {
+      try {
+        const msg = JSON.parse(String(raw));
+        if (msg.type === "input" && typeof msg.data === "string") {
+          execSession.socket.write(msg.data);
+        } else if (msg.type === "resize") {
+          void execSession.resize(msg.cols, msg.rows);
+        }
+      } catch {
+        execSession.socket.write(String(raw));
+      }
+    });
+    ws.on("close", () => {
+      try {
+        execSession.socket.destroy();
+      } catch {}
+    });
+    return;
+  }
 
   if (isSystem) {
     systemSubs.add(ws);

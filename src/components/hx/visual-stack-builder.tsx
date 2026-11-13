@@ -181,7 +181,7 @@ export function VisualStackBuilder({
       id: newId,
       name,
       image: preset?.image || "alpine:latest",
-      category: preset?.category || detectServiceCategory(name, preset?.image),
+      category: preset ? preset.category : detectServiceCategory(name),
       ports: preset?.port ? [{ host: preset.port, container: preset.port }] : [],
       env: [],
       volumes: [],

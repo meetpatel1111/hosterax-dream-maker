@@ -183,7 +183,7 @@ export function MagicDnsSelector({
 
               {isCurrentSwitching && (
                 <div className="absolute inset-0 rounded-lg bg-background/60 backdrop-blur-[1px] flex items-center justify-center">
-                  <span className="text-xs font-medium text-primary flex items-center gap-1.5 animate-pulse">
+                  <span className="text-xs font-medium text-primary flex items-center gap-1.5">
                     <Sparkles className="h-3.5 w-3.5 animate-spin" /> Switching...
                   </span>
                 </div>

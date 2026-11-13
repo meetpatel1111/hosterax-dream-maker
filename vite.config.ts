@@ -122,25 +122,24 @@ export default defineConfig({
   vite: {
     server: {
       allowedHosts: true,
-      cors: true,
-      headers: {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
-        "Access-Control-Allow-Headers": "*",
-      },
+      cors: false,
       proxy: {
         "/api": {
           target: "http://127.0.0.1:7777",
           changeOrigin: true,
           xfwd: false,
-          configure: (proxy) => {
-            proxy.on("proxyReq", (proxyReq) => {
-              proxyReq.removeHeader("x-forwarded-for");
-              proxyReq.removeHeader("x-forwarded-host");
-              proxyReq.removeHeader("x-forwarded-proto");
-              proxyReq.removeHeader("x-forwarded-port");
-              proxyReq.removeHeader("forwarded");
-              proxyReq.removeHeader("origin");
+          configure: (proxy: any) => {
+            proxy.on("proxyReq", (proxyReq: any, req: any) => {
+              const peer = req?.socket?.remoteAddress || "";
+              const isLocalPeer =
+                peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+              if (!isLocalPeer && peer) {
+                const prev = req.headers["x-forwarded-for"];
+                proxyReq.setHeader("x-forwarded-for", prev ? `${prev}, ${peer}` : peer);
+                if (req.headers.host) {
+                  proxyReq.setHeader("x-forwarded-host", String(req.headers.host));
+                }
+              }
               proxyReq.setHeader("host", "127.0.0.1:7777");
             });
           },
@@ -149,14 +148,15 @@ export default defineConfig({
           target: "http://127.0.0.1:7777",
           changeOrigin: true,
           xfwd: false,
-          configure: (proxy) => {
-            proxy.on("proxyReq", (proxyReq) => {
-              proxyReq.removeHeader("x-forwarded-for");
-              proxyReq.removeHeader("x-forwarded-host");
-              proxyReq.removeHeader("x-forwarded-proto");
-              proxyReq.removeHeader("x-forwarded-port");
-              proxyReq.removeHeader("forwarded");
-              proxyReq.removeHeader("origin");
+          configure: (proxy: any) => {
+            proxy.on("proxyReq", (proxyReq: any, req: any) => {
+              const peer = req?.socket?.remoteAddress || "";
+              const isLocalPeer =
+                peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+              if (!isLocalPeer && peer) {
+                const prev = req.headers["x-forwarded-for"];
+                proxyReq.setHeader("x-forwarded-for", prev ? `${prev}, ${peer}` : peer);
+              }
               proxyReq.setHeader("host", "127.0.0.1:7777");
             });
           },
@@ -176,14 +176,15 @@ export default defineConfig({
           ws: true,
           changeOrigin: true,
           xfwd: false,
-          configure: (proxy) => {
-            proxy.on("proxyReqWs", (proxyReq) => {
-              proxyReq.removeHeader("x-forwarded-for");
-              proxyReq.removeHeader("x-forwarded-host");
-              proxyReq.removeHeader("x-forwarded-proto");
-              proxyReq.removeHeader("origin");
-              proxyReq.removeHeader("sec-fetch-site");
-              proxyReq.removeHeader("sec-fetch-mode");
+          configure: (proxy: any) => {
+            proxy.on("proxyReqWs", (proxyReq: any, req: any) => {
+              const peer = req?.socket?.remoteAddress || "";
+              const isLocalPeer =
+                peer === "127.0.0.1" || peer === "::1" || peer === "::ffff:127.0.0.1";
+              if (!isLocalPeer && peer) {
+                const prev = req.headers["x-forwarded-for"];
+                proxyReq.setHeader("x-forwarded-for", prev ? `${prev}, ${peer}` : peer);
+              }
               proxyReq.setHeader("host", "127.0.0.1:7777");
             });
           },
@@ -192,7 +193,7 @@ export default defineConfig({
     },
     build: {
       rollupOptions: {
-        onwarn(warning, defaultHandler) {
+        onwarn(warning: any, defaultHandler: any) {
           if (
             warning.code === "MODULE_LEVEL_DIRECTIVE" ||
             warning.message?.includes('"use client"') ||
@@ -202,7 +203,7 @@ export default defineConfig({
           }
           defaultHandler(warning);
         },
-        onLog(level, log, defaultHandler) {
+        onLog(level: any, log: any, defaultHandler: any) {
           if (
             log.code === "MODULE_LEVEL_DIRECTIVE" ||
             log.message?.includes('"use client"') ||
@@ -213,7 +214,6 @@ export default defineConfig({
           defaultHandler?.(level, log);
         },
       },
-      // @ts-expect-error - rolldownOptions when rolldown is utilized
       rolldownOptions: {
         onLog(level: any, log: any, defaultHandler: any) {
           if (

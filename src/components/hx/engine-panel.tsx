@@ -1,61 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEngine, useEngineHealth, useEngineProjects, useEngineSystem } from "@/lib/engine";
+import { useEngine, useEngineHealth } from "@/lib/engine";
 import { toast } from "sonner";
-import { Server, Package, Terminal, Trash2, ChevronDown, ShieldCheck } from "lucide-react";
-
-export const ONE_CLICK_APPS = [
-  {
-    slug: "n8n",
-    name: "n8n",
-    image: "docker.n8n.io/n8nio/n8n",
-    port: 5678,
-    desc: "Workflow automation",
-  },
-  { slug: "ghost", name: "Ghost", image: "ghost:5", port: 2368, desc: "Publishing platform" },
-  {
-    slug: "gitea",
-    name: "Gitea",
-    image: "gitea/gitea:latest",
-    port: 3000,
-    desc: "Self-hosted Git",
-  },
-  {
-    slug: "code-server",
-    name: "code-server",
-    image: "codercom/code-server:latest",
-    port: 8080,
-    desc: "VS Code in browser",
-  },
-  {
-    slug: "uptime-kuma",
-    name: "Uptime Kuma",
-    image: "louislam/uptime-kuma:1",
-    port: 3001,
-    desc: "Uptime monitoring",
-  },
-  {
-    slug: "vaultwarden",
-    name: "Vaultwarden",
-    image: "vaultwarden/server:latest",
-    port: 80,
-    desc: "Password manager",
-  },
-  {
-    slug: "excalidraw",
-    name: "Excalidraw",
-    image: "excalidraw/excalidraw:latest",
-    port: 80,
-    desc: "Whiteboard",
-  },
-  {
-    slug: "it-tools",
-    name: "IT-Tools",
-    image: "corentinth/it-tools:latest",
-    port: 80,
-    desc: "Dev utilities",
-  },
-];
+import { Server, Terminal, ChevronDown, ShieldCheck } from "lucide-react";
 
 export { useEngineHealth, useEngineProjects, useEngineSystem } from "@/lib/engine";
 
@@ -80,22 +26,22 @@ export function EngineBar() {
         className="flex w-full items-center justify-between gap-3 px-5 py-3 text-left"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <Server className="h-4 w-4 text-primary" />
-          <span className="text-sm font-semibold">Local engine</span>
+          <Server className="h-4 w-4 shrink-0 text-primary" />
+          <span className="whitespace-nowrap text-sm font-semibold">Local engine</span>
           <span className="truncate font-mono text-xs text-muted-foreground">{eng.url}</span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3">
           {online && (
             <span className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
-              <ShieldCheck className="h-3 w-3 text-primary animate-pulse" />
+              <ShieldCheck className="h-3 w-3 text-primary" />
               Self-Healing Watchdog: Active
             </span>
           )}
-          <span className={`text-xs ${online ? "text-success" : "text-destructive"}`}>
+          <span className={`whitespace-nowrap text-xs ${online ? "text-success" : "text-destructive"}`}>
             {online ? `online · v${health.version}` : "offline"}
           </span>
           <ChevronDown
-            className={`h-4 w-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
+            className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
           />
         </div>
       </button>
@@ -132,99 +78,6 @@ export function EngineBar() {
               Save
             </button>
           </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function OneClickApps() {
-  const eng = useEngine();
-  const qc = useQueryClient();
-  const { data: health } = useEngineHealth();
-  const { data: apps = [] } = useQuery({
-    queryKey: ["engine-apps", eng.url, eng.token],
-    queryFn: async () => (await eng.call<any[]>("GET", "/api/apps").catch(() => [])) ?? [],
-    enabled: !!health?.ok,
-    refetchInterval: 4000,
-  });
-
-  async function install(app: (typeof ONE_CLICK_APPS)[number]) {
-    try {
-      await eng.call("POST", "/api/apps", {
-        slug: app.slug,
-        name: app.name,
-        image: app.image,
-        port: app.port,
-      });
-      toast.success(`Installing ${app.name}`);
-      qc.invalidateQueries({ queryKey: ["engine-apps"] });
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  }
-
-  async function uninstall(id: string) {
-    try {
-      await eng.call("DELETE", `/api/apps/${id}`);
-      qc.invalidateQueries({ queryKey: ["engine-apps"] });
-    } catch (e: any) {
-      toast.error(e.message);
-    }
-  }
-
-  return (
-    <div className="rounded-xl border border-border bg-card p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <Package className="h-4 w-4 text-primary" /> Quick Install Apps
-        </h2>
-        <a href="/new" className="text-xs font-medium text-primary hover:underline">
-          Browse All 2,500+ Apps →
-        </a>
-      </div>
-      <div className="mb-4 grid gap-2 md:grid-cols-2 lg:grid-cols-4">
-        {ONE_CLICK_APPS.map((a) => (
-          <button
-            key={a.slug}
-            onClick={() => install(a)}
-            disabled={!health?.ok}
-            className="rounded-lg border border-border p-3 text-left transition-colors hover:border-primary/60 hover:bg-accent/30 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            <div className="text-sm font-medium">{a.name}</div>
-            <div className="mt-0.5 text-xs text-muted-foreground">{a.desc}</div>
-            <div className="mt-1 font-mono text-[10px] text-muted-foreground">:{a.port}</div>
-          </button>
-        ))}
-      </div>
-      {apps.length > 0 && (
-        <div className="divide-y divide-border border-t border-border">
-          {apps.map((a: any) => (
-            <div key={a.id} className="flex items-center justify-between py-2">
-              <div className="min-w-0">
-                <span className="text-sm font-medium">{a.name}</span>
-                <span className="ml-2 rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[10px] uppercase">
-                  {a.status}
-                </span>
-                {a.port && (
-                  <a
-                    href={`http://localhost:${a.port}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="ml-2 font-mono text-xs text-primary hover:underline"
-                  >
-                    localhost:{a.port}
-                  </a>
-                )}
-              </div>
-              <button
-                onClick={() => uninstall(a.id)}
-                className="rounded-md p-1.5 text-muted-foreground hover:text-destructive"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          ))}
         </div>
       )}
     </div>

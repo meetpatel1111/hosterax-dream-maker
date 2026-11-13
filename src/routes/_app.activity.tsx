@@ -14,10 +14,12 @@ import {
   MousePointer,
   ExternalLink,
   Trash2,
+  Radio,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useEngine, useEngineProjects } from "@/lib/engine";
 import { appLogger, filterLogs, type LogEntry } from "@/utils/app-logger";
+import { SiemForwarderStudio } from "@/components/hx/siem-forwarder-studio";
 import { toast } from "sonner";
 import { confirmAction } from "@/components/hx/confirm-modal";
 
@@ -48,7 +50,7 @@ function eventTime(value?: string | number | null) {
 function ActivityPage() {
   const [q, setQ] = useState("");
   const [filterKind, setFilterKind] = useState("all");
-  const [viewMode, setViewMode] = useState<"engine" | "client">("engine");
+  const [viewMode, setViewMode] = useState<"engine" | "client" | "siem">("engine");
   const [clientLogs, setClientLogs] = useState<LogEntry[]>(() => appLogger.getLogs());
   const engine = useEngine();
   const { data: engineProjects = [] } = useEngineProjects();
@@ -80,6 +82,7 @@ function ActivityPage() {
         engine.call<any[]>("GET", "/api/deployments?limit=100", undefined, { signal }),
         engine.call<any[]>("GET", "/api/self-heal/events?limit=100", undefined, { signal }),
         engine.call<any[]>("GET", "/api/auth/events?limit=100", undefined, { signal }),
+        engine.call<any[]>("GET", "/api/audit-logs?limit=100", undefined, { signal }),
       ]);
       if (signal.aborted) throw new DOMException("Activity request aborted", "AbortError");
       const unavailableSources: string[] = [];
@@ -89,10 +92,11 @@ function ActivityPage() {
         unavailableSources.push(source);
         return [];
       };
-      const [deployments, healEvents, authEvents] = [
+      const [deployments, healEvents, authEvents, auditLogs] = [
         sourceRows(0, "deployments"),
         sourceRows(1, "self-healing"),
         sourceRows(2, "authentication"),
+        sourceRows(3, "audit-logs"),
       ];
 
       const events: ActivityEvent[] = engineProjects.map((project) => ({
@@ -153,6 +157,19 @@ function ActivityPage() {
         });
       }
 
+      for (const audit of auditLogs) {
+        events.push({
+          id: `audit-${audit.id}`,
+          kind: `audit.${audit.action || "event"}`,
+          label: `${audit.action || "audit.event"}${audit.resource_id ? ` (${audit.resource_id})` : ""}`,
+          user: audit.actor_email || "System",
+          ip: audit.ip || null,
+          at: eventTime(audit.created_at),
+          status: "success",
+          meta: audit.resource_type || audit.org_id || null,
+        });
+      }
+
       events.sort((a, b) => {
         const timeA = a.at ? new Date(a.at).getTime() : 0;
         const timeB = b.at ? new Date(b.at).getTime() : 0;
@@ -165,6 +182,7 @@ function ActivityPage() {
 
   const kinds = [
     { id: "all", label: "All events" },
+    { id: "audit", label: "Audit Trail" },
     { id: "project", label: "Projects" },
     { id: "deploy", label: "Deployments" },
     { id: "heal", label: "Self-Healing" },
@@ -185,9 +203,11 @@ function ActivityPage() {
       !query ||
       event.label.toLowerCase().includes(query) ||
       event.user.toLowerCase().includes(query) ||
-      event.ip?.toLowerCase().includes(query);
+      event.ip?.toLowerCase().includes(query) ||
+      event.kind.toLowerCase().includes(query);
     const matchKind =
       filterKind === "all" ||
+      (filterKind === "audit" && event.kind.startsWith("audit")) ||
       (filterKind === "project" && event.kind.startsWith("project")) ||
       (filterKind === "deploy" && event.kind.startsWith("deploy")) ||
       (filterKind === "heal" &&
@@ -197,7 +217,7 @@ function ActivityPage() {
   });
 
   const filteredClient = filterLogs(clientLogs, {
-    search: q,
+    searchQuery: q,
     category:
       filterKind === "api" ||
       filterKind === "ui" ||
@@ -215,7 +235,9 @@ function ActivityPage() {
           <p className="text-sm text-muted-foreground">
             {viewMode === "engine"
               ? "Recent project, deployment, self-healing, and authentication events from the engine."
-              : "Live client-side telemetry: API latency, UI interactions, navigation, and security events."}
+              : viewMode === "client"
+                ? "Live client-side telemetry: API latency, UI interactions, navigation, and security events."
+                : "Real-time log forwarding to external SIEM systems, Datadog, Splunk, and Syslog daemons."}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -248,6 +270,21 @@ function ActivityPage() {
             >
               Live Telemetry & Client Logs ({clientLogs.length})
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setViewMode("siem");
+                setFilterKind("all");
+              }}
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                viewMode === "siem"
+                  ? "bg-primary text-primary-foreground shadow-xs"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Radio className="h-3.5 w-3.5" />
+              <span>SIEM & Syslog Forwarding</span>
+            </button>
           </div>
           <button
             type="button"
@@ -255,7 +292,7 @@ function ActivityPage() {
             className="inline-flex items-center gap-1.5 rounded-lg border border-border/80 bg-card px-3 py-1.5 text-xs font-mono font-medium text-foreground hover:bg-muted/80 transition-colors shadow-xs"
             title="Open Live Inspector Drawer (Shift+L)"
           >
-            <Activity className="h-3.5 w-3.5 text-primary animate-pulse" />
+            <Activity className="h-3.5 w-3.5 text-primary" />
             <span>Inspector</span>
             <span className="text-[10px] text-muted-foreground">⇧L</span>
           </button>
@@ -286,172 +323,180 @@ function ActivityPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="relative min-w-[240px] flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
-            aria-label="Search activity"
-            value={q}
-            onChange={(event) => setQ(event.target.value)}
-            placeholder={
-              viewMode === "engine"
-                ? "Search events, actors, projects..."
-                : "Search method, endpoint, action, message..."
-            }
-            className="w-full rounded-md border border-input bg-input/40 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
-          />
-        </div>
-        <div
-          className="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
-          role="group"
-          aria-label="Filter activity by type"
-        >
-          {(viewMode === "engine" ? kinds : clientCategories).map((kind) => (
-            <button
-              key={kind.id}
-              type="button"
-              aria-pressed={filterKind === kind.id}
-              onClick={() => setFilterKind(kind.id)}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
-                filterKind === kind.id
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+      {viewMode === "siem" ? (
+        <SiemForwarderStudio />
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-[240px] flex-1">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <input
+                aria-label="Search activity"
+                value={q}
+                onChange={(event) => setQ(event.target.value)}
+                placeholder={
+                  viewMode === "engine"
+                    ? "Search events, actors, projects..."
+                    : "Search method, endpoint, action, message..."
+                }
+                className="w-full rounded-md border border-input bg-input/40 py-2 pl-9 pr-3 text-sm outline-none focus:border-primary"
+              />
+            </div>
+            <div
+              className="flex flex-wrap gap-1 rounded-lg border border-border bg-card p-1"
+              role="group"
+              aria-label="Filter activity by type"
             >
-              {kind.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
-        {viewMode === "engine" ? (
-          isPending ? (
-            <div className="p-12 text-center text-sm text-muted-foreground" role="status">
-              Loading activity…
-            </div>
-          ) : filteredEngine.length === 0 ? (
-            <div className="p-12 text-center text-sm text-muted-foreground">
-              No activity matches your filters.
-            </div>
-          ) : (
-            <div className="divide-y divide-border">
-              {filteredEngine.map((event) => (
-                <div
-                  key={event.id}
-                  className="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-accent/40"
+              {(viewMode === "engine" ? kinds : clientCategories).map((kind) => (
+                <button
+                  key={kind.id}
+                  type="button"
+                  aria-pressed={filterKind === kind.id}
+                  onClick={() => setFilterKind(kind.id)}
+                  className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${
+                    filterKind === kind.id
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
                 >
-                  <div className="flex min-w-0 items-center gap-3.5">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted-foreground">
-                      {event.kind.startsWith("deploy") ? (
-                        <Rocket className="h-4 w-4 text-primary" />
-                      ) : event.kind.startsWith("heal") || event.kind.startsWith("guard") ? (
-                        <HeartPulse className="h-4 w-4 text-emerald-500" />
-                      ) : event.kind.startsWith("auth") ? (
-                        <Shield className="h-4 w-4 text-sky-500" />
-                      ) : (
-                        <PlusCircle className="h-4 w-4 text-amber-500" />
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="break-words text-sm font-medium text-foreground">
-                        {event.label}
-                      </div>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        <span>{event.user}</span>
-                        {event.ip && (
-                          <>
-                            <span>·</span>
-                            <span className="font-mono">{event.ip}</span>
-                          </>
-                        )}
-                        {event.meta && (
-                          <>
-                            <span>·</span>
-                            <span>{event.meta}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    {event.status && (
-                      <div className="mb-1 flex justify-end">
-                        <StatusBadge status={event.status} />
-                      </div>
-                    )}
-                    <div className="text-xs text-muted-foreground">
-                      {event.at
-                        ? formatDistanceToNow(new Date(event.at), { addSuffix: true })
-                        : "Time unavailable"}
-                    </div>
-                  </div>
-                </div>
+                  {kind.label}
+                </button>
               ))}
             </div>
-          )
-        ) : filteredClient.length === 0 ? (
-          <div className="p-12 text-center text-sm text-muted-foreground">
-            No client telemetry recorded yet matching your filters. Interactions will appear here in
-            real-time.
           </div>
-        ) : (
-          <div className="divide-y divide-border font-mono text-xs">
-            {filteredClient.map((entry) => (
-              <div
-                key={entry.id}
-                className="flex items-center justify-between gap-3 p-3 transition-colors hover:bg-accent/40"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                    {entry.category === "api" ? (
-                      <Terminal className="h-4 w-4 text-primary" />
-                    ) : entry.category === "ui" ? (
-                      <MousePointer className="h-4 w-4 text-emerald-400" />
-                    ) : entry.category === "security" ? (
-                      <Shield className="h-4 w-4 text-amber-400" />
-                    ) : (
-                      <Activity className="h-4 w-4 text-sky-400" />
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 truncate">
-                      {entry.method && (
-                        <span className="font-bold text-primary">{entry.method}</span>
-                      )}
-                      <span className="font-semibold text-foreground truncate">{entry.action}</span>
-                      {entry.status !== undefined && (
-                        <span
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            entry.status >= 200 && entry.status < 300
-                              ? "bg-emerald-500/15 text-emerald-400"
-                              : entry.status >= 400
-                                ? "bg-rose-500/15 text-rose-400"
-                                : "bg-amber-500/15 text-amber-400"
-                          }`}
-                        >
-                          {entry.status}
-                        </span>
-                      )}
-                      {entry.durationMs !== undefined && (
-                        <span className="text-[10px] text-muted-foreground">
-                          {Math.round(entry.durationMs)}ms
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-0.5 text-muted-foreground truncate font-sans text-xs">
-                      {entry.message}
-                    </div>
-                  </div>
+
+          <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
+            {viewMode === "engine" ? (
+              isPending ? (
+                <div className="p-12 text-center text-sm text-muted-foreground" role="status">
+                  Loading activity…
                 </div>
-                <div className="shrink-0 text-right text-[11px] text-muted-foreground">
-                  {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
+              ) : filteredEngine.length === 0 ? (
+                <div className="p-12 text-center text-sm text-muted-foreground">
+                  No activity matches your filters.
                 </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {filteredEngine.map((event) => (
+                    <div
+                      key={event.id}
+                      className="flex items-center justify-between gap-4 p-4 transition-colors hover:bg-accent/40"
+                    >
+                      <div className="flex min-w-0 items-center gap-3.5">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-muted-foreground">
+                          {event.kind.startsWith("deploy") ? (
+                            <Rocket className="h-4 w-4 text-primary" />
+                          ) : event.kind.startsWith("heal") || event.kind.startsWith("guard") ? (
+                            <HeartPulse className="h-4 w-4 text-emerald-500" />
+                          ) : event.kind.startsWith("auth") ? (
+                            <Shield className="h-4 w-4 text-sky-500" />
+                          ) : (
+                            <PlusCircle className="h-4 w-4 text-amber-500" />
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="break-words text-sm font-medium text-foreground">
+                            {event.label}
+                          </div>
+                          <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            <span>{event.user}</span>
+                            {event.ip && (
+                              <>
+                                <span>·</span>
+                                <span className="font-mono">{event.ip}</span>
+                              </>
+                            )}
+                            {event.meta && (
+                              <>
+                                <span>·</span>
+                                <span>{event.meta}</span>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        {event.status && (
+                          <div className="mb-1 flex justify-end">
+                            <StatusBadge status={event.status} />
+                          </div>
+                        )}
+                        <div className="text-xs text-muted-foreground">
+                          {event.at
+                            ? formatDistanceToNow(new Date(event.at), { addSuffix: true })
+                            : "Time unavailable"}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )
+            ) : filteredClient.length === 0 ? (
+              <div className="p-12 text-center text-sm text-muted-foreground">
+                No client telemetry recorded yet matching your filters. Interactions will appear
+                here in real-time.
               </div>
-            ))}
+            ) : (
+              <div className="divide-y divide-border font-mono text-xs">
+                {filteredClient.map((entry) => (
+                  <div
+                    key={entry.id}
+                    className="flex items-center justify-between gap-3 p-3 transition-colors hover:bg-accent/40"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+                        {entry.category === "api" ? (
+                          <Terminal className="h-4 w-4 text-primary" />
+                        ) : entry.category === "ui" ? (
+                          <MousePointer className="h-4 w-4 text-emerald-400" />
+                        ) : entry.category === "security" ? (
+                          <Shield className="h-4 w-4 text-amber-400" />
+                        ) : (
+                          <Activity className="h-4 w-4 text-sky-400" />
+                        )}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 truncate">
+                          {entry.method && (
+                            <span className="font-bold text-primary">{entry.method}</span>
+                          )}
+                          <span className="font-semibold text-foreground truncate">
+                            {entry.action}
+                          </span>
+                          {entry.status !== undefined && (
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                entry.status >= 200 && entry.status < 300
+                                  ? "bg-emerald-500/15 text-emerald-400"
+                                  : entry.status >= 400
+                                    ? "bg-rose-500/15 text-rose-400"
+                                    : "bg-amber-500/15 text-amber-400"
+                              }`}
+                            >
+                              {entry.status}
+                            </span>
+                          )}
+                          {entry.durationMs !== undefined && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {Math.round(entry.durationMs)}ms
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-0.5 text-muted-foreground truncate font-sans text-xs">
+                          {entry.message}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right text-[11px] text-muted-foreground">
+                      {formatDistanceToNow(new Date(entry.timestamp), { addSuffix: true })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }

@@ -87,7 +87,7 @@ export function AiTroubleshootModal({ projectName, isOpen, onClose }: AiTroubles
         <div className="flex items-center justify-between border-b border-border/60 p-4 bg-muted/30">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary/15 border border-primary/30 text-primary">
-              <Sparkles className="w-5 h-5 animate-pulse" />
+              <Sparkles className="w-5 h-5" />
             </div>
             <div>
               <h2 className="text-base font-semibold text-foreground flex items-center gap-2">

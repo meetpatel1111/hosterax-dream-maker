@@ -4,10 +4,12 @@
 // Implements MCP 2024-11-05 JSON-RPC 2.0 specification over HTTP POST and Server-Sent Events.
 
 import { normalizeDomain, assertDomainAvailable } from "./domain-utils.mjs";
+import fs from "node:fs";
 import crypto from "node:crypto";
 import os from "node:os";
 import { ENGINE_VERSION } from "./version.mjs";
 import { decryptJson } from "./secrets.mjs";
+import { assertSafeLocalPath } from "./security.mjs";
 
 // Tools that only read state. Everything else needs at least a "deploy" scoped token.
 const READ_ONLY_TOOLS = new Set([
@@ -892,6 +894,18 @@ export class MCPServer {
         }
 
         case "create_project": {
+          const rawSource = String(args.source || "").trim();
+          const looksLikeGit = /^(https?:\/\/|ssh:\/\/|git@[^:]+:)/i.test(rawSource);
+          const looksLikeLocal =
+            rawSource.startsWith("/") ||
+            rawSource.startsWith("./") ||
+            rawSource.startsWith("../") ||
+            rawSource.startsWith("~") ||
+            /^[A-Za-z]:[/\\]/.test(rawSource);
+          let validatedSource = rawSource;
+          if (!looksLikeGit && (looksLikeLocal || (rawSource && fs.existsSync(rawSource)))) {
+            validatedSource = assertSafeLocalPath(rawSource);
+          }
           const id = "proj_" + crypto.randomBytes(8).toString("hex");
           const slug = args.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
           this.db
@@ -903,7 +917,7 @@ export class MCPServer {
               id,
               args.name,
               slug,
-              args.source,
+              validatedSource,
               args.buildCmd || "",
               args.startCmd || "",
               "{}",

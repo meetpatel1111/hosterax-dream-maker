@@ -1,38 +1,37 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   GitPullRequest,
-  ExternalLink,
   Plus,
   RefreshCw,
   Search,
   CheckCircle2,
-  AlertCircle,
   Copy,
-  Clock,
   Moon,
   Sun,
   Zap,
   Globe,
   Trash2,
-  Terminal,
   Bot,
   Webhook,
   Activity,
   Layers,
   ArrowUpRight,
   Send,
-  Sparkles,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useEngine, useEngineProjects, usePRPreviews, type PRPreview } from "../../lib/engine";
+import { confirmAction } from "./confirm-modal";
 import {
   calculatePreviewFleetMetrics,
   generatePrBotComment,
   evaluateAutoSleepTtl,
-  generatePreviewSubdomain,
   filterPreviewEnvironments,
   formatRelativeTime,
 } from "../../utils/preview-environments";
+
+function isHibernated(status: string) {
+  return status === "stopped" || status === "sleeping";
+}
 
 export function PreviewEnvironmentsManager() {
   const engine = useEngine();
@@ -40,17 +39,7 @@ export function PreviewEnvironmentsManager() {
   const previewsQuery = usePRPreviews();
 
   const projects = useMemo(() => projectsQuery.data || [], [projectsQuery.data]);
-  const rawPreviews = useMemo(() => previewsQuery.data || [], [previewsQuery.data]);
-
-  // Only real previews tracked by engine or launched in current session
-  const [localEphemeralPreviews, setLocalEphemeralPreviews] = useState<PRPreview[]>([]);
-
-  // Combined fleet
-  const allPreviews = useMemo(() => {
-    const liveIds = new Set(rawPreviews.map((p) => p.id));
-    const extraLocals = localEphemeralPreviews.filter((p) => !liveIds.has(p.id));
-    return [...rawPreviews, ...extraLocals];
-  }, [rawPreviews, localEphemeralPreviews]);
+  const allPreviews = useMemo(() => previewsQuery.data || [], [previewsQuery.data]);
 
   // Tab & Filter States
   const [activeTab, setActiveTab] = useState<"fleet" | "webhooks" | "bot" | "scaletozero">("fleet");
@@ -66,8 +55,7 @@ export function PreviewEnvironmentsManager() {
   const [newPrNumber, setNewPrNumber] = useState<number>(101);
   const [newPrTitle, setNewPrTitle] = useState("");
   const [newBranch, setNewBranch] = useState("");
-  const [newPort, setNewPort] = useState<number>(3000);
-  const [newSleepTimeout, setNewSleepTimeout] = useState<number>(30);
+  const [newCommitSha, setNewCommitSha] = useState("HEAD");
   const [isLaunching, setIsLaunching] = useState(false);
 
   // Bot Comment Modal
@@ -78,7 +66,18 @@ export function PreviewEnvironmentsManager() {
   const [simulatedEventType, setSimulatedEventType] = useState<"opened" | "synchronize" | "closed">(
     "opened",
   );
+  const [webhookPrNumber, setWebhookPrNumber] = useState<number>(201);
+  const [webhookBranch, setWebhookBranch] = useState("feat/preview-smoke");
   const [isDispatchingWebhook, setIsDispatchingWebhook] = useState(false);
+
+  useEffect(() => {
+    if (projects.length > 0 && !newProjectName) {
+      setNewProjectName(projects[0].name);
+    }
+    if (projects.length > 0 && !webhookEventProject) {
+      setWebhookEventProject(projects[0].name);
+    }
+  }, [projects, newProjectName, webhookEventProject]);
 
   // Filtered List
   const filteredPreviews = useMemo(() => {
@@ -102,7 +101,11 @@ export function PreviewEnvironmentsManager() {
 
   // Handler: Launch Ephemeral Preview
   const handleLaunchPreview = async () => {
-    const proj = newProjectName || (projects[0]?.name ?? "web-app");
+    const proj = newProjectName || projects[0]?.name || "";
+    if (!proj) {
+      toast.error("Create or select a project first");
+      return;
+    }
     if (!newBranch.trim()) {
       toast.error("Please specify a branch name");
       return;
@@ -110,43 +113,25 @@ export function PreviewEnvironmentsManager() {
 
     setIsLaunching(true);
     try {
-      const subdomain = generatePreviewSubdomain(proj, newPrNumber, newBranch);
-      const previewUrl = `https://${subdomain}.preview.hosterax.net`;
+      const created = await engine.call<PRPreview>(
+        "POST",
+        `/api/projects/${encodeURIComponent(proj)}/previews`,
+        {
+          prNumber: newPrNumber,
+          prTitle: newPrTitle.trim() || `Pull Request #${newPrNumber}`,
+          branch: newBranch.trim(),
+          commitSha: newCommitSha.trim() || "HEAD",
+        },
+      );
 
-      // Attempt engine call if supported
-      try {
-        await engine.call("POST", `/api/projects/${proj}/previews`, {
-          pr_number: newPrNumber,
-          pr_title: newPrTitle || `Feature ${newBranch}`,
-          branch: newBranch,
-          commit_sha: Math.random().toString(16).substring(2, 10),
-          port: newPort,
-          sleep_timeout: newSleepTimeout,
-        });
-      } catch {}
-
-      const newPreview: PRPreview = {
-        id: `prev-${Date.now()}`,
-        project_name: proj,
-        pr_number: newPrNumber,
-        pr_title: newPrTitle || `Pull Request #${newPrNumber}`,
-        branch: newBranch,
-        commit_sha: Math.random().toString(16).substring(2, 14),
-        subdomain,
-        preview_url: previewUrl,
-        container_name: `hx_prev_${proj}_${newPrNumber}`,
-        port: newPort,
-        status: "live",
-        created_at: Date.now(),
-        updated_at: Date.now(),
-      };
-
-      setLocalEphemeralPreviews((prev) => [newPreview, ...prev]);
-      previewsQuery.refetch();
-      toast.success(`Ephemeral environment "${subdomain}" launched!`);
+      await previewsQuery.refetch();
+      toast.success(
+        `Ephemeral environment "${created.subdomain || `PR #${newPrNumber}`}" provisioned.`,
+      );
       setShowLaunchModal(false);
       setNewBranch("");
       setNewPrTitle("");
+      setNewCommitSha("HEAD");
       setNewPrNumber((n) => n + 1);
     } catch (err: any) {
       toast.error(err?.message || "Failed to launch preview environment");
@@ -157,24 +142,17 @@ export function PreviewEnvironmentsManager() {
 
   // Handler: Toggle Sleep / Wake
   const handleToggleSleep = async (preview: PRPreview) => {
-    const nextStatus = preview.status === "live" ? "stopped" : "live";
-    const actionLabel = nextStatus === "stopped" ? "Hibernated (Scale-to-Zero)" : "Woken Up";
+    const hibernated = isHibernated(preview.status);
+    const endpoint = hibernated ? "wake" : "sleep";
+    const actionLabel = hibernated ? "Woken Up" : "Hibernated (Scale-to-Zero)";
 
     try {
-      try {
-        await engine.call(
-          "POST",
-          `/api/previews/${preview.id}/${nextStatus === "stopped" ? "sleep" : "wake"}`,
-        );
-      } catch {}
-
-      setLocalEphemeralPreviews((current) =>
-        current.map((p) =>
-          p.id === preview.id ? { ...p, status: nextStatus, updated_at: Date.now() } : p,
-        ),
+      await engine.call(
+        "POST",
+        `/api/previews/${encodeURIComponent(preview.id)}/${endpoint}`,
       );
       toast.success(`Environment #${preview.pr_number} ${actionLabel}`);
-      previewsQuery.refetch();
+      await previewsQuery.refetch();
     } catch (err: any) {
       toast.error(err?.message || "Failed to update preview state");
     }
@@ -182,41 +160,44 @@ export function PreviewEnvironmentsManager() {
 
   // Handler: Tear Down Preview
   const handleTearDownPreview = async (preview: PRPreview) => {
-    if (
-      !confirm(
-        `Are you sure you want to destroy preview environment for PR #${preview.pr_number} (${preview.branch})?`,
-      )
-    ) {
-      return;
-    }
+    const confirmed = await confirmAction({
+      title: `Tear Down PR #${preview.pr_number}`,
+      description: `Destroy preview environment for PR #${preview.pr_number} (${preview.branch})? Its container and ephemeral route will be removed.`,
+      confirmLabel: "Destroy Preview",
+      variant: "destructive",
+    });
+    if (!confirmed) return;
 
     try {
-      try {
-        await engine.call("DELETE", `/api/previews/${preview.id}`);
-      } catch {}
-
-      setLocalEphemeralPreviews((current) => current.filter((p) => p.id !== preview.id));
+      await engine.call("DELETE", `/api/previews/${encodeURIComponent(preview.id)}`);
       toast.success(`Ephemeral preview for PR #${preview.pr_number} torn down.`);
-      previewsQuery.refetch();
+      await previewsQuery.refetch();
     } catch (err: any) {
       toast.error(err?.message || "Failed to tear down preview");
     }
   };
 
-  // Handler: Dispatch Simulated Webhook Event
+  // Handler: Dispatch GitHub Webhook Event to Real Project Webhook Receiver
   const handleDispatchWebhook = async () => {
-    const targetProject = webhookEventProject || projects[0]?.name || "hosterax-dashboard";
+    const targetProject = webhookEventProject || projects[0]?.name || "";
+    if (!targetProject) {
+      toast.error("Create or select a target project first");
+      return;
+    }
+    const prNumber = Number(webhookPrNumber) || 201;
+    const branch = webhookBranch.trim() || `preview-pr-${prNumber}`;
     setIsDispatchingWebhook(true);
 
     try {
-      const mockPayload = {
+      const payload = {
         action: simulatedEventType,
+        number: prNumber,
         pull_request: {
-          number: Math.floor(Math.random() * 800) + 100,
-          title: `Simulated PR: update to microservice gateway`,
+          number: prNumber,
+          title: `PR #${prNumber}: ${branch}`,
           head: {
-            ref: `feat/gateway-v${Math.floor(Math.random() * 5) + 1}`,
-            sha: Math.random().toString(16).substring(2, 14),
+            ref: branch,
+            sha: "HEAD",
           },
         },
         repository: {
@@ -224,41 +205,19 @@ export function PreviewEnvironmentsManager() {
         },
       };
 
-      try {
-        await engine.call("POST", `/api/projects/${targetProject}/webhook-test`, mockPayload);
-      } catch {}
+      const res = await engine.call<{ action?: string }>(
+        "POST",
+        `/api/projects/${encodeURIComponent(targetProject)}/webhooks/github`,
+        payload,
+        { headers: { "x-github-event": "pull_request" } },
+      );
 
-      if (simulatedEventType === "closed") {
-        toast.success(
-          `Webhook pull_request.closed received: Tore down corresponding preview container.`,
-        );
-      } else {
-        toast.success(
-          `Webhook pull_request.${simulatedEventType} received: Triggered ephemeral preview deployment!`,
-        );
-        // Add preview to list
-        const prNum = mockPayload.pull_request.number;
-        const branch = mockPayload.pull_request.head.ref;
-        const subdomain = generatePreviewSubdomain(targetProject, prNum, branch);
-
-        setLocalEphemeralPreviews((prev) => [
-          {
-            id: `prev-webhook-${Date.now()}`,
-            project_name: targetProject,
-            pr_number: prNum,
-            pr_title: mockPayload.pull_request.title,
-            branch,
-            commit_sha: mockPayload.pull_request.head.sha,
-            subdomain,
-            preview_url: `https://${subdomain}.preview.hosterax.net`,
-            container_name: `hx_prev_${targetProject}_${prNum}`,
-            port: 3000,
-            status: "live",
-            created_at: Date.now(),
-            updated_at: Date.now(),
-          },
-          ...prev,
-        ]);
+      await previewsQuery.refetch();
+      toast.success(
+        `Webhook pull_request.${simulatedEventType} processed${res?.action ? ` (${res.action})` : ""}.`,
+      );
+      if (simulatedEventType === "opened") {
+        setWebhookPrNumber((n) => n + 1);
       }
     } catch (err: any) {
       toast.error(err?.message || "Webhook dispatch failed");
@@ -471,14 +430,14 @@ export function PreviewEnvironmentsManager() {
                           className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
                             p.status === "live"
                               ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
-                              : p.status === "stopped"
+                              : isHibernated(p.status)
                                 ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
                                 : p.status === "deploying"
                                   ? "bg-sky-500/15 text-sky-400 border border-sky-500/30"
                                   : "bg-destructive/15 text-destructive border border-destructive/30"
                           }`}
                         >
-                          {p.status === "stopped" ? "💤 Sleeping" : p.status}
+                          {isHibernated(p.status) ? "💤 Sleeping" : p.status}
                         </span>
                         <span className="text-muted-foreground text-[11px]">
                           updated {formatRelativeTime(p.updated_at)}
@@ -531,17 +490,17 @@ export function PreviewEnvironmentsManager() {
                       <button
                         onClick={() => handleToggleSleep(p)}
                         className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-                          p.status === "stopped"
+                          isHibernated(p.status)
                             ? "bg-amber-500 text-black hover:bg-amber-400"
                             : "border border-border bg-surface-2 text-foreground hover:bg-accent"
                         }`}
                         title={
-                          p.status === "stopped"
+                          isHibernated(p.status)
                             ? "Wake container"
                             : "Hibernate container to save RAM"
                         }
                       >
-                        {p.status === "stopped" ? (
+                        {isHibernated(p.status) ? (
                           <>
                             <Sun className="h-3.5 w-3.5" /> Wake Up
                           </>
@@ -659,7 +618,7 @@ export function PreviewEnvironmentsManager() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 text-xs">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
               <label className="space-y-1">
                 <span className="font-medium text-foreground">Target Project</span>
                 <select
@@ -686,6 +645,27 @@ export function PreviewEnvironmentsManager() {
                   <option value="synchronize">pull_request.synchronize (Update Commit)</option>
                   <option value="closed">pull_request.closed (Tear Down Container)</option>
                 </select>
+              </label>
+
+              <label className="space-y-1">
+                <span className="font-medium text-foreground">PR Number</span>
+                <input
+                  type="number"
+                  min={1}
+                  value={webhookPrNumber}
+                  onChange={(e) => setWebhookPrNumber(Number(e.target.value))}
+                  className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs outline-none"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="font-medium text-foreground">Branch</span>
+                <input
+                  type="text"
+                  value={webhookBranch}
+                  onChange={(e) => setWebhookBranch(e.target.value)}
+                  className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs outline-none"
+                />
               </label>
             </div>
 
@@ -808,22 +788,9 @@ export function PreviewEnvironmentsManager() {
               </div>
             </div>
 
-            <div className="space-y-2 pt-2 border-t border-border text-xs">
-              <label className="font-medium text-foreground block">
-                Global Idle Inactivity Timeout: 30 minutes
-              </label>
-              <input
-                type="range"
-                min={5}
-                max={120}
-                defaultValue={30}
-                className="w-full accent-primary"
-              />
-              <div className="flex justify-between text-[11px] text-muted-foreground">
-                <span>Aggressive (5 min)</span>
-                <span>Balanced (30 min)</span>
-                <span>Extended (2 hours)</span>
-              </div>
+            <div className="rounded-lg border border-border bg-surface/40 p-4 text-xs text-muted-foreground">
+              Containers running preview branches can be hibernated manually from the fleet list or
+              automatically when PRs are closed via webhook events.
             </div>
           </div>
         </div>
@@ -874,13 +841,12 @@ export function PreviewEnvironmentsManager() {
                 </label>
 
                 <label className="space-y-1">
-                  <span className="font-medium text-foreground">Container Port</span>
+                  <span className="font-medium text-foreground">Commit SHA / Ref</span>
                   <input
-                    type="number"
-                    min={1}
-                    max={65535}
-                    value={newPort}
-                    onChange={(e) => setNewPort(Number(e.target.value))}
+                    type="text"
+                    placeholder="HEAD"
+                    value={newCommitSha}
+                    onChange={(e) => setNewCommitSha(e.target.value)}
                     className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono outline-none text-xs"
                   />
                 </label>
@@ -906,20 +872,6 @@ export function PreviewEnvironmentsManager() {
                   onChange={(e) => setNewPrTitle(e.target.value)}
                   className="w-full rounded-md border border-input bg-input/40 px-3 py-2 outline-none text-xs"
                 />
-              </label>
-
-              <label className="block space-y-1">
-                <span className="font-medium text-foreground">Auto-Sleep Timeout (Minutes)</span>
-                <select
-                  value={newSleepTimeout}
-                  onChange={(e) => setNewSleepTimeout(Number(e.target.value))}
-                  className="w-full rounded-md border border-input bg-input/40 px-3 py-2 outline-none text-xs"
-                >
-                  <option value={15}>15 minutes (Aggressive RAM reclaim)</option>
-                  <option value={30}>30 minutes (Recommended)</option>
-                  <option value={60}>60 minutes</option>
-                  <option value={0}>Never sleep</option>
-                </select>
               </label>
             </div>
 

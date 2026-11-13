@@ -51,8 +51,10 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
     reportLovableError(error, { boundary: "tanstack_root_error_component" });
     appLogger.log(
       createLogEntry("system", "error", "Component Crash", errorMessage, {
-        error: String(error),
-        path: typeof window !== "undefined" ? window.location.pathname : "",
+        meta: {
+          error: String(error),
+          path: typeof window !== "undefined" ? window.location.pathname : "",
+        },
       }),
     );
     if (isChunkError && typeof window !== "undefined") {

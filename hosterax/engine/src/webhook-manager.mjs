@@ -3,7 +3,12 @@
 // Handles Push-to-Deploy, cryptographic signature verification (HMAC-SHA256), and ephemeral preview lifecycles.
 
 import crypto from "node:crypto";
-import { spawnSync } from "./safe-exec.mjs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { isSafeImageRef } from "./security.mjs";
+import { normalizeGitRepoSlug } from "./enterprise-apis.mjs";
+
+const execFileAsync = promisify(execFile);
 
 export class WebhookManager {
   constructor({ db, runDeployment, applyRoute, HOME }) {
@@ -27,7 +32,79 @@ export class WebhookManager {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS webhook_deliveries (
+        id TEXT PRIMARY KEY,
+        project_name TEXT,
+        provider TEXT NOT NULL DEFAULT 'github',
+        event TEXT NOT NULL,
+        delivery_guid TEXT,
+        status_code INTEGER NOT NULL,
+        ok INTEGER NOT NULL DEFAULT 0,
+        action TEXT,
+        message TEXT,
+        payload_json TEXT,
+        received_at INTEGER NOT NULL
+      );
     `);
+  }
+
+  recordDelivery({
+    projectName = null,
+    provider = "github",
+    event = "push",
+    deliveryGuid = null,
+    statusCode = 200,
+    ok = true,
+    action = null,
+    message = null,
+    payloadJson = null,
+  }) {
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO webhook_deliveries (id, project_name, provider, event, delivery_guid, status_code, ok, action, message, payload_json, received_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          "whd_" + crypto.randomBytes(6).toString("hex"),
+          projectName,
+          provider,
+          event,
+          deliveryGuid,
+          statusCode,
+          ok ? 1 : 0,
+          action,
+          message,
+          payloadJson ? String(payloadJson).slice(0, 65536) : null,
+          Date.now(),
+        );
+    } catch {}
+  }
+
+  allocatePreviewPort(prNumber, excludeProject = null) {
+    const taken = new Set([7777, 8080, 3000, 5173]);
+    for (const tbl of [
+      ["projects", "port"],
+      ["managed_dbs", "port"],
+      ["pr_previews", "port"],
+    ]) {
+      try {
+        for (const r of this.db.prepare(`SELECT ${tbl[1]} AS p FROM ${tbl[0]}`).all()) {
+          if (r.p) taken.add(Number(r.p));
+        }
+      } catch {}
+    }
+    if (excludeProject) {
+      try {
+        const existing = this.db
+          .prepare("SELECT port FROM pr_previews WHERE id=?")
+          .get(`pr_${excludeProject}_${prNumber}`);
+        if (existing?.port) return Number(existing.port);
+      } catch {}
+    }
+    let port = 4100 + (Math.abs(Number(prNumber) || 1) % 4000);
+    while (taken.has(port) && port < 60000) port += 1;
+    return port;
   }
 
   getProjectWebhookConfig(projectName) {
@@ -83,9 +160,6 @@ export class WebhookManager {
     return a.length === b.length && crypto.timingSafeEqual(a, b);
   }
 
-  /**
-   * Handle incoming GitHub Webhook event
-   */
   async handleGitHubWebhook({
     event,
     payload,
@@ -93,27 +167,55 @@ export class WebhookManager {
     signatureHeader,
     projectName = null,
     requireSignature = false,
+    deliveryGuid = null,
   }) {
-    // Unauthenticated callers (GitHub itself) must prove authenticity with the HMAC signature.
     if (event === "ping" && !requireSignature) {
+      this.recordDelivery({
+        projectName,
+        event,
+        deliveryGuid,
+        statusCode: 200,
+        ok: true,
+        action: "ping",
+        message: "Pong! Webhook active.",
+        payloadJson: rawBodyText,
+      });
       return { ok: true, message: "Pong! Webhook active.", zen: payload?.zen };
     }
 
-    // Identify project either from URL or from repository full_name / clone_url
     let project = null;
     if (projectName) {
       project = this.db.prepare("SELECT * FROM projects WHERE name=?").get(projectName);
     }
 
     if (!project && payload?.repository) {
-      const repoUrl = payload.repository.clone_url || payload.repository.html_url || "";
-      const repoFullName = payload.repository.full_name || "";
-      project = this.db
-        .prepare("SELECT * FROM projects WHERE source LIKE ? OR source LIKE ?")
-        .get(`%${repoFullName}%`, `%${repoUrl}%`);
+      const targetSlug = normalizeGitRepoSlug(
+        payload.repository.clone_url || payload.repository.html_url || "",
+      );
+      const repoFull = String(payload.repository.full_name || "").toLowerCase();
+      const candidates = this.db
+        .prepare("SELECT * FROM projects WHERE COALESCE(status,'') <> 'archived'")
+        .all();
+      project =
+        candidates.find((c) => {
+          const pSlug =
+            c.git_owner && c.git_repo
+              ? `${c.git_owner}/${c.git_repo}`.toLowerCase()
+              : normalizeGitRepoSlug(c.source);
+          return (repoFull && pSlug === repoFull) || (targetSlug && pSlug === targetSlug);
+        }) || null;
     }
 
     if (!project) {
+      this.recordDelivery({
+        projectName,
+        event,
+        deliveryGuid,
+        statusCode: 404,
+        ok: false,
+        message: "No matching project found for webhook repository.",
+        payloadJson: rawBodyText,
+      });
       return { ok: false, message: "No matching project found for webhook repository." };
     }
 
@@ -121,16 +223,46 @@ export class WebhookManager {
 
     if (requireSignature || signatureHeader) {
       if (!this.verifyGitHubSignature(rawBodyText, signatureHeader, whConfig.secret)) {
+        this.recordDelivery({
+          projectName: project.name,
+          event,
+          deliveryGuid,
+          statusCode: 401,
+          ok: false,
+          message: "Invalid or missing GitHub webhook signature (HMAC-SHA256).",
+          payloadJson: rawBodyText,
+        });
         const err = new Error("Invalid or missing GitHub webhook signature (HMAC-SHA256).");
         err.status = 401;
         throw err;
       }
     }
-    if (event === "ping") return { ok: true, message: "Pong! Webhook active.", zen: payload?.zen };
+    if (event === "ping") {
+      this.recordDelivery({
+        projectName: project.name,
+        event,
+        deliveryGuid,
+        statusCode: 200,
+        ok: true,
+        action: "ping",
+        message: "Pong! Webhook active.",
+        payloadJson: rawBodyText,
+      });
+      return { ok: true, message: "Pong! Webhook active.", zen: payload?.zen };
+    }
 
-    // ────────── 1. Push Event (Push-to-Deploy) ──────────
     if (event === "push") {
       if (!whConfig.auto_deploy_push) {
+        this.recordDelivery({
+          projectName: project.name,
+          event,
+          deliveryGuid,
+          statusCode: 200,
+          ok: true,
+          action: "skipped",
+          message: "Push received but auto-deploy is disabled.",
+          payloadJson: rawBodyText,
+        });
         return { ok: true, message: "Push received but auto-deploy is disabled for this project." };
       }
 
@@ -139,6 +271,16 @@ export class WebhookManager {
       const tracked = whConfig.tracked_branch || "main";
 
       if (branch !== tracked && !ref.endsWith(`/${tracked}`)) {
+        this.recordDelivery({
+          projectName: project.name,
+          event,
+          deliveryGuid,
+          statusCode: 200,
+          ok: true,
+          action: "ignored_branch",
+          message: `Push ignored on branch '${branch}'`,
+          payloadJson: rawBodyText,
+        });
         return {
           ok: true,
           message: `Push ignored on branch '${branch}' (project tracks '${tracked}').`,
@@ -159,6 +301,17 @@ export class WebhookManager {
         });
       }
 
+      this.recordDelivery({
+        projectName: project.name,
+        event,
+        deliveryGuid,
+        statusCode: 200,
+        ok: true,
+        action: "deploy_triggered",
+        message: `Triggered push deploy on ${branch} (${commitSha.slice(0, 7)})`,
+        payloadJson: rawBodyText,
+      });
+
       return {
         ok: true,
         action: "deploy_triggered",
@@ -168,48 +321,88 @@ export class WebhookManager {
       };
     }
 
-    // ────────── 2. Pull Request Event (Ephemeral Previews) ──────────
     if (event === "pull_request") {
-      const action = payload.action; // 'opened', 'synchronize', 'reopened', 'closed'
+      const action = payload.action;
       const prNumber = payload.number;
       const prTitle = payload.pull_request?.title || `PR #${prNumber}`;
       const branch = payload.pull_request?.head?.ref || `pr-${prNumber}`;
       const commitSha = payload.pull_request?.head?.sha || "HEAD";
 
       if (action === "closed") {
-        // Tear down ephemeral preview
-        return await this.teardownPreview(project.name, prNumber);
+        const res = await this.teardownPreview(project.name, prNumber);
+        this.recordDelivery({
+          projectName: project.name,
+          event,
+          deliveryGuid,
+          statusCode: 200,
+          ok: true,
+          action: "preview_torn_down",
+          message: `Closed PR #${prNumber} preview`,
+          payloadJson: rawBodyText,
+        });
+        return res;
       }
 
       if (action === "opened" || action === "synchronize" || action === "reopened") {
         if (!whConfig.auto_deploy_pr) {
+          this.recordDelivery({
+            projectName: project.name,
+            event,
+            deliveryGuid,
+            statusCode: 200,
+            ok: true,
+            action: "skipped",
+            message: "PR preview disabled",
+            payloadJson: rawBodyText,
+          });
           return { ok: true, message: "PR event received but ephemeral PR previews are disabled." };
         }
 
-        return await this.provisionPreview({
+        const res = await this.provisionPreview({
           project,
           prNumber,
           prTitle,
           branch,
           commitSha,
         });
+        this.recordDelivery({
+          projectName: project.name,
+          event,
+          deliveryGuid,
+          statusCode: 200,
+          ok: true,
+          action: "preview_provisioned",
+          message: `Provisioned PR #${prNumber} (${branch})`,
+          payloadJson: rawBodyText,
+        });
+        return res;
       }
     }
 
+    this.recordDelivery({
+      projectName: project.name,
+      event,
+      deliveryGuid,
+      statusCode: 200,
+      ok: true,
+      action: "acknowledged",
+      message: `Event '${event}' acknowledged.`,
+      payloadJson: rawBodyText,
+    });
     return { ok: true, message: `Event '${event}' acknowledged.` };
   }
 
-  /**
-   * Provision Ephemeral Pull Request Preview Environment
-   */
   async provisionPreview({ project, prNumber, prTitle, branch, commitSha }) {
     const id = `pr_${project.name}_${prNumber}`;
     const cleanProject = project.name.toLowerCase().replace(/[^a-z0-9]/g, "_");
     const containerName = `hx_pr_${prNumber}_${cleanProject}`;
     const subdomain = `pr-${prNumber}-${project.name}`;
-    const port = 4000 + (Number(prNumber) % 5000);
+    const port = this.allocatePreviewPort(prNumber, project.name);
     const previewUrl = `http://${subdomain}.127-0-0-1.sslip.io`;
     const now = Date.now();
+    const bindHost = /^[0-9.]+$|^::1?$/.test(process.env.HOSTERAX_BIND_HOST || "")
+      ? process.env.HOSTERAX_BIND_HOST
+      : "127.0.0.1";
 
     this.db
       .prepare(
@@ -243,52 +436,56 @@ export class WebhookManager {
         updated_at: now,
       });
 
-    // Launch isolated preview container
-    try {
-      spawnSync("docker", ["rm", "-f", containerName]);
-      const image = project.source || `${project.name}:latest`;
-      spawnSync("docker", [
-        "run",
-        "-d",
-        "--name",
-        containerName,
-        "--restart",
-        "unless-stopped",
-        "-p",
-        `0.0.0.0:${port}:80`,
-        "-e",
-        `PORT=80`,
-        "-e",
-        `PR_NUMBER=${prNumber}`,
-        image,
-      ]);
-    } catch {}
+    // Launch isolated preview container asynchronously only when image reference is valid
+    const imageCandidate = isSafeImageRef(project.source) ? project.source : `${cleanProject}:latest`;
+    if (isSafeImageRef(imageCandidate)) {
+      execFileAsync("docker", ["rm", "-f", containerName], { timeout: 10000 })
+        .catch(() => {})
+        .then(() =>
+          execFileAsync(
+            "docker",
+            [
+              "run",
+              "-d",
+              "--name",
+              containerName,
+              "--restart",
+              "unless-stopped",
+              "-p",
+              `${bindHost}:${port}:80`,
+              "-e",
+              "PORT=80",
+              "-e",
+              `PR_NUMBER=${Number(prNumber) || 0}`,
+              imageCandidate,
+            ],
+            { timeout: 15000 },
+          ).catch(() => {}),
+        );
+    }
 
-    // Route edge proxy
     if (this.applyRoute) {
       this.applyRoute(subdomain, port, `${subdomain}.127-0-0-1.sslip.io`, `pr-${prNumber}`);
     }
 
     return {
       ok: true,
+      id,
+      status: "live",
       action: "preview_provisioned",
       projectName: project.name,
       prNumber,
+      port,
       previewUrl,
       subdomain,
     };
   }
 
-  /**
-   * Teardown Ephemeral Pull Request Preview Environment
-   */
   async teardownPreview(projectName, prNumber) {
     const cleanProject = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
     const containerName = `hx_pr_${prNumber}_${cleanProject}`;
 
-    try {
-      spawnSync("docker", ["rm", "-f", containerName]);
-    } catch {}
+    execFileAsync("docker", ["rm", "-f", containerName], { timeout: 10000 }).catch(() => {});
 
     this.db
       .prepare(
@@ -313,10 +510,34 @@ export class WebhookManager {
     return this.db.prepare("SELECT * FROM pr_previews ORDER BY updated_at DESC").all();
   }
 
+  sleepPreview(id) {
+    const row = this.db.prepare("SELECT * FROM pr_previews WHERE id=?").get(id);
+    if (!row) return null;
+    if (row.container_name) {
+      execFileAsync("docker", ["stop", row.container_name], { timeout: 10000 }).catch(() => {});
+    }
+    this.db
+      .prepare("UPDATE pr_previews SET status='sleeping', updated_at=? WHERE id=?")
+      .run(Date.now(), id);
+    return this.db.prepare("SELECT * FROM pr_previews WHERE id=?").get(id);
+  }
+
+  wakePreview(id) {
+    const row = this.db.prepare("SELECT * FROM pr_previews WHERE id=?").get(id);
+    if (!row) return null;
+    if (row.container_name) {
+      execFileAsync("docker", ["start", row.container_name], { timeout: 10000 }).catch(() => {});
+    }
+    this.db
+      .prepare("UPDATE pr_previews SET status='live', updated_at=? WHERE id=?")
+      .run(Date.now(), id);
+    return this.db.prepare("SELECT * FROM pr_previews WHERE id=?").get(id);
+  }
+
   deletePreview(id) {
     const row = this.db.prepare("SELECT * FROM pr_previews WHERE id=?").get(id);
     if (!row) return false;
-    this.teardownPreview(row.project_name, row.pr_number);
+    void this.teardownPreview(row.project_name, row.pr_number);
     const res = this.db.prepare("DELETE FROM pr_previews WHERE id=?").run(id);
     return res.changes > 0;
   }

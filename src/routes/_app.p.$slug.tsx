@@ -22,6 +22,7 @@ import { DeleteProjectModal } from "@/components/hx/delete-project-modal";
 import { AiTroubleshootModal } from "@/components/hx/ai-troubleshoot-modal";
 import { ProjectGateCard } from "@/components/hx/project-gate-card";
 import { ContainerTerminal } from "@/components/hx/container-terminal";
+import { confirmAction } from "@/components/hx/confirm-modal";
 import {
   ArrowLeft,
   Copy,
@@ -47,6 +48,7 @@ import {
   Zap,
   Sparkles,
   Server,
+  Box,
 } from "lucide-react";
 import { SelfHealingPanel } from "@/components/hx/self-healing-panel";
 
@@ -311,6 +313,15 @@ function ProjectPage() {
               </option>
             ))}
           </select>
+          <Link
+            to="/containers"
+            search={{ q: project.name } as any}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-xs font-medium text-foreground hover:bg-accent transition-colors shadow-sm"
+            title="Inspect raw OCI container and runtime process in Fleet Manager"
+          >
+            <Box className="h-3.5 w-3.5 text-primary" />
+            <span>Fleet Container</span>
+          </Link>
           <button
             onClick={() => setIsTroubleshootOpen(true)}
             className="inline-flex items-center gap-1.5 rounded-md bg-primary/15 border border-primary/30 px-3.5 py-2 text-xs font-semibold text-primary hover:bg-primary/25 transition-all shadow-sm active:scale-95"
@@ -506,12 +517,13 @@ function DeploymentsTab({ projectId, projectName }: { projectId: string; project
   });
 
   async function doRollback(dep: any) {
-    if (
-      !confirm(
-        `Rollback to ${dep.version ?? dep.commit_sha}? A new build will be queued from this snapshot.`,
-      )
-    )
-      return;
+    const ok = await confirmAction({
+      title: `Rollback to ${dep.version ?? dep.commit_sha ?? "Snapshot"}`,
+      description: `A new build will be queued from ${dep.version ?? dep.commit_sha ?? "this release snapshot"}.`,
+      confirmLabel: "Queue Rollback",
+      variant: "warning",
+    });
+    if (!ok) return;
     try {
       // Replays this exact deployment (its working copy + frozen build settings) as a new release.
       await engine.call("POST", `/api/deployments/${dep.id}/rollback`);
@@ -921,9 +933,14 @@ function EnvVars({
             <Plus className="h-4 w-4" /> Add
           </button>
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
-          Secret values are hidden after saving and can only be overwritten, not read back.
-        </p>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>
+            Secret values are hidden after saving and can only be overwritten, not read back.
+          </span>
+          <Link to="/vault" className="text-primary hover:underline font-medium">
+            Sync shared secret groups from Secrets Vault →
+          </Link>
+        </div>
       </div>
       <div className="rounded-lg border border-border bg-card">
         {vars.length === 0 ? (
@@ -1012,7 +1029,13 @@ function ProjectDomains({
   }
 
   async function removeDomain(domainId: string) {
-    if (!confirm("Remove this domain from SQLite database?")) return;
+    const ok = await confirmAction({
+      title: "Remove Custom Domain",
+      description: "Remove this domain from the project routing configuration?",
+      confirmLabel: "Remove Domain",
+      variant: "destructive",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/domains/${domainId}`);
       toast.success("Domain removed from database");
@@ -1188,7 +1211,13 @@ function DatabasesTab({ projectId, projectName }: { projectId: string; projectNa
   }
 
   async function del(id: string) {
-    if (!confirm("Delete this database?")) return;
+    const ok = await confirmAction({
+      title: "Delete Database Instance",
+      description: "Permanently delete this database instance and its record?",
+      confirmLabel: "Delete Database",
+      variant: "destructive",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/databases/${id}`);
       qc.invalidateQueries({ queryKey: ["dbs", projectName] });
@@ -1498,8 +1527,13 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
   }
 
   async function handleDestroyPreview(prId: string, prNumber: number) {
-    if (!confirm(`Are you sure you want to tear down preview environment for PR #${prNumber}?`))
-      return;
+    const ok = await confirmAction({
+      title: `Tear Down PR #${prNumber}`,
+      description: `Are you sure you want to tear down preview environment for PR #${prNumber}?`,
+      confirmLabel: "Tear Down",
+      variant: "destructive",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/previews/${prId}`);
       toast.success(`Ephemeral preview for PR #${prNumber} torn down.`);
@@ -1539,7 +1573,7 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
             </div>
           </div>
           <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-400">
-            <Radio className="w-3 h-3 animate-pulse" /> Webhook Listener Active
+            <Radio className="w-3 h-3" /> Webhook Listener Active
           </span>
         </div>
 

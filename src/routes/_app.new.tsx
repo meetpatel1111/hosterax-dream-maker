@@ -322,7 +322,7 @@ function NewProject() {
               Create New Service
             </h1>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               {health?.ok ? "Engine Ready" : "Engine Connected"}
             </span>
           </div>
@@ -525,7 +525,7 @@ function NewProject() {
                 <div className="space-y-4 pt-2">
                   <div className="rounded-xl border-2 border-dashed border-primary/30 bg-primary/5 p-8 text-center transition-all hover:bg-primary/10 hover:border-primary/60">
                     <div className="mx-auto w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center mb-3">
-                      <Upload className="h-6 w-6 text-primary animate-pulse" />
+                      <Upload className="h-6 w-6 text-primary" />
                     </div>
                     <h3 className="text-sm font-semibold text-foreground">
                       Drag and drop your project folder or archive

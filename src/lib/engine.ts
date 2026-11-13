@@ -6,9 +6,10 @@ import { appLogger } from "../utils/app-logger";
 export * from "./schema";
 
 type EngineState = { url: string; token: string };
-type EngineRequestOptions = { signal?: AbortSignal };
+type EngineRequestOptions = { signal?: AbortSignal; headers?: Record<string, string> };
 
 const DEFAULT_URL = FALLBACK_ENGINE_URL;
+const DEFAULT_ORG_ID = "default";
 
 function read(): EngineState {
   if (typeof window === "undefined") return { url: DEFAULT_URL, token: "" };
@@ -18,8 +19,15 @@ function read(): EngineState {
   };
 }
 
+function readOrg(): string {
+  if (typeof window === "undefined") return DEFAULT_ORG_ID;
+  return localStorage.getItem("hx.org") || DEFAULT_ORG_ID;
+}
+
 let state: EngineState = read();
+let activeOrgState: string = readOrg();
 const listeners = new Set<() => void>();
+const orgListeners = new Set<() => void>();
 
 // A local engine trusts requests from its own dashboard (same machine, same origin), so no token is
 // needed there. Remote engines require one: the 401 handler below sends the user to /auth.
@@ -50,6 +58,28 @@ function getServerSnapshot() {
   return SERVER_SNAPSHOT;
 }
 
+export function getActiveOrgId(): string {
+  return activeOrgState;
+}
+
+export function setActiveOrgId(orgId: string) {
+  const clean = (orgId || DEFAULT_ORG_ID).trim() || DEFAULT_ORG_ID;
+  if (typeof window !== "undefined") {
+    localStorage.setItem("hx.org", clean);
+  }
+  activeOrgState = clean;
+  orgListeners.forEach((l) => l());
+}
+
+function subscribeOrg(cb: () => void) {
+  orgListeners.add(cb);
+  return () => orgListeners.delete(cb);
+}
+
+export function useActiveOrgId(): string {
+  return useSyncExternalStore(subscribeOrg, () => activeOrgState, () => DEFAULT_ORG_ID);
+}
+
 export function setEngineConfig(url: string, token: string) {
   if (typeof window !== "undefined") {
     localStorage.setItem("hx.url", url);
@@ -70,13 +100,18 @@ export function useEngine() {
       options?: EngineRequestOptions,
     ): Promise<T> => {
       const startTime = performance.now();
-      const headers: Record<string, string> = { "content-type": "application/json" };
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        "X-HosteraX-Org": getActiveOrgId(),
+        ...(options?.headers || {}),
+      };
       if (token) headers.authorization = "Bearer " + token;
 
       let r: Response;
       try {
         r = await fetch(url + path, {
           method,
+          credentials: "include",
           headers,
           body: body ? JSON.stringify(body) : undefined,
           signal: options?.signal,
@@ -148,12 +183,20 @@ export function useEngine() {
   const upload = useCallback(
     async <T>(path: string, body: Blob, contentType = "application/octet-stream"): Promise<T> => {
       const startTime = performance.now();
-      const headers: Record<string, string> = { "content-type": contentType };
+      const headers: Record<string, string> = {
+        "content-type": contentType,
+        "X-HosteraX-Org": getActiveOrgId(),
+      };
       if (token) headers.authorization = "Bearer " + token;
 
       let r: Response;
       try {
-        r = await fetch(url + path, { method: "POST", headers, body });
+        r = await fetch(url + path, {
+          method: "POST",
+          credentials: "include",
+          headers,
+          body,
+        });
       } catch (networkErr: any) {
         const durationMs = performance.now() - startTime;
         appLogger.logApi("POST", path, 0, durationMs, {
@@ -205,7 +248,7 @@ export function useEngineHealth() {
     queryKey: ["engine-health", eng.url],
     queryFn: async ({ signal }) => {
       try {
-        const r = await fetch(eng.url + "/health", { signal });
+        const r = await fetch(eng.url + "/health", { credentials: "include", signal });
         return r.ok ? await r.json() : null;
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") throw error;
@@ -220,9 +263,10 @@ export function useEngineHealth() {
 
 export function useEngineProjects() {
   const eng = useEngine();
+  const orgId = useActiveOrgId();
   const health = useEngineHealth();
   return useQuery({
-    queryKey: ["engine-projects", eng.url, eng.token],
+    queryKey: ["engine-projects", eng.url, eng.token, orgId],
     queryFn: ({ signal }) => eng.call<any[]>("GET", "/api/projects", undefined, { signal }),
     enabled: !!health.data?.ok,
     refetchInterval: 10000,
@@ -949,7 +993,7 @@ export type PRPreview = {
   preview_url: string;
   container_name?: string;
   port: number;
-  status: "live" | "deploying" | "failed" | "stopped";
+  status: "live" | "deploying" | "failed" | "stopped" | "sleeping";
   created_at: number;
   updated_at: number;
 };

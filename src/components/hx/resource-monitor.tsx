@@ -226,7 +226,7 @@ export function ResourceMonitor({
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-semibold tracking-tight text-foreground">{title}</h3>
                 {warningResult.isTriggered ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/60 bg-rose-500/20 px-2.5 py-0.5 text-[10px] font-mono font-bold text-rose-300 animate-pulse">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-rose-500/60 bg-rose-500/20 px-2.5 py-0.5 text-[10px] font-mono font-bold text-rose-300">
                     <span className="h-1.5 w-1.5 rounded-full bg-rose-400 animate-ping" />
                     THRESHOLD BREACH (&gt;80% for {warningResult.maxDurationSeconds}s)
                   </span>
@@ -324,7 +324,7 @@ export function ResourceMonitor({
               className={cn(
                 "inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors",
                 isSimulatingSpike
-                  ? "border-rose-500 bg-rose-500/25 text-rose-300 ring-1 ring-rose-500 animate-pulse font-semibold"
+                  ? "border-rose-500 bg-rose-500/25 text-rose-300 ring-1 ring-rose-500 font-semibold"
                   : "border-border bg-surface-2 text-muted-foreground hover:text-foreground",
               )}
             >
@@ -413,7 +413,7 @@ export function ResourceMonitor({
                   className={cn(
                     "rounded-full border px-2 py-0.5 text-[11px] font-mono font-medium",
                     warningResult.cpuTriggered
-                      ? "border-rose-500/50 bg-rose-500/20 text-rose-300 animate-pulse font-bold"
+                      ? "border-rose-500/50 bg-rose-500/20 text-rose-300 font-bold"
                       : getStatusColor(cpuStatus),
                   )}
                 >
@@ -479,7 +479,7 @@ export function ResourceMonitor({
                   className={cn(
                     "rounded-full border px-2 py-0.5 text-[11px] font-mono font-medium",
                     warningResult.memTriggered
-                      ? "border-rose-500/50 bg-rose-500/20 text-rose-300 animate-pulse font-bold"
+                      ? "border-rose-500/50 bg-rose-500/20 text-rose-300 font-bold"
                       : getStatusColor(memStatus),
                   )}
                 >

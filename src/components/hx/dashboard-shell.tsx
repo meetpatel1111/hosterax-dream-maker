@@ -33,11 +33,13 @@ import {
   Bot,
   Radio,
   ShieldAlert,
+  Box,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { Logo } from "./logo";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
-import { useOrganizations } from "@/lib/engine";
+import { setActiveOrgId, useActiveOrgId, useOrganizations } from "@/lib/engine";
 import { useTranslation, LANGUAGES, type LanguageCode } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -48,41 +50,87 @@ const LiveActivityInspector = lazy(() =>
   import("./live-activity-inspector").then((module) => ({ default: module.LiveActivityInspector })),
 );
 
-const NAV = [
-  { to: "/dashboard", key: "projects" as const, label: "Projects", icon: LayoutGrid },
-  { to: "/apps", key: "apps" as const, label: "App Store", icon: Sparkles },
-  { to: "/dockerhub", key: "quickDeploy" as const, label: "Registries", icon: Boxes },
-  { to: "/stacks", key: "stacks" as any, label: "Compose & Stacks", icon: Layers },
-  { to: "/deployments", key: "deploy" as const, label: "Deployments", icon: Rocket },
-  { to: "/previews", key: "previews" as any, label: "PR Previews", icon: GitPullRequest },
-  { to: "/monitoring", key: "monitoring" as const, label: "Monitoring & Logs", icon: LineChart },
-  { to: "/terminal", key: "terminal" as any, label: "Web Terminal", icon: Terminal },
-  { to: "/status", key: "status" as any, label: "Status Page", icon: Radio },
-  { to: "/security", key: "security" as any, label: "Security & CVEs", icon: ShieldAlert },
-  { to: "/jobs", key: "jobs" as const, label: "Jobs & Schedules", icon: Clock },
-  { to: "/domains", key: "domains" as any, label: "Domains & SSL", icon: Globe },
-  { to: "/expose", key: "expose" as any, label: "Public access", icon: Share2 },
-  { to: "/databases", key: "databases" as const, label: "Databases", icon: Database },
-  { to: "/backups", key: "backups" as any, label: "Backups & DR", icon: ShieldCheck },
-  { to: "/servers", key: "servers" as const, label: "Servers", icon: Cpu },
-  { to: "/users", key: "users" as any, label: "Users & access", icon: UserCog },
-  { to: "/team", key: "team" as const, label: "Team & RBAC", icon: Users },
-  { to: "/mail", key: "mail" as const, label: "Mailboxes", icon: Mail },
-  { to: "/activity", key: "activity" as any, label: "Activity", icon: Activity },
-  { to: "/notifications", key: "notifications" as any, label: "Notifications", icon: Bell },
-  { to: "/vault", key: "vault" as any, label: "Secrets Vault", icon: Lock },
-  { to: "/tokens", key: "tokens" as any, label: "API Tokens", icon: KeyRound },
-  { to: "/ai-mcp", key: "mcp" as any, label: "AI & MCP Hub", icon: Bot },
-  { to: "/oauth", key: "oauth" as any, label: "OAuth (planned)", icon: ShieldCheck },
-  { to: "/settings", key: "settings" as const, label: "Settings", icon: Settings },
+interface NavItem {
+  to: string;
+  key: string;
+  label: string;
+  icon: any;
+}
+
+interface NavSection {
+  title: string;
+  items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
+  {
+    title: "Applications & Workloads",
+    items: [
+      { to: "/dashboard", key: "projects" as const, label: "Projects", icon: LayoutGrid },
+      { to: "/apps", key: "apps" as const, label: "App Store", icon: Sparkles },
+      { to: "/stacks", key: "stacks" as any, label: "Compose & Stacks", icon: Layers },
+      { to: "/deployments", key: "deploy" as const, label: "Deployments", icon: Rocket },
+      { to: "/previews", key: "previews" as any, label: "PR Previews", icon: GitPullRequest },
+    ],
+  },
+  {
+    title: "Fleet & OCI Infrastructure",
+    items: [
+      { to: "/containers", key: "containers" as any, label: "Containers & Pods", icon: Box },
+      { to: "/servers", key: "servers" as const, label: "Servers & Nodes", icon: Cpu },
+      { to: "/dockerhub", key: "quickDeploy" as const, label: "Registries", icon: Boxes },
+      { to: "/databases", key: "databases" as const, label: "Databases", icon: Database },
+      { to: "/terminal", key: "terminal" as any, label: "Web Terminal", icon: Terminal },
+    ],
+  },
+  {
+    title: "Edge & Networking",
+    items: [
+      { to: "/domains", key: "domains" as any, label: "Domains & SSL", icon: Globe },
+      { to: "/expose", key: "expose" as any, label: "Public access", icon: Share2 },
+      { to: "/status", key: "status" as any, label: "Status Page", icon: Radio },
+    ],
+  },
+  {
+    title: "Observability & Ops",
+    items: [
+      {
+        to: "/monitoring",
+        key: "monitoring" as const,
+        label: "Monitoring & Logs",
+        icon: LineChart,
+      },
+      { to: "/activity", key: "activity" as any, label: "Activity & SIEM", icon: Activity },
+      { to: "/jobs", key: "jobs" as const, label: "Jobs & Schedules", icon: Clock },
+      { to: "/notifications", key: "notifications" as any, label: "Notifications", icon: Bell },
+      { to: "/security", key: "security" as any, label: "Security & CVEs", icon: ShieldAlert },
+    ],
+  },
+  {
+    title: "Platform & Governance",
+    items: [
+      { to: "/backups", key: "backups" as any, label: "Backups & DR", icon: ShieldCheck },
+      { to: "/vault", key: "vault" as any, label: "Secrets Vault", icon: Lock },
+      { to: "/tokens", key: "tokens" as any, label: "API Tokens", icon: KeyRound },
+      { to: "/ai-mcp", key: "mcp" as any, label: "AI & MCP Hub", icon: Bot },
+      { to: "/oauth", key: "oauth" as any, label: "OAuth & MCP Apps", icon: ShieldCheck },
+      { to: "/users", key: "users" as any, label: "Users & access", icon: UserCog },
+      { to: "/team", key: "team" as const, label: "Team & RBAC", icon: Users },
+      { to: "/mail", key: "mail" as const, label: "Mailboxes", icon: Mail },
+      { to: "/settings", key: "settings" as const, label: "Settings", icon: Settings },
+    ],
+  },
 ];
+
+const NAV = NAV_SECTIONS.flatMap((s) => s.items);
 
 export function DashboardShell({ children }: { children: ReactNode }) {
   const { user, signOut } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  const queryClient = useQueryClient();
   const { data: orgs = [] } = useOrganizations();
-  const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
+  const activeOrgId = useActiveOrgId();
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [copilotLoaded, setCopilotLoaded] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
@@ -144,8 +192,12 @@ export function DashboardShell({ children }: { children: ReactNode }) {
               <div className="flex items-center gap-2 truncate">
                 <Building className="w-3.5 h-3.5 text-primary shrink-0" />
                 <select
-                  value={currentOrg?.id}
-                  onChange={(e) => setActiveOrgId(e.target.value)}
+                  aria-label="Workspace organization"
+                  value={currentOrg?.id || activeOrgId}
+                  onChange={(e) => {
+                    setActiveOrgId(e.target.value);
+                    queryClient.invalidateQueries();
+                  }}
                   className="bg-transparent font-medium text-xs text-sidebar-foreground outline-none cursor-pointer truncate max-w-[130px]"
                 >
                   {orgs.map((o) => (
@@ -163,32 +215,42 @@ export function DashboardShell({ children }: { children: ReactNode }) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 space-y-0.5 p-3 overflow-y-auto max-h-[calc(100vh-210px)]">
+        <nav className="flex-1 space-y-3.5 p-3 overflow-y-auto max-h-[calc(100vh-210px)]">
           <Link
             to="/new"
             className="mb-3 flex items-center justify-center gap-2 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 shadow-sm"
           >
             <Plus className="h-4 w-4" /> {t("newProject", "New Project")}
           </Link>
-          {NAV.map((n) => {
-            const active =
-              loc.pathname === n.to || (n.to !== "/dashboard" && loc.pathname.startsWith(n.to));
-            const Icon = n.icon;
-            return (
-              <Link
-                key={n.to}
-                to={n.to}
-                className={cn(
-                  "flex items-center gap-2.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
-                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                )}
-              >
-                <Icon className="h-4 w-4 shrink-0" /> {t(n.key as any, n.label)}
-              </Link>
-            );
-          })}
+          {NAV_SECTIONS.map((section) => (
+            <div key={section.title} className="space-y-1">
+              <div className="px-2 text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60 font-semibold">
+                {section.title}
+              </div>
+              <div className="space-y-0.5">
+                {section.items.map((n) => {
+                  const active =
+                    loc.pathname === n.to ||
+                    (n.to !== "/dashboard" && loc.pathname.startsWith(n.to));
+                  const Icon = n.icon;
+                  return (
+                    <Link
+                      key={n.to}
+                      to={n.to}
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors",
+                        active
+                          ? "bg-sidebar-accent text-sidebar-accent-foreground font-semibold"
+                          : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                      )}
+                    >
+                      <Icon className="h-4 w-4 shrink-0" /> {t(n.key as any, n.label)}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </nav>
 
         {/* Footer with Language Switcher & User Account */}
@@ -267,14 +329,21 @@ export function DashboardShell({ children }: { children: ReactNode }) {
               className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-mono font-medium border border-border/60 bg-card hover:bg-muted/80 text-foreground transition-colors cursor-pointer"
               title="Open Live API & UI Telemetry Stream (Shift+L)"
             >
-              <Activity className="h-3.5 w-3.5 text-primary animate-pulse" />
+              <Activity className="h-3.5 w-3.5 text-primary" />
               <span className="hidden sm:inline">Telemetry & Logs</span>
               <span className="hidden md:inline text-[10px] text-muted-foreground font-mono">
                 ⇧L
               </span>
             </button>
+            <Link
+              to="/notifications"
+              className="inline-flex items-center justify-center p-1.5 rounded-md border border-border/60 bg-card hover:bg-muted/80 text-foreground transition-colors"
+              title="Alert Channels & Webhook Dispatchers"
+            >
+              <Bell className="h-3.5 w-3.5 text-muted-foreground hover:text-primary transition-colors" />
+            </Link>
             <span className="hidden items-center gap-1.5 md:inline-flex">
-              <span className="h-1.5 w-1.5 rounded-full bg-lime-400 animate-pulse" />
+              <span className="h-1.5 w-1.5 rounded-full bg-lime-400" />
               {t("systemHealthy", "Control plane · connected")}
             </span>
           </div>
@@ -329,7 +398,7 @@ export function DashboardShell({ children }: { children: ReactNode }) {
           className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 rounded-full border border-primary/40 bg-gradient-to-r from-primary via-emerald-400 to-primary px-4 py-2.5 font-semibold text-primary-foreground shadow-xl shadow-primary/20 transition-all duration-200 hover:scale-105 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
           title="Open HosteraX AIOps Copilot (Cmd+K)"
         >
-          <Sparkles className="h-4 w-4 animate-pulse text-background" />
+          <Sparkles className="h-4 w-4 text-background" />
           <span className="text-xs font-mono font-bold tracking-tight text-background">
             AI Copilot
           </span>

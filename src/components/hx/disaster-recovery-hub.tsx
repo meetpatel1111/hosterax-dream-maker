@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   ShieldCheck,
   ShieldAlert,
@@ -18,12 +19,10 @@ import {
   FileText,
   Search,
   Check,
-  Zap,
   Activity,
   Calculator,
   Flame,
   FileCheck2,
-  ExternalLink,
   Copy,
   Plus,
 } from "lucide-react";
@@ -37,19 +36,60 @@ import {
   useBackupSchedules,
   type BackupCursor,
   type BackupItem,
-  type BackupSchedule,
 } from "../../lib/engine";
+import { confirmAction } from "./confirm-modal";
 import {
   calculateRecoveryReadinessScore,
   calculateGfsStorageProjection,
-  simulateSandboxDrill,
   generateEmergencyRunbookScript,
   filterBackups,
   formatBytes,
   formatRtoDuration,
-  type DrillCertificate,
-  type ReadinessCheck,
 } from "../../utils/disaster-recovery";
+
+type EngineDrillRow = {
+  id: string;
+  backup_id: string;
+  database_name: string;
+  db_type: string;
+  status: string;
+  duration_seconds: number;
+  message: string;
+  sha256?: string | null;
+  checked_at: number;
+};
+
+type DrillCertificateView = {
+  drillId: string;
+  backupId: string;
+  databaseName: string;
+  dbType: string;
+  timestamp: string;
+  checkedAtMs: number;
+  status: "passed" | "failed";
+  rtoSeconds: number;
+  rtoFormatted: string;
+  checksumMatched: boolean;
+  sha256: string;
+  auditMessage: string;
+};
+
+function mapDrillRow(row: EngineDrillRow): DrillCertificateView {
+  return {
+    drillId: row.id,
+    backupId: row.backup_id,
+    databaseName: row.database_name,
+    dbType: row.db_type || "unknown",
+    timestamp: new Date(row.checked_at || Date.now()).toISOString(),
+    checkedAtMs: Number(row.checked_at || 0),
+    status: row.status === "verified" ? "passed" : "failed",
+    rtoSeconds: Number(row.duration_seconds || 0),
+    rtoFormatted: formatRtoDuration(Number(row.duration_seconds || 0)),
+    checksumMatched: Boolean(row.sha256 && row.sha256.length >= 32),
+    sha256: row.sha256 || "none",
+    auditMessage: row.message || "Restore drill recorded by HosteraX engine.",
+  };
+}
 
 const CRON_PRESETS = [
   { cron: "0 2 * * *", label: "Every day at 02:00" },
@@ -167,18 +207,25 @@ export function DisasterRecoveryHub() {
     });
   }, [gfsBaseSizeMb, gfsDaily, gfsWeekly, gfsMonthly, gfsYearly, gfsChangeRate]);
 
-  // Sandbox Restore Drills State
-  const [drillCertificates, setDrillCertificates] = useState<DrillCertificate[]>(() => {
-    try {
-      const saved = localStorage.getItem("hx_drill_certificates");
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
+  // Sandbox Restore Drills Query (persisted in engine SQLite)
+  const drillsQuery = useQuery<EngineDrillRow[]>({
+    queryKey: ["backup-drills", engine.url, engine.token],
+    queryFn: async () => {
+      try {
+        return await engine.call<EngineDrillRow[]>("GET", "/api/backups/drills");
+      } catch {
+        return [];
+      }
+    },
+    refetchInterval: 5000,
   });
+
+  const drillCertificates = useMemo(
+    () => (drillsQuery.data || []).map(mapDrillRow),
+    [drillsQuery.data],
+  );
   const [activeDrillRunning, setActiveDrillRunning] = useState(false);
-  const [selectedDrillTarget, setSelectedDrillTarget] = useState<string>("");
-  const [activeCertificateModal, setActiveCertificateModal] = useState<DrillCertificate | null>(
+  const [activeCertificateModal, setActiveCertificateModal] = useState<DrillCertificateView | null>(
     null,
   );
 
@@ -186,7 +233,6 @@ export function DisasterRecoveryHub() {
   useEffect(() => {
     if (targets.length > 0 && !selectedTargetId) {
       setSelectedTargetId(targets[0].id);
-      setSelectedDrillTarget(targets[0].id);
     }
   }, [targets, selectedTargetId]);
 
@@ -202,13 +248,6 @@ export function DisasterRecoveryHub() {
       setS3AutoSync(Boolean(s3Config.auto_sync));
     }
   }, [s3Config]);
-
-  // Save drill certificates to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem("hx_drill_certificates", JSON.stringify(drillCertificates));
-    } catch {}
-  }, [drillCertificates]);
 
   // Compute Recovery Readiness Evaluation
   const readiness = useMemo(() => {
@@ -326,7 +365,7 @@ export function DisasterRecoveryHub() {
     }
   };
 
-  // Handler: Run Sandbox Restore Drill
+  // Handler: Run Sandbox Restore Drill via Engine
   const handleRunSandboxDrill = async (backupItem?: BackupItem) => {
     let chosenBackup = backupItem;
     if (!chosenBackup) {
@@ -339,34 +378,47 @@ export function DisasterRecoveryHub() {
     }
 
     setActiveDrillRunning(true);
+    const startedAt = Date.now() - 1000;
     const toastId = toast.loading(
-      `Spinning up isolated sandbox for "${chosenBackup.database_name}"…`,
+      `Dispatching ephemeral container restore drill for "${chosenBackup.database_name}"…`,
     );
 
     try {
-      // Step 1: Call verify API on engine if available
-      try {
-        await engine.call("POST", `/api/backups/${chosenBackup.id}/verify`);
-      } catch {}
+      await engine.call("POST", `/api/backups/${encodeURIComponent(chosenBackup.id)}/drill`);
 
-      // Artificial slight delay for realistic container provisioning feedback
-      await new Promise((r) => setTimeout(r, 1400));
+      // Poll backend /api/backups/drills until the async drill row is recorded
+      let recorded: DrillCertificateView | null = null;
+      for (let attempt = 0; attempt < 25; attempt++) {
+        await new Promise((r) => setTimeout(r, 1200));
+        const rows = await engine.call<EngineDrillRow[]>("GET", "/api/backups/drills");
+        const match = rows.find(
+          (row) => row.backup_id === chosenBackup.id && Number(row.checked_at) >= startedAt,
+        );
+        if (match) {
+          recorded = mapDrillRow(match);
+          break;
+        }
+      }
 
-      const cert = simulateSandboxDrill({
-        backupId: chosenBackup.id,
-        databaseName: chosenBackup.database_name,
-        dbType: chosenBackup.db_type,
-        sizeMb: chosenBackup.sizeMb || 150,
-        checksum: chosenBackup.sha256 || undefined,
-        isEncrypted: chosenBackup.encrypted === 1,
-      });
+      await Promise.all([drillsQuery.refetch(), backupsQuery.refetch()]);
 
-      setDrillCertificates((prev) => [cert, ...prev.slice(0, 49)]);
-      toast.success(`Sandbox Restore Drill PASSED in ${cert.rtoFormatted} (RTO)!`, { id: toastId });
-      setActiveCertificateModal(cert);
-      backupsQuery.refetch();
+      if (recorded) {
+        if (recorded.status === "passed") {
+          toast.success(`Restore drill PASSED in ${recorded.rtoFormatted} (RTO).`, {
+            id: toastId,
+          });
+        } else {
+          toast.error(`Restore drill FAILED: ${recorded.auditMessage}`, { id: toastId });
+        }
+        setActiveCertificateModal(recorded);
+      } else {
+        toast.info(
+          "Restore drill is running asynchronously on the engine. Refreshing results automatically.",
+          { id: toastId },
+        );
+      }
     } catch (err: any) {
-      toast.error(err?.message || "Sandbox drill failed", { id: toastId });
+      toast.error(err?.message || "Failed to execute restore drill", { id: toastId });
     } finally {
       setActiveDrillRunning(false);
     }
@@ -410,15 +462,15 @@ export function DisasterRecoveryHub() {
 
   // Handler: Instant restore
   const handleRestoreBackup = async (b: BackupItem) => {
-    if (
-      !confirm(
-        `RESTORE WARNING: Overwrite active database "${b.database_name}" with snapshot from ${new Date(
-          b.created_at,
-        ).toLocaleString()}? Current unsaved records will be replaced.`,
-      )
-    ) {
-      return;
-    }
+    const ok = await confirmAction({
+      title: `Restore "${b.database_name}"`,
+      description: `Overwrite active database "${b.database_name}" with snapshot from ${new Date(
+        b.created_at,
+      ).toLocaleString()}? Current unsaved records will be replaced.`,
+      confirmLabel: "Restore Snapshot",
+      variant: "destructive",
+    });
+    if (!ok) return;
 
     setRestoringId(b.id);
     const toastId = toast.loading(`Verifying SHA-256 and restoring snapshot ${b.id}…`);
@@ -437,6 +489,7 @@ export function DisasterRecoveryHub() {
   const handleDownloadBackup = async (id: string) => {
     try {
       const r = await fetch(`${engine.url}/api/backups/${id}/download`, {
+        credentials: "include",
         headers: engine.token ? { authorization: `Bearer ${engine.token}` } : {},
       });
       if (!r.ok) throw new Error((await r.json().catch(() => null))?.error || `HTTP ${r.status}`);
@@ -456,7 +509,13 @@ export function DisasterRecoveryHub() {
 
   // Handler: Delete backup
   const handleDeleteBackup = async (id: string) => {
-    if (!confirm(`Permanently delete snapshot "${id}"?`)) return;
+    const ok = await confirmAction({
+      title: "Delete Snapshot Archive",
+      description: `Permanently delete snapshot "${id}" from disk? This cannot be undone.`,
+      confirmLabel: "Delete Snapshot",
+      variant: "destructive",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/backups/${id}`);
       toast.success(`Snapshot ${id} deleted.`);
@@ -971,11 +1030,11 @@ export function DisasterRecoveryHub() {
                         </span>
                       </div>
                       <div className="text-[11px] text-muted-foreground">
-                        Executed: {new Date(cert.timestamp).toLocaleString()} · Container:{" "}
-                        <span className="font-mono text-foreground">{cert.sandboxContainerId}</span>
+                        Executed: {new Date(cert.timestamp).toLocaleString()} · Backup:{" "}
+                        <span className="font-mono text-foreground">{cert.backupId}</span>
                       </div>
                       <div className="text-[10px] text-muted-foreground/80 font-mono">
-                        Query: {cert.verificationQuery} → Result: {cert.queryResult}
+                        {cert.auditMessage}
                       </div>
                     </div>
 
@@ -1176,11 +1235,11 @@ export function DisasterRecoveryHub() {
                         className="inline-flex items-center gap-1 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors disabled:opacity-50"
                         title="Verify SHA-256 integrity"
                       >
-                        <ShieldCheck
-                          className={`h-3.5 w-3.5 text-muted-foreground ${
-                            verifyingId === b.id ? "animate-pulse" : ""
-                          }`}
-                        />
+                        {verifyingId === b.id ? (
+                          <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                        ) : (
+                          <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
+                        )}
                         Verify
                       </button>
                     )}
@@ -1444,8 +1503,15 @@ export function DisasterRecoveryHub() {
                         {s.enabled ? "Pause" : "Resume"}
                       </button>
                       <button
+                        aria-label={`Delete schedule for ${s.databaseName}`}
                         onClick={async () => {
-                          if (!confirm("Delete schedule?")) return;
+                          const ok = await confirmAction({
+                            title: "Delete Backup Schedule",
+                            description: `Remove automated backup schedule for "${s.databaseName}"? Existing snapshots will remain intact.`,
+                            confirmLabel: "Delete Schedule",
+                            variant: "destructive",
+                          });
+                          if (!ok) return;
                           try {
                             await engine.call("DELETE", `/api/backups/schedules/${s.id}`);
                             schedulesQuery.refetch();
@@ -1902,9 +1968,9 @@ export function DisasterRecoveryHub() {
                   <strong className="text-foreground">{activeCertificateModal.rtoFormatted}</strong>
                 </div>
                 <div>
-                  Ephemeral Container:{" "}
+                  Backup Archive:{" "}
                   <strong className="font-mono text-foreground text-[10px]">
-                    {activeCertificateModal.sandboxContainerId}
+                    {activeCertificateModal.backupId}
                   </strong>
                 </div>
                 <div>
@@ -1916,10 +1982,10 @@ export function DisasterRecoveryHub() {
               </div>
 
               <div className="rounded-md border border-border bg-black/40 p-3 space-y-1 font-mono text-[11px]">
-                <div className="text-muted-foreground">Query:</div>
-                <div className="text-sky-400">{activeCertificateModal.verificationQuery}</div>
-                <div className="text-muted-foreground pt-1">Response:</div>
-                <div className="text-emerald-400">{activeCertificateModal.queryResult}</div>
+                <div className="text-muted-foreground">Certificate ID:</div>
+                <div className="text-sky-400">{activeCertificateModal.drillId}</div>
+                <div className="text-muted-foreground pt-1">SHA-256 Digest:</div>
+                <div className="text-emerald-400 break-all">{activeCertificateModal.sha256}</div>
               </div>
             </div>
 

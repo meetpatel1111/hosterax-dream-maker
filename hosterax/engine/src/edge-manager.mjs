@@ -21,6 +21,70 @@ export const EDGE_MGMT_PORT = Number(process.env.EDGE_MGMT_PORT || 9145);
 // every supervised app process directly on the host loopback.
 export const ENGINE_PORT = Number(process.env.HOSTERAX_PORT || 7777);
 
+export function compileCaddyMiddlewares(middlewares = []) {
+  const lines = [];
+  for (const mw of middlewares) {
+    if (!mw || !mw.enabled) continue;
+    const cfg = typeof mw.config === "string" ? JSON.parse(mw.config || "{}") : mw.config || {};
+    const kind = String(mw.kind || "").toLowerCase();
+    if (kind === "security_headers") {
+      lines.push(`  header X-Content-Type-Options "nosniff"`);
+      lines.push(`  header X-Frame-Options "${String(cfg.frameOptions || "SAMEORIGIN").replace(/"/g, "")}"`);
+      lines.push(`  header Referrer-Policy "${String(cfg.referrerPolicy || "strict-origin-when-cross-origin").replace(/"/g, "")}"`);
+    } else if (kind === "cors") {
+      const origin = String(cfg.allowOrigin || "").replace(/"/g, "");
+      if (origin && origin !== "*") {
+        lines.push(`  header Access-Control-Allow-Origin "${origin}"`);
+        lines.push(`  header Vary "Origin"`);
+      }
+      if (cfg.allowMethods) {
+        lines.push(`  header Access-Control-Allow-Methods "${String(cfg.allowMethods).replace(/"/g, "")}"`);
+      }
+    } else if (kind === "ip_block" && cfg.ip) {
+      const ips = String(cfg.ip)
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => /^[0-9a-fA-F.:/]{2,64}$/.test(s));
+      if (ips.length) {
+        lines.push(`  @blocked_${String(mw.id || "mw").replace(/[^a-zA-Z0-9_]/g, "")} remote_ip ${ips.join(" ")}`);
+        lines.push(`  respond @blocked_${String(mw.id || "mw").replace(/[^a-zA-Z0-9_]/g, "")} 403`);
+      }
+    } else if (kind === "custom_header" && cfg.name && /^[A-Za-z0-9-]+$/.test(String(cfg.name))) {
+      lines.push(`  header ${cfg.name} "${String(cfg.value || "").replace(/"/g, "")}"`);
+    }
+  }
+  return lines;
+}
+
+export function compileNginxMiddlewares(middlewares = []) {
+  const lines = [];
+  for (const mw of middlewares) {
+    if (!mw || !mw.enabled) continue;
+    const cfg = typeof mw.config === "string" ? JSON.parse(mw.config || "{}") : mw.config || {};
+    const kind = String(mw.kind || "").toLowerCase();
+    if (kind === "security_headers") {
+      lines.push(`  add_header X-Content-Type-Options "nosniff" always;`);
+      lines.push(`  add_header X-Frame-Options "${String(cfg.frameOptions || "SAMEORIGIN").replace(/"/g, "")}" always;`);
+      lines.push(`  add_header Referrer-Policy "${String(cfg.referrerPolicy || "strict-origin-when-cross-origin").replace(/"/g, "")}" always;`);
+    } else if (kind === "cors") {
+      const origin = String(cfg.allowOrigin || "").replace(/"/g, "");
+      if (origin && origin !== "*") {
+        lines.push(`  add_header Access-Control-Allow-Origin "${origin}" always;`);
+        lines.push(`  add_header Vary "Origin" always;`);
+      }
+    } else if (kind === "ip_block" && cfg.ip) {
+      const ips = String(cfg.ip)
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => /^[0-9a-fA-F.:/]{2,64}$/.test(s));
+      for (const ip of ips) lines.push(`  deny ${ip};`);
+    } else if (kind === "custom_header" && cfg.name && /^[A-Za-z0-9-]+$/.test(String(cfg.name))) {
+      lines.push(`  add_header ${cfg.name} "${String(cfg.value || "").replace(/"/g, "")}" always;`);
+    }
+  }
+  return lines;
+}
+
 const OPENRESTY_KNOWN_CONFS = [
   "/usr/local/openresty/nginx/conf/nginx.conf",
   "/etc/openresty/nginx.conf",
@@ -378,14 +442,32 @@ export class EdgeManager {
 
 `;
 
+    let allMiddlewares = [];
+    try {
+      allMiddlewares = this.db
+        .prepare("SELECT * FROM edge_middlewares WHERE enabled=1 ORDER BY priority ASC")
+        .all()
+        .map((r) => ({ ...r, enabled: true, config: JSON.parse(r.config_json || "{}") }));
+    } catch {}
+    const middlewaresFor = (host, project) =>
+      allMiddlewares.filter(
+        (m) =>
+          m.scope_type === "global" ||
+          (m.scope_type === "domain" && String(m.scope_target || "").toLowerCase() === host.toLowerCase()) ||
+          (m.scope_type === "project" && m.scope_target === project),
+      );
+
     for (const r of routeList) {
       for (const host of r.hostnames) {
         const isPrivate = this.isPrivateOrLoopbackHost(host);
+        const mwLines = compileCaddyMiddlewares(middlewaresFor(host, r.project));
+        const mwBlock = mwLines.length ? mwLines.join("\n") + "\n" : "";
 
         if (isPrivate) {
           // Serve both plain HTTP and TLS internal so local devs can browse with 0 friction
           content += `http://${host} {\n`;
           content += `  encode zstd gzip\n`;
+          content += mwBlock;
           content += `  header X-Forwarded-Proto http\n`;
           content += `  header X-Real-IP {remote_host}\n`;
           content += `  reverse_proxy 127.0.0.1:${r.port} {\n`;
@@ -397,6 +479,7 @@ export class EdgeManager {
           content += `https://${host} {\n`;
           content += `  tls internal\n`;
           content += `  encode zstd gzip\n`;
+          content += mwBlock;
           if (settings.hsts_enabled) {
             content += `  header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"\n`;
           }
@@ -413,6 +496,7 @@ export class EdgeManager {
 
           content += `${host} {\n`;
           content += `  encode zstd gzip\n`;
+          content += mwBlock;
           if (tlsDirective) content += `  ${tlsDirective}\n`;
           if (settings.hsts_enabled) {
             content += `  header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"\n`;
@@ -725,6 +809,14 @@ http {
       `    proxy_set_header X-Forwarded-Proto $scheme;\n` +
       `  }\n`;
 
+    let orMiddlewares = [];
+    try {
+      orMiddlewares = this.db
+        .prepare("SELECT * FROM edge_middlewares WHERE enabled=1 ORDER BY priority ASC")
+        .all()
+        .map((r) => ({ ...r, enabled: true, config: JSON.parse(r.config_json || "{}") }));
+    } catch {}
+
     for (const r of routeList) {
       const safeProject = String(r.project).replace(/[^A-Za-z0-9_.-]/g, "_");
       const siteConfPath = path.join(this.openrestySitesDir, `${safeProject}.conf`);
@@ -733,6 +825,15 @@ http {
       for (const host of r.hostnames) {
         const dom = r.domains.find((d) => d.hostname === host);
         const forceHttps = dom ? Boolean(dom.force_https ?? 1) : false;
+        const mwNginx = compileNginxMiddlewares(
+          orMiddlewares.filter(
+            (m) =>
+              m.scope_type === "global" ||
+              (m.scope_type === "domain" && String(m.scope_target || "").toLowerCase() === host.toLowerCase()) ||
+              (m.scope_type === "project" && m.scope_target === r.project),
+          ),
+        );
+        const mwNginxBlock = mwNginx.length ? mwNginx.join("\n") + "\n" : "";
 
         // Ensure a handshake-capable certificate exists before referencing it.
         let certs = null;
@@ -744,7 +845,7 @@ http {
         } catch {}
         const haveTls = Boolean(certs && (certs.hasAcme || certs.hasLocal));
 
-        conf += `server {\n  listen ${settings.http_port};\n  server_name ${host};\n\n${acmeBlock}`;
+        conf += `server {\n  listen ${settings.http_port};\n  server_name ${host};\n${mwNginxBlock}\n${acmeBlock}`;
         if (haveTls && forceHttps) {
           conf += `  location / { return 301 https://$host$request_uri; }\n}\n\n`;
         } else {
@@ -752,7 +853,7 @@ http {
         }
 
         if (haveTls) {
-          conf += `server {\n  listen ${settings.https_port} ssl;\n  http2 on;\n  server_name ${host};\n\n`;
+          conf += `server {\n  listen ${settings.https_port} ssl;\n  http2 on;\n  server_name ${host};\n${mwNginxBlock}\n`;
           conf += `  # Certificates are issued by Certbot; OpenResty only reads them.\n`;
           conf += `  ssl_certificate ${this.toContainerPath(certs.cert)};\n`;
           conf += `  ssl_certificate_key ${this.toContainerPath(certs.key)};\n`;

@@ -18,7 +18,7 @@ export interface PreviewFleetMetrics {
 export interface PreviewFilters {
   searchQuery?: string;
   projectName?: string;
-  status?: "all" | "live" | "deploying" | "stopped" | "failed";
+  status?: "all" | "live" | "deploying" | "stopped" | "sleeping" | "failed";
 }
 
 export interface PrBotCommentParams {
@@ -28,7 +28,7 @@ export interface PrBotCommentParams {
   branch: string;
   commitSha: string;
   previewUrl: string;
-  status: "live" | "deploying" | "failed" | "stopped";
+  status: "live" | "deploying" | "failed" | "stopped" | "sleeping";
   containerName?: string;
   port?: number;
   sleepTimeoutMinutes?: number;
@@ -49,7 +49,7 @@ export function calculatePreviewFleetMetrics(
   for (const p of previews) {
     if (p.status === "live") live++;
     else if (p.status === "deploying") deploying++;
-    else if (p.status === "stopped") stopped++;
+    else if (p.status === "stopped" || p.status === "sleeping") stopped++;
     else if (p.status === "failed") failed++;
   }
 
@@ -96,7 +96,7 @@ export function generatePrBotComment(params: PrBotCommentParams): string {
       ? "🟢 **Ready**"
       : status === "deploying"
         ? "🟡 **Deploying...**"
-        : status === "stopped"
+        : status === "stopped" || status === "sleeping"
           ? "💤 **Sleeping (Scale-to-Zero)**"
           : "🔴 **Deployment Failed**";
 
@@ -196,7 +196,9 @@ export function filterPreviewEnvironments(
     }
 
     if (filters.status && filters.status !== "all") {
-      if (p.status !== filters.status) {
+      if (filters.status === "stopped" || filters.status === "sleeping") {
+        if (p.status !== "stopped" && p.status !== "sleeping") return false;
+      } else if (p.status !== filters.status) {
         return false;
       }
     }

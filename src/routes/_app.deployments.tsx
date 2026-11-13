@@ -14,6 +14,7 @@ import {
   Search,
   Check,
   Sliders,
+  Box,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useEngine } from "@/lib/engine";
@@ -257,8 +258,15 @@ function DeploymentsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Link
+            to="/containers"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
+          >
+            <Box className="h-3.5 w-3.5 text-primary" />
+            <span>Active Containers Fleet</span>
+          </Link>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 font-medium text-emerald-400 font-mono">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             Live Pipeline Active
           </span>
         </div>
@@ -340,7 +348,7 @@ function DeploymentsPage() {
               </div>
               <div className="mt-2 text-2xl font-bold font-mono tracking-tight">
                 {stats.inProgress > 0 ? (
-                  <span className="text-warning animate-pulse">{stats.inProgress} queued</span>
+                  <span className="text-warning">{stats.inProgress} queued</span>
                 ) : (
                   <span className="text-muted-foreground">0 idle</span>
                 )}

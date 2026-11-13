@@ -59,10 +59,13 @@ const readToken = () => (typeof window !== "undefined" && localStorage.getItem("
 async function whoAmI(url: string, token: string): Promise<AuthSession | null> {
   try {
     let r = await fetch(url.replace(/\/$/, "") + "/api/auth/me", {
+      credentials: "include",
       headers: token ? { authorization: "Bearer " + token } : {},
     });
     if (!r.ok && token) {
-      r = await fetch(url.replace(/\/$/, "") + "/api/auth/me");
+      r = await fetch(url.replace(/\/$/, "") + "/api/auth/me", {
+        credentials: "include",
+      });
     }
     if (!r.ok) return null;
     const me = (await r.json()) as WhoAmI;
@@ -169,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const r = await fetch(`${target}/api/auth/login`, {
           method: "POST",
+          credentials: "include",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ email, password, ...(code ? { code } : {}) }),
         });
@@ -205,6 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (token.startsWith("hxs_")) {
       fetch(`${readUrl().replace(/\/$/, "")}/api/auth/logout`, {
         method: "POST",
+        credentials: "include",
         headers: { authorization: `Bearer ${token}` },
       }).catch(() => {});
     }

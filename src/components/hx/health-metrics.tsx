@@ -125,7 +125,7 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
       {docker && (
         <div className="flex items-center justify-between gap-4 rounded-xl border border-primary/20 bg-primary/5 px-4 py-3 text-xs text-foreground">
           <div className="flex items-center gap-2 font-medium">
-            <Box className="h-4 w-4 text-primary animate-pulse" />
+            <Box className="h-4 w-4 text-primary" />
             <span>
               Docker Container:{" "}
               <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-primary font-semibold">
@@ -474,7 +474,7 @@ export function HealthMetrics({ projectName, status }: HealthMetricsProps) {
                     ? "System Status · Running Live Telemetry"
                     : "Connecting to Engine..."}
               </span>
-              <span className="h-2 w-2 rounded-full bg-success animate-pulse" />
+              <span className="h-2 w-2 rounded-full bg-success" />
             </div>
             <p className="text-xs text-muted-foreground">
               {docker

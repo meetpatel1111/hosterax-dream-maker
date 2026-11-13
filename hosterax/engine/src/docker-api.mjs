@@ -403,6 +403,66 @@ export class DockerApiClient {
     };
   }
 
+  async createInteractiveExec(nameOrId, { cmd = ["/bin/sh"], cols = 100, rows = 30 } = {}) {
+    const target = await this.resolveContainerId(nameOrId);
+    const cmdArray = Array.isArray(cmd) ? cmd : ["sh", "-c", cmd];
+    const execInstance = await this.request(
+      "POST",
+      `/containers/${encodeURIComponent(target)}/exec`,
+      {
+        body: {
+          AttachStdin: true,
+          AttachStdout: true,
+          AttachStderr: true,
+          Tty: true,
+          Cmd: cmdArray,
+        },
+      },
+    );
+    const execId = execInstance.Id;
+    const payload = JSON.stringify({ Detach: false, Tty: true });
+    const reqOptions = {
+      method: "POST",
+      path: `/${this.apiVersion}/exec/${execId}/start`,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+        Connection: "Upgrade",
+        Upgrade: "tcp",
+      },
+    };
+    if (this.socketPath) reqOptions.socketPath = this.socketPath;
+    else {
+      reqOptions.host = this.host || "127.0.0.1";
+      reqOptions.port = this.port || 2375;
+    }
+
+    const socket = await new Promise((resolve, reject) => {
+      const req = http.request(reqOptions);
+      req.once("upgrade", (_res, sock, head) => {
+        if (head && head.length) sock.unshift(head);
+        resolve(sock);
+      });
+      req.once("response", (res) => {
+        reject(new Error(`Docker exec start returned HTTP ${res.statusCode}`));
+      });
+      req.once("error", reject);
+      req.write(payload);
+      req.end();
+    });
+
+    const resize = async (c, r) => {
+      try {
+        await this.request(
+          "POST",
+          `/exec/${execId}/resize?h=${Math.max(5, Number(r) || 30)}&w=${Math.max(10, Number(c) || 100)}`,
+        );
+      } catch {}
+    };
+    await resize(cols, rows);
+    return { execId, socket, resize };
+  }
+
   // ═════════════════════════════════════════════════════════════════════════════
   // 2. IMAGES SUBSYSTEM
   // ═════════════════════════════════════════════════════════════════════════════

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
   AlertTriangle,
@@ -9,31 +10,20 @@ import {
   Radio,
   RefreshCw,
   ExternalLink,
-  Shield,
   Layers,
   FileText,
   Copy,
   Plus,
   Server,
-  Zap,
   Code,
-  Share2,
   Lock,
+  Trash2,
+  Settings2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useEngine, useEngineProjects, useActiveOrgId } from "../../lib/engine";
+import { confirmAction } from "./confirm-modal";
 import {
-  useEngineHealth,
-  useEngineProjects,
-  useDockerContainers,
-  useBackupTargets,
-} from "../../lib/engine";
-import {
-  DEFAULT_MONITORED_COMPONENTS,
-  calculateOverallSystemStatus,
-  calculateUptimePercentage,
-  calculateAverageLatency,
-  checkSslRenewalWarning,
-  generate90DayTimeline,
   generatePostMortemMarkdown,
   generateStatusBadgeMarkdown,
   type MonitoredComponent,
@@ -41,331 +31,349 @@ import {
   type Incident,
   type IncidentStage,
   type IncidentSeverity,
-  type StatusPageSettings,
 } from "../../utils/status-page";
 
+type BackendStatusSettings = {
+  id: string;
+  title: string;
+  custom_domain: string;
+  public_enabled: number;
+  subscribe_enabled: number;
+  updated_at?: number;
+};
+
+type BackendStatusComponent = {
+  id: string;
+  name: string;
+  description: string;
+  group_name: string;
+  target_url: string;
+  project_name: string;
+  status: string;
+  latency_ms: number;
+  uptime_pct: number;
+  last_checked_at?: number | null;
+  created_at: number;
+};
+
+type BackendStatusIncident = {
+  id: string;
+  title: string;
+  status: string;
+  impact: string;
+  message: string;
+  componentIds: string[];
+  created_at: number;
+  updated_at: number;
+  resolved_at?: number | null;
+};
+
+type BackendStatusPage = {
+  settings: BackendStatusSettings;
+  components: BackendStatusComponent[];
+  incidents: BackendStatusIncident[];
+};
+
+function mapComponentStatus(s: string): ServiceStatus {
+  switch (s) {
+    case "degraded_performance":
+    case "degraded":
+      return "degraded_performance";
+    case "partial_outage":
+      return "partial_outage";
+    case "major_outage":
+    case "outage":
+      return "major_outage";
+    case "under_maintenance":
+    case "maintenance":
+      return "under_maintenance";
+    default:
+      return "operational";
+  }
+}
+
+function mapComponentGroup(g?: string): MonitoredComponent["group"] {
+  if (
+    g === "Edge & Ingress" ||
+    g === "Core Microservices" ||
+    g === "Storage & Databases" ||
+    g === "Third-Party & APIs"
+  ) {
+    return g;
+  }
+  return "Core Microservices";
+}
+
 export function StatusPageManager() {
-  const engineHealth = useEngineHealth();
+  const engine = useEngine();
+  const orgId = useActiveOrgId();
+  const qc = useQueryClient();
   const { data: projects = [] } = useEngineProjects();
-  const { data: containers = [] } = useDockerContainers();
-  const { data: backupTargets = [] } = useBackupTargets();
 
-  const [components, setComponents] = useState<MonitoredComponent[]>(DEFAULT_MONITORED_COMPONENTS);
-  const [incidents, setIncidents] = useState<Incident[]>([]);
-
-  // Dynamically derive monitored services from real engine services and containers
-  useEffect(() => {
-    const list: MonitoredComponent[] = [];
-
-    // 1. HosteraX Control Plane Daemon
-    if (engineHealth.data) {
-      list.push({
-        id: "comp-engine",
-        name: "HosteraX Control Plane Daemon",
-        description: `Core API daemon supervisor v${engineHealth.data.version || "1.1.0"}`,
-        group: "Core Microservices",
-        status: engineHealth.data.ok ? "operational" : "major_outage",
-        probe: {
-          id: "prb-engine",
-          name: "Control Plane Healthcheck",
-          target: "http://127.0.0.1:7777/health",
-          type: "http",
-          intervalSeconds: 15,
-          timeoutMs: 2000,
-          expectedStatus: 200,
-          enabled: true,
-        },
-        uptime90d: 100.0,
-        recentResults: [
-          { timestamp: Date.now() - 30000, latencyMs: 2, success: true, statusCode: 200 },
-          { timestamp: Date.now() - 15000, latencyMs: 3, success: true, statusCode: 200 },
-          { timestamp: Date.now(), latencyMs: 2, success: true, statusCode: 200 },
-        ],
-      });
-    }
-
-    // 2. Real Deployed Projects
-    projects.forEach((proj: any) => {
-      const isRunning = proj.status === "running";
-      const isStopped = proj.status === "stopped";
-      list.push({
-        id: `comp-proj-${proj.name}`,
-        name: `App: ${proj.name}`,
-        description: `Project port ${proj.port || 80} · Domains: ${proj.domain || "internal"}`,
-        group: "Core Microservices",
-        status: isRunning
-          ? "operational"
-          : isStopped
-            ? "under_maintenance"
-            : "degraded_performance",
-        probe: {
-          id: `prb-proj-${proj.name}`,
-          name: `${proj.name} HTTP Probe`,
-          target: `http://127.0.0.1:${proj.port || 80}/health`,
-          type: "http",
-          intervalSeconds: 30,
-          timeoutMs: 2500,
-          expectedStatus: 200,
-          enabled: true,
-        },
-        uptime90d: isRunning ? 99.98 : 95.0,
-        recentResults: [
-          {
-            timestamp: Date.now(),
-            latencyMs: 5,
-            success: isRunning,
-            statusCode: isRunning ? 200 : 503,
-          },
-        ],
-      });
-    });
-
-    // 3. Real Backup Targets & Databases
-    backupTargets.forEach((tgt) => {
-      list.push({
-        id: `comp-db-${tgt.id}`,
-        name: `${tgt.label || tgt.name} (${tgt.dbType.toUpperCase()})`,
-        description: `Container: ${tgt.containerName || "host"} · Managed DB`,
-        group: "Storage & Databases",
-        status: "operational",
-        probe: {
-          id: `prb-db-${tgt.id}`,
-          name: `${tgt.name} Probe`,
-          target: tgt.containerName || "127.0.0.1",
-          type: "tcp",
-          intervalSeconds: 30,
-          timeoutMs: 2000,
-          enabled: true,
-        },
-        uptime90d: 99.99,
-        containerId: tgt.containerName,
-        recentResults: [{ timestamp: Date.now(), latencyMs: 3, success: true }],
-      });
-    });
-
-    // 4. Edge proxy if containers detected
-    if (containers.length > 0) {
-      list.push({
-        id: "comp-edge",
-        name: "Edge Gateway & TLS Proxy",
-        description: "Zero-downtime reverse proxy routing and SSL termination.",
-        group: "Edge & Ingress",
-        status: "operational",
-        probe: {
-          id: "prb-edge",
-          name: "Edge HTTP Ping",
-          target: "http://127.0.0.1:80/health",
-          type: "http",
-          intervalSeconds: 15,
-          timeoutMs: 2000,
-          expectedStatus: 200,
-          enabled: true,
-        },
-        uptime90d: 99.99,
-        sslDaysRemaining: 89,
-        containerId: "hx_edge",
-        recentResults: [{ timestamp: Date.now(), latencyMs: 2, success: true, statusCode: 200 }],
-      });
-    }
-
-    setComponents(list);
-  }, [engineHealth.data, projects, backupTargets, containers]);
-
-  const [settings, setSettings] = useState<StatusPageSettings>({
-    title: "HosteraX Cloud Status",
-    companyName: "HosteraX Infrastructure",
-    headline: "Real-time service health, synthetic probes, and SLA uptime monitor.",
-    customDomain: "status.hosterax.internal",
-    isPublic: true,
-    announcement: {
-      active: false,
-      text: "",
-      type: "info",
-    },
-    refreshIntervalSeconds: 30,
+  const { data: statusData, isLoading } = useQuery<BackendStatusPage>({
+    queryKey: ["status-page", engine.url, engine.token, orgId],
+    queryFn: () => engine.call<BackendStatusPage>("GET", "/api/status-page"),
+    refetchInterval: 15000,
   });
 
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const componentsRaw = statusData?.components || [];
+  const incidentsRaw = statusData?.incidents || [];
+  const settingsRaw = statusData?.settings;
+
+  const components: MonitoredComponent[] = useMemo(
+    () =>
+      componentsRaw.map((c) => ({
+        id: c.id,
+        name: c.name,
+        description: c.description || c.target_url || c.project_name || "HTTP Probe",
+        group: mapComponentGroup(c.group_name),
+        status: mapComponentStatus(c.status),
+        probe: {
+          id: c.id,
+          name: c.name,
+          target: c.target_url || c.project_name || "",
+          type: "http",
+          intervalSeconds: 30,
+          timeoutMs: 3000,
+          expectedStatus: 200,
+          enabled: true,
+        },
+        uptime90d: Number(c.uptime_pct ?? 100),
+        recentResults: c.last_checked_at
+          ? [
+              {
+                timestamp: c.last_checked_at,
+                latencyMs: Number(c.latency_ms ?? 0),
+                success: mapComponentStatus(c.status) === "operational",
+              },
+            ]
+          : [],
+      })),
+    [componentsRaw],
+  );
+
+  const incidents: Incident[] = useMemo(
+    () =>
+      incidentsRaw.map((i) => ({
+        id: i.id,
+        title: i.title,
+        severity: (i.impact as IncidentSeverity) || "minor",
+        affectedComponentIds: i.componentIds || [],
+        stage: (i.status as IncidentStage) || "investigating",
+        createdAt: i.created_at,
+        resolvedAt: i.resolved_at ?? undefined,
+        updates: [
+          {
+            id: `${i.id}-latest`,
+            timestamp: i.updated_at || i.created_at,
+            stage: (i.status as IncidentStage) || "investigating",
+            message: i.message || "Incident logged on status feed.",
+          },
+        ],
+      })),
+    [incidentsRaw],
+  );
+
+  const [titleInput, setTitleInput] = useState("HosteraX Cloud Status");
+  const [domainInput, setDomainInput] = useState("");
+  const [publicEnabledInput, setPublicEnabledInput] = useState(true);
+  const [probingAll, setProbingAll] = useState(false);
+  const [probingId, setProbingId] = useState<string | null>(null);
   const [showPublicPreview, setShowPublicPreview] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showAddComponentModal, setShowAddComponentModal] = useState(false);
   const [showNewIncidentModal, setShowNewIncidentModal] = useState(false);
   const [showEmbedModal, setShowEmbedModal] = useState(false);
   const [selectedIncidentForRCA, setSelectedIncidentForRCA] = useState<Incident | null>(null);
 
+  // Add component form
+  const [compName, setCompName] = useState("");
+  const [compDesc, setCompDesc] = useState("");
+  const [compGroup, setCompGroup] = useState("Core Infrastructure");
+  const [compTargetUrl, setCompTargetUrl] = useState("");
+  const [compProjectName, setCompProjectName] = useState("");
+
   // New incident form state
   const [newIncidentTitle, setNewIncidentTitle] = useState("");
   const [newIncidentSeverity, setNewIncidentSeverity] = useState<IncidentSeverity>("minor");
-  const [newIncidentComponentId, setNewIncidentComponentId] = useState("comp-engine");
+  const [newIncidentComponentId, setNewIncidentComponentId] = useState("");
   const [newIncidentMessage, setNewIncidentMessage] = useState("");
 
-  // Derived metrics
-  const overallStatus = useMemo(() => calculateOverallSystemStatus(components), [components]);
-
-  const averageSystemLatency = useMemo(() => {
-    const allResults = components.flatMap((c) => c.recentResults);
-    return calculateAverageLatency(allResults);
-  }, [components]);
-
-  const overall90dUptime = useMemo(() => {
-    if (components.length === 0) return 100.0;
-    const sum = components.reduce((acc, c) => acc + c.uptime90d, 0);
-    return Number((sum / components.length).toFixed(2));
-  }, [components]);
-
-  // Execute real probe ping on a single component
-  const handlePingComponent = async (id: string) => {
-    const t0 = performance.now();
-    let success = true;
-    let statusCode = 200;
-    try {
-      const res = await fetch("/health");
-      statusCode = res.status;
-      success = res.ok;
-    } catch {
-      success = false;
-      statusCode = 503;
+  useEffect(() => {
+    if (settingsRaw) {
+      setTitleInput(settingsRaw.title || "HosteraX Cloud Status");
+      setDomainInput(settingsRaw.custom_domain || "");
+      setPublicEnabledInput(Boolean(settingsRaw.public_enabled));
     }
-    const realLatency = Math.max(1, Math.round(performance.now() - t0));
+  }, [settingsRaw]);
 
-    setComponents((prev) =>
-      prev.map((c) => {
-        if (c.id !== id) return c;
-        const newResult = {
-          timestamp: Date.now(),
-          latencyMs: realLatency,
-          success,
-          statusCode,
-        };
-        const updatedResults = [...c.recentResults.slice(1), newResult];
-        return {
-          ...c,
-          status: success ? "operational" : "degraded_performance",
-          recentResults: updatedResults,
-        };
-      }),
-    );
-    toast.success(`Synthetic probe executed! Real round-trip latency: ${realLatency}ms`);
+  const overallStatus: ServiceStatus = useMemo(() => {
+    if (components.some((c) => c.status === "major_outage")) return "major_outage";
+    if (components.some((c) => c.status === "partial_outage")) return "partial_outage";
+    if (components.some((c) => c.status === "degraded_performance")) return "degraded_performance";
+    return "operational";
+  }, [components]);
+
+  const avgLatencyMs = useMemo(() => {
+    const measured = componentsRaw.filter((c) => c.last_checked_at && c.latency_ms > 0);
+    if (measured.length === 0) return null;
+    return Math.round(measured.reduce((a, b) => a + b.latency_ms, 0) / measured.length);
+  }, [componentsRaw]);
+
+  const avgUptimePct = useMemo(() => {
+    if (componentsRaw.length === 0) return null;
+    const sum = componentsRaw.reduce((a, c) => a + Number(c.uptime_pct ?? 100), 0);
+    return Number((sum / componentsRaw.length).toFixed(2));
+  }, [componentsRaw]);
+
+  const handlePingComponent = async (comp: BackendStatusComponent) => {
+    setProbingId(comp.id);
+    try {
+      const res: any = await engine.call(
+        "POST",
+        `/api/status-page/probe/${encodeURIComponent(comp.id)}`,
+        {},
+      );
+      await qc.invalidateQueries({ queryKey: ["status-page"] });
+      toast.success(
+        `Probe "${comp.name}": ${res.status || "checked"} (${res.latencyMs ?? 0}ms)`,
+      );
+    } finally {
+      setProbingId(null);
+    }
   };
 
-  // Run all probes simultaneously with real latency measurement
   const handleRunAllProbes = async () => {
-    setIsRefreshing(true);
-    const t0 = performance.now();
-    let success = true;
+    setProbingAll(true);
     try {
-      const res = await fetch("/health");
-      success = res.ok;
-    } catch {
-      success = false;
+      const res = await engine.call<{ ok: boolean; probedCount: number }>(
+        "POST",
+        "/api/status-page/probe-all",
+        {},
+      );
+      await qc.invalidateQueries({ queryKey: ["status-page"] });
+      toast.success(`Executed ${res.probedCount} synthetic HTTP/TCP probe(s)`);
+    } finally {
+      setProbingAll(false);
     }
-    const realLatency = Math.max(1, Math.round(performance.now() - t0));
-
-    setComponents((prev) =>
-      prev.map((c) => {
-        const newResult = {
-          timestamp: Date.now(),
-          latencyMs: realLatency,
-          success,
-          statusCode: success ? 200 : 503,
-        };
-        return {
-          ...c,
-          recentResults: [...c.recentResults.slice(1), newResult],
-        };
-      }),
-    );
-    setIsRefreshing(false);
-    toast.success(
-      `All synthetic probes refreshed across ${components.length} components (${realLatency}ms latency).`,
-    );
   };
 
-  // Override component status
-  const handleUpdateComponentStatus = (id: string, newStatus: ServiceStatus) => {
-    setComponents((prev) => prev.map((c) => (c.id === id ? { ...c, status: newStatus } : c)));
-    toast.info(`Updated component status to ${newStatus.replace("_", " ")}`);
+  const handleUpdateComponentStatus = async (id: string, newStatus: ServiceStatus) => {
+    await engine.call("PATCH", `/api/status-page/components/${encodeURIComponent(id)}`, {
+      status: newStatus,
+    });
+    await qc.invalidateQueries({ queryKey: ["status-page"] });
+    toast.success(`Updated component status to ${newStatus.replace("_", " ")}`);
   };
 
-  // Create new incident
-  const handleCreateIncident = () => {
-    if (!newIncidentTitle.trim()) {
-      toast.error("Please enter an incident title");
+  const handleCreateComponent = async () => {
+    if (!compName.trim()) return toast.error("Component name is required");
+    await engine.call("POST", "/api/status-page/components", {
+      name: compName.trim(),
+      description: compDesc.trim(),
+      groupName: compGroup.trim() || "Core Infrastructure",
+      targetUrl: compTargetUrl.trim(),
+      projectName: compProjectName.trim(),
+    });
+    await qc.invalidateQueries({ queryKey: ["status-page"] });
+    setShowAddComponentModal(false);
+    setCompName("");
+    setCompDesc("");
+    setCompTargetUrl("");
+    setCompProjectName("");
+    toast.success("Status component added and probed");
+  };
+
+  const handleImportProjectProbes = async () => {
+    const existingProjects = new Set(componentsRaw.map((c) => c.project_name).filter(Boolean));
+    const missing = projects.filter((p: any) => !existingProjects.has(p.name));
+    if (missing.length === 0) {
+      toast.info("All active projects are already monitored");
       return;
     }
+    for (const p of missing) {
+      await engine.call("POST", "/api/status-page/components", {
+        name: `App: ${p.name}`,
+        description: p.domain ? `Domain: ${p.domain}` : `Project ${p.name}`,
+        groupName: "Applications",
+        projectName: p.name,
+        targetUrl: p.domain ? `https://${p.domain}` : "",
+      });
+    }
+    await qc.invalidateQueries({ queryKey: ["status-page"] });
+    toast.success(`Added ${missing.length} project probe(s)`);
+  };
 
-    const created: Incident = {
-      id: `inc-${Date.now().toString().slice(-4)}`,
-      title: newIncidentTitle,
-      severity: newIncidentSeverity,
-      affectedComponentIds: [newIncidentComponentId],
-      stage: "investigating",
-      createdAt: Date.now(),
-      updates: [
-        {
-          id: `u-${Date.now()}`,
-          timestamp: Date.now(),
-          stage: "investigating",
-          message:
-            newIncidentMessage ||
-            "Engineering team is currently investigating reports of degraded service.",
-        },
-      ],
-    };
+  const handleDeleteComponent = async (comp: BackendStatusComponent) => {
+    const ok = await confirmAction({
+      title: `Remove Component "${comp.name}"`,
+      description: "Delete this component and stop monitoring it on the status page?",
+      variant: "destructive",
+      confirmLabel: "Remove Component",
+    });
+    if (!ok) return;
+    await engine.call("DELETE", `/api/status-page/components/${encodeURIComponent(comp.id)}`);
+    await qc.invalidateQueries({ queryKey: ["status-page"] });
+    toast.success(`Removed "${comp.name}"`);
+  };
 
-    setIncidents([created, ...incidents]);
+  const handleSaveSettings = async () => {
+    await engine.call("PUT", "/api/status-page", {
+      title: titleInput.trim() || "HosteraX Cloud Status",
+      customDomain: domainInput.trim(),
+      publicEnabled: publicEnabledInput,
+    });
+    await qc.invalidateQueries({ queryKey: ["status-page"] });
+    setShowSettingsModal(false);
+    toast.success("Status page settings saved");
+  };
 
-    // Automatically degrade component status
-    const statusMap: Record<IncidentSeverity, ServiceStatus> = {
-      minor: "degraded_performance",
-      major: "partial_outage",
-      critical: "major_outage",
-      maintenance: "under_maintenance",
-    };
-    handleUpdateComponentStatus(newIncidentComponentId, statusMap[newIncidentSeverity]);
-
+  const handleCreateIncident = async () => {
+    if (!newIncidentTitle.trim()) return toast.error("Please enter an incident title");
+    await engine.call("POST", "/api/status-page/incidents", {
+      title: newIncidentTitle.trim(),
+      impact: newIncidentSeverity,
+      status: "investigating",
+      message:
+        newIncidentMessage.trim() ||
+        "Engineering team is investigating degraded service telemetry.",
+      componentIds: newIncidentComponentId ? [newIncidentComponentId] : [],
+    });
+    await qc.invalidateQueries({ queryKey: ["status-page"] });
     setShowNewIncidentModal(false);
     setNewIncidentTitle("");
     setNewIncidentMessage("");
-    toast.success("Incident published to live status feed.");
+    toast.success("Incident published to status feed");
   };
 
-  // Advance incident stage
-  const handleAdvanceIncidentStage = (incidentId: string, nextStage: IncidentStage) => {
-    setIncidents((prev) =>
-      prev.map((inc) => {
-        if (inc.id !== incidentId) return inc;
-        const isResolved = nextStage === "resolved";
-        const newUpdate = {
-          id: `u-${Date.now()}`,
-          timestamp: Date.now(),
-          stage: nextStage,
-          message:
-            nextStage === "identified"
-              ? "The root cause has been identified and mitigation is in progress."
-              : nextStage === "monitoring"
-                ? "A fix has been deployed. We are monitoring telemetry and recovery metrics."
-                : "The incident has been resolved and all systems are fully operational.",
-        };
-        return {
-          ...inc,
-          stage: nextStage,
-          resolvedAt: isResolved ? Date.now() : inc.resolvedAt,
-          updates: [...inc.updates, newUpdate],
-        };
-      }),
-    );
-
-    if (nextStage === "resolved") {
-      const inc = incidents.find((i) => i.id === incidentId);
-      if (inc) {
-        inc.affectedComponentIds.forEach((cid) => handleUpdateComponentStatus(cid, "operational"));
-      }
-      toast.success("Incident resolved and systems returned to operational status.");
-    } else {
-      toast.info(`Incident advanced to ${nextStage}.`);
-    }
+  const handleAdvanceIncidentStage = async (incident: Incident, nextStage: IncidentStage) => {
+    const msg =
+      nextStage === "identified"
+        ? "Root cause identified and mitigation is underway."
+        : nextStage === "monitoring"
+          ? "Mitigation applied; monitoring recovery telemetry."
+          : "Incident resolved and services restored.";
+    await engine.call("PATCH", `/api/status-page/incidents/${encodeURIComponent(incident.id)}`, {
+      status: nextStage,
+      message: msg,
+    });
+    await qc.invalidateQueries({ queryKey: ["status-page"] });
+    toast.success(`Incident marked as ${nextStage}`);
   };
 
-  // Status badge styling helper
+  const handleDeleteIncident = async (incident: Incident) => {
+    const ok = await confirmAction({
+      title: `Delete Incident "${incident.title}"`,
+      description: "Permanently remove this incident record from the status page?",
+      variant: "destructive",
+      confirmLabel: "Delete Incident",
+    });
+    if (!ok) return;
+    await engine.call("DELETE", `/api/status-page/incidents/${encodeURIComponent(incident.id)}`);
+    await qc.invalidateQueries({ queryKey: ["status-page"] });
+    toast.success("Incident deleted");
+  };
+
   const getStatusBadge = (status: ServiceStatus) => {
     switch (status) {
       case "operational":
@@ -407,57 +415,82 @@ export function StatusPageManager() {
   };
 
   const currentBadge = getStatusBadge(overallStatus);
+  const displayDomain = settingsRaw?.custom_domain || "status.hosterax.internal";
 
   return (
-    <div className="space-y-6">
-      {/* Header bar */}
+    <div className="space-y-6" data-testid="status-page-manager">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-border/40 pb-5">
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
-              <Radio className="h-6 w-6 text-primary animate-pulse" />
-              Synthetic Probes & Status Page Engine
+              <Radio className="h-6 w-6 text-primary" />
+              {settingsRaw?.title || "Synthetic Probes & Status Page"}
             </h1>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary/10 border border-primary/20 text-primary">
               <Globe className="h-3 w-3" />
-              Public & Private
+              {settingsRaw?.public_enabled ? "Public Feed Active" : "Private"}
             </span>
           </div>
           <p className="text-sm text-muted-foreground mt-1">
-            Automated synthetic HTTP/TCP probes, 90-day SLA analytics, zero-downtime incident
-            management, and branded status page publishing.
+            Server-executed HTTP/TCP probes, real response latency telemetry, and persisted incident
+            post-mortems.
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={handleRunAllProbes}
-            disabled={isRefreshing}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground hover:bg-muted/70 transition-colors cursor-pointer"
+            type="button"
+            onClick={() => setShowSettingsModal(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground hover:bg-muted/70 transition-colors cursor-pointer"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+            <Settings2 className="h-3.5 w-3.5 text-muted-foreground" />
+            Page Settings
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-probe-all"
+            onClick={handleRunAllProbes}
+            disabled={probingAll || componentsRaw.length === 0}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground hover:bg-muted/70 transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${probingAll ? "animate-spin" : ""}`} />
             Run All Probes
           </button>
 
           <button
+            type="button"
             onClick={() => setShowEmbedModal(true)}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground hover:bg-muted/70 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground hover:bg-muted/70 transition-colors cursor-pointer"
           >
             <Code className="h-3.5 w-3.5 text-muted-foreground" />
-            Badges & API
+            Badges &amp; API
           </button>
 
           <button
+            type="button"
             onClick={() => setShowPublicPreview(true)}
-            className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground hover:bg-muted/70 transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground hover:bg-muted/70 transition-colors cursor-pointer"
           >
             <ExternalLink className="h-3.5 w-3.5 text-primary" />
             Public View
           </button>
 
           <button
+            type="button"
+            data-testid="btn-add-status-component"
+            onClick={() => setShowAddComponentModal(true)}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg border border-primary/40 bg-primary/10 text-primary hover:bg-primary/20 transition-colors cursor-pointer"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add Component / Probe
+          </button>
+
+          <button
+            type="button"
+            data-testid="btn-new-incident"
             onClick={() => setShowNewIncidentModal(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm cursor-pointer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 transition-colors shadow-sm cursor-pointer"
           >
             <Plus className="h-3.5 w-3.5" />
             New Incident
@@ -465,7 +498,6 @@ export function StatusPageManager() {
         </div>
       </div>
 
-      {/* Global System Health Banner */}
       <div
         className={`rounded-xl border p-5 transition-all ${
           overallStatus === "operational"
@@ -483,15 +515,15 @@ export function StatusPageManager() {
             <div>
               <h2 className="text-lg font-bold">
                 {overallStatus === "operational"
-                  ? "All Systems Operational"
+                  ? "All Monitored Systems Operational"
                   : overallStatus === "major_outage"
                     ? "Critical Outage Detected"
                     : "Partial Service Degradation"}
               </h2>
               <p className="text-xs opacity-90 mt-0.5">
-                {settings.announcement?.active
-                  ? settings.announcement.text
-                  : `Real-time monitoring active across ${components.length} microservices and infrastructure gateways.`}
+                {componentsRaw.length === 0
+                  ? "Add a component or import deployed projects to begin probing."
+                  : `Monitoring ${componentsRaw.length} persisted endpoint(s) and service component(s).`}
               </p>
             </div>
           </div>
@@ -499,162 +531,116 @@ export function StatusPageManager() {
           <div className="flex items-center gap-4 text-xs">
             <div className="text-right">
               <div className="text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
-                90-Day SLA
+                Measured Uptime
               </div>
-              <div className="text-base font-bold text-foreground">{overall90dUptime}%</div>
+              <div className="text-base font-bold text-foreground">
+                {avgUptimePct !== null ? `${avgUptimePct}%` : "N/A"}
+              </div>
             </div>
             <div className="h-7 w-px bg-border/40" />
             <div className="text-right">
               <div className="text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
                 Avg Latency
               </div>
-              <div className="text-base font-bold text-foreground">{averageSystemLatency}ms</div>
+              <div className="text-base font-bold text-foreground">
+                {avgLatencyMs !== null ? `${avgLatencyMs}ms` : "Unprobed"}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Quick Metrics Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-1">
-          <span className="text-xs text-muted-foreground font-medium">24-Hour SLA</span>
-          <div className="text-xl font-bold text-foreground">100.00%</div>
-          <p className="text-[11px] text-emerald-400 flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3" /> 0 dropped synthetic pings
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-1">
-          <span className="text-xs text-muted-foreground font-medium">7-Day SLA</span>
-          <div className="text-xl font-bold text-foreground">99.99%</div>
-          <p className="text-[11px] text-muted-foreground">Exceeds 99.9% target</p>
-        </div>
-
-        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-1">
-          <span className="text-xs text-muted-foreground font-medium">30-Day SLA</span>
-          <div className="text-xl font-bold text-foreground">99.98%</div>
-          <p className="text-[11px] text-muted-foreground">3 min total downtime</p>
-        </div>
-
-        <div className="rounded-xl border border-border/50 bg-card p-4 space-y-1">
-          <span className="text-xs text-muted-foreground font-medium">Synthetic Probes</span>
-          <div className="text-xl font-bold text-foreground">{components.length} Active</div>
-          <p className="text-[11px] text-primary flex items-center gap-1">
-            <Zap className="h-3 w-3" /> Interval: 15s – 60s
-          </p>
-        </div>
-      </div>
-
-      {/* Monitored Components Breakdown */}
       <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
-        <div className="px-5 py-4 border-b border-border/40 flex items-center justify-between">
+        <div className="px-5 py-4 border-b border-border/40 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
               <Layers className="h-4 w-4 text-primary" />
-              Monitored Microservices & Infrastructure
+              Monitored Services &amp; Synthetic Probes
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Live synthetic probes with 90-day historical timeline bars and latency telemetry.
+              Engine-executed HTTP checks and component statuses persisted in SQLite.
             </p>
           </div>
-          <span className="text-xs font-mono text-muted-foreground">
-            {components.filter((c) => c.status === "operational").length} of {components.length}{" "}
-            Operational
-          </span>
+          <div className="flex items-center gap-2">
+            {projects.length > 0 && (
+              <button
+                type="button"
+                onClick={handleImportProjectProbes}
+                className="text-xs px-2.5 py-1 rounded border border-border bg-muted/40 hover:bg-muted text-foreground cursor-pointer"
+              >
+                Import Deployed Projects
+              </button>
+            )}
+            <span className="text-xs font-mono text-muted-foreground">
+              {components.filter((c) => c.status === "operational").length} / {components.length}{" "}
+              Operational
+            </span>
+          </div>
         </div>
 
         <div className="divide-y divide-border/40">
-          {components.length === 0 ? (
+          {isLoading ? (
+            <div className="p-8 text-center text-xs text-muted-foreground">
+              Loading status page components...
+            </div>
+          ) : componentsRaw.length === 0 ? (
             <div className="p-12 text-center space-y-3">
               <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
                 <Server className="h-6 w-6" />
               </div>
               <h4 className="text-sm font-semibold text-foreground">
-                No Monitored Services Registered
+                No Monitored Components Registered
               </h4>
               <p className="text-xs text-muted-foreground max-w-md mx-auto leading-relaxed">
-                Connect a server node or deploy an application in HosteraX to automatically
-                provision synthetic health probes and SLA uptime monitoring.
+                Add an HTTP target URL or link an active HosteraX project to start real synthetic
+                monitoring.
               </p>
+              <button
+                type="button"
+                onClick={() => setShowAddComponentModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Component / Probe
+              </button>
             </div>
           ) : (
-            components.map((comp) => {
-              const badge = getStatusBadge(comp.status);
-              const timeline = generate90DayTimeline(comp.uptime90d, 45); // 45 bars for crisp display
-              const avgLat = calculateAverageLatency(comp.recentResults);
-              const sslCheck = checkSslRenewalWarning(comp.sslDaysRemaining);
+            componentsRaw.map((comp) => {
+              const mappedStatus = mapComponentStatus(comp.status);
+              const badge = getStatusBadge(mappedStatus);
 
               return (
                 <div key={comp.id} className="p-5 hover:bg-muted/10 transition-colors">
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                    {/* Service info */}
-                    <div className="space-y-1 max-w-md">
-                      <div className="flex items-center gap-2.5">
+                    <div className="space-y-1 max-w-xl">
+                      <div className="flex items-center flex-wrap gap-2.5">
                         <span className="font-semibold text-sm text-foreground">{comp.name}</span>
                         <span className="text-[11px] px-2 py-0.5 rounded-full bg-muted border border-border/60 text-muted-foreground">
-                          {comp.group}
+                          {comp.group_name}
                         </span>
-                        {comp.containerId && (
+                        {comp.project_name && (
                           <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-muted/60 text-muted-foreground">
-                            {comp.containerId}
+                            project:{comp.project_name}
                           </span>
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground leading-relaxed">
-                        {comp.description}
+                      <p className="text-xs text-muted-foreground">
+                        {comp.description || comp.target_url || "Custom service check"}
                       </p>
-                      {comp.sslDaysRemaining && (
-                        <div className="flex items-center gap-1.5 text-[11px] pt-0.5">
-                          <Shield
-                            className={`h-3 w-3 ${sslCheck.warning ? "text-amber-400" : "text-emerald-400"}`}
-                          />
-                          <span
-                            className={
-                              sslCheck.warning ? "text-amber-400" : "text-muted-foreground"
-                            }
-                          >
-                            SSL Certificate: {comp.sslDaysRemaining} days remaining
-                          </span>
+                      {comp.target_url && (
+                        <div className="text-[11px] font-mono text-primary/80">
+                          Target: {comp.target_url}
                         </div>
                       )}
                     </div>
 
-                    {/* 45-day uptime timeline bars */}
-                    <div className="flex-1 max-w-sm">
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1.5">
-                        <span>45 days ago</span>
-                        <span className="font-mono font-medium text-foreground">
-                          {comp.uptime90d}% uptime
-                        </span>
-                        <span>Today</span>
-                      </div>
-                      <div className="flex items-center gap-[3px] h-6 bg-muted/20 p-1 rounded-md border border-border/40">
-                        {timeline.map((day, idx) => (
-                          <div
-                            key={idx}
-                            title={`${day.dateString}: ${day.status.replace("_", " ")} (${day.uptimePercent}%)`}
-                            className={`flex-1 h-full rounded-[1px] transition-transform hover:scale-125 cursor-pointer ${
-                              day.status === "operational"
-                                ? "bg-emerald-500 hover:bg-emerald-400"
-                                : day.status === "degraded_performance"
-                                  ? "bg-amber-500 hover:bg-amber-400"
-                                  : day.status === "under_maintenance"
-                                    ? "bg-blue-500 hover:bg-blue-400"
-                                    : "bg-rose-500 hover:bg-rose-400"
-                            }`}
-                          />
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Actions & Live Status */}
-                    <div className="flex items-center gap-3 self-end lg:self-center">
+                    <div className="flex items-center flex-wrap gap-3 self-end lg:self-center">
                       <div className="text-right">
                         <div className="text-[10px] uppercase font-mono text-muted-foreground">
-                          Latency
+                          Latency / Uptime
                         </div>
                         <div className="text-xs font-mono font-bold text-foreground">
-                          {avgLat}ms
+                          {comp.last_checked_at ? `${comp.latency_ms}ms` : "Pending"} ·{" "}
+                          {Number(comp.uptime_pct ?? 100).toFixed(2)}%
                         </div>
                       </div>
 
@@ -665,18 +651,21 @@ export function StatusPageManager() {
                         {badge.label}
                       </div>
 
-                      {/* Manual override & test button */}
                       <div className="flex items-center gap-1.5">
                         <button
-                          onClick={() => handlePingComponent(comp.id)}
-                          title="Execute manual synthetic probe ping"
-                          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground border border-border/40 transition-colors cursor-pointer"
+                          type="button"
+                          disabled={probingId === comp.id}
+                          onClick={() => handlePingComponent(comp)}
+                          title="Run server-side HTTP probe"
+                          className="p-1.5 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground border border-border/40 transition-colors cursor-pointer disabled:opacity-50"
                         >
-                          <RefreshCw className="h-3.5 w-3.5" />
+                          <RefreshCw
+                            className={`h-3.5 w-3.5 ${probingId === comp.id ? "animate-spin" : ""}`}
+                          />
                         </button>
 
                         <select
-                          value={comp.status}
+                          value={mappedStatus}
                           onChange={(e) =>
                             handleUpdateComponentStatus(comp.id, e.target.value as ServiceStatus)
                           }
@@ -688,6 +677,15 @@ export function StatusPageManager() {
                           <option value="major_outage">Major Outage</option>
                           <option value="under_maintenance">Maintenance</option>
                         </select>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteComponent(comp)}
+                          title="Remove component"
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-rose-400 hover:bg-rose-500/10"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -698,16 +696,15 @@ export function StatusPageManager() {
         </div>
       </div>
 
-      {/* Incident History & Post-Mortems Section */}
       <div className="rounded-xl border border-border/60 bg-card overflow-hidden">
         <div className="px-5 py-4 border-b border-border/40 flex items-center justify-between">
           <div>
             <h3 className="font-semibold text-foreground text-sm flex items-center gap-2">
               <Activity className="h-4 w-4 text-primary" />
-              Incidents & Post-Mortem Feed
+              Incidents &amp; Post-Mortem Feed
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Live lifecycle management: Investigating → Identified → Monitoring → Resolved.
+              Persisted lifecycle: Investigating → Identified → Monitoring → Resolved.
             </p>
           </div>
           <span className="text-xs text-muted-foreground">
@@ -718,12 +715,11 @@ export function StatusPageManager() {
         <div className="divide-y divide-border/40">
           {incidents.length === 0 ? (
             <div className="p-8 text-center text-sm text-muted-foreground">
-              No incidents reported in the last 90 days. Systems operating with high stability.
+              No incidents recorded. Systems operating cleanly.
             </div>
           ) : (
             incidents.map((incident) => {
               const isResolved = incident.stage === "resolved";
-
               return (
                 <div key={incident.id} className="p-5 space-y-3 hover:bg-muted/5 transition-colors">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -749,66 +745,61 @@ export function StatusPageManager() {
                         className={`text-xs px-2.5 py-0.5 rounded-full font-medium ${
                           isResolved
                             ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                            : "bg-amber-500/10 text-amber-400 border border-amber-500/20 animate-pulse"
+                            : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
                         }`}
                       >
                         {incident.stage.toUpperCase()}
                       </span>
 
                       <button
+                        type="button"
                         onClick={() => setSelectedIncidentForRCA(incident)}
                         className="inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded bg-muted/60 hover:bg-muted text-foreground transition-colors cursor-pointer border border-border/40"
                       >
                         <FileText className="h-3 w-3 text-primary" />
-                        RCA Post-Mortem
+                        RCA
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteIncident(incident)}
+                        className="p-1 rounded text-muted-foreground hover:text-rose-400"
+                        title="Delete incident"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
                   </div>
 
-                  {/* Updates list */}
-                  <div className="space-y-2 pl-3 border-l-2 border-border/60">
-                    {incident.updates.map((update) => (
-                      <div key={update.id} className="text-xs space-y-0.5">
-                        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                          <span className="font-mono text-foreground font-medium">
-                            {new Date(update.timestamp).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                          <span>·</span>
-                          <span className="uppercase text-[10px] tracking-wide text-primary">
-                            {update.stage}
-                          </span>
-                        </div>
-                        <p className="text-foreground/90">{update.message}</p>
-                      </div>
-                    ))}
-                  </div>
+                  <p className="text-xs text-foreground/90 pl-3 border-l-2 border-border/60">
+                    {incident.updates[0]?.message}
+                  </p>
 
-                  {/* Quick Stage Advancement Controls */}
                   {!isResolved && (
-                    <div className="flex items-center gap-2 pt-2">
-                      <span className="text-[11px] text-muted-foreground">Advance Stage:</span>
+                    <div className="flex items-center gap-2 pt-1">
+                      <span className="text-[11px] text-muted-foreground">Advance:</span>
                       {incident.stage === "investigating" && (
                         <button
-                          onClick={() => handleAdvanceIncidentStage(incident.id, "identified")}
-                          className="px-2.5 py-1 text-xs rounded bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer"
+                          type="button"
+                          onClick={() => handleAdvanceIncidentStage(incident, "identified")}
+                          className="px-2.5 py-1 text-xs rounded bg-muted hover:bg-muted/80 text-foreground cursor-pointer"
                         >
-                          Mark as Identified
+                          Identified
                         </button>
                       )}
                       {(incident.stage === "investigating" || incident.stage === "identified") && (
                         <button
-                          onClick={() => handleAdvanceIncidentStage(incident.id, "monitoring")}
-                          className="px-2.5 py-1 text-xs rounded bg-muted hover:bg-muted/80 text-foreground transition-colors cursor-pointer"
+                          type="button"
+                          onClick={() => handleAdvanceIncidentStage(incident, "monitoring")}
+                          className="px-2.5 py-1 text-xs rounded bg-muted hover:bg-muted/80 text-foreground cursor-pointer"
                         >
-                          Mark as Monitoring
+                          Monitoring
                         </button>
                       )}
                       <button
-                        onClick={() => handleAdvanceIncidentStage(incident.id, "resolved")}
-                        className="px-2.5 py-1 text-xs rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 transition-colors cursor-pointer font-medium"
+                        type="button"
+                        onClick={() => handleAdvanceIncidentStage(incident, "resolved")}
+                        className="px-2.5 py-1 text-xs rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/30 cursor-pointer font-medium"
                       >
                         Resolve Incident
                       </button>
@@ -821,91 +812,215 @@ export function StatusPageManager() {
         </div>
       </div>
 
-      {/* Modal: Public Status Page Preview */}
-      {showPublicPreview && (
+      {showAddComponentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-xl border border-border/80 bg-card p-6 shadow-2xl space-y-6">
-            <div className="flex items-center justify-between border-b border-border/40 pb-4">
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-primary text-sm">
-                  Hx
-                </div>
-                <div>
-                  <h3 className="font-bold text-foreground text-base">{settings.title}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    {settings.customDomain} (Public Vanity URL)
-                  </p>
-                </div>
-              </div>
+          <div className="w-full max-w-lg rounded-xl border border-border/80 bg-card p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+              <h3 className="font-bold text-foreground text-base">
+                Add Status Component &amp; HTTP Probe
+              </h3>
               <button
-                onClick={() => setShowPublicPreview(false)}
-                className="p-1 rounded-md text-muted-foreground hover:text-foreground text-sm"
+                type="button"
+                onClick={() => setShowAddComponentModal(false)}
+                className="p-1 text-muted-foreground hover:text-foreground text-sm"
               >
                 ✕
               </button>
             </div>
-
-            {/* Simulated Public View */}
-            <div className="space-y-6 bg-background p-6 rounded-lg border border-border/40">
-              <div
-                className={`p-4 rounded-lg border text-center font-semibold text-sm ${
-                  overallStatus === "operational"
-                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-                    : "bg-amber-500/10 border-amber-500/20 text-amber-400"
-                }`}
-              >
-                {overallStatus === "operational"
-                  ? "✓ All Systems Fully Operational Across Global Edge"
-                  : "⚠ Some Services Experiencing Degraded Performance"}
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-medium mb-1">Component Name *</label>
+                <input
+                  value={compName}
+                  onChange={(e) => setCompName(e.target.value)}
+                  placeholder="e.g. Public API Gateway"
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border"
+                />
               </div>
-
-              <div className="space-y-3">
-                <h4 className="text-xs uppercase font-mono text-muted-foreground tracking-wider">
-                  Services Health Status
-                </h4>
-                <div className="space-y-2">
-                  {components.map((c) => {
-                    const b = getStatusBadge(c.status);
-                    return (
-                      <div
-                        key={c.id}
-                        className="flex items-center justify-between p-3 rounded-md bg-card border border-border/40 text-xs"
-                      >
-                        <span className="font-medium text-foreground">{c.name}</span>
-                        <div
-                          className={`px-2 py-0.5 rounded text-[11px] font-medium border flex items-center gap-1.5 ${b.bg}`}
-                        >
-                          <span className={`h-1.5 w-1.5 rounded-full ${b.dot}`} />
-                          {b.label}
-                        </div>
-                      </div>
-                    );
-                  })}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-medium mb-1">Group Name</label>
+                  <input
+                    value={compGroup}
+                    onChange={(e) => setCompGroup(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-background border border-border"
+                  />
+                </div>
+                <div>
+                  <label className="block font-medium mb-1">Linked Project (optional)</label>
+                  <select
+                    value={compProjectName}
+                    onChange={(e) => setCompProjectName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-background border border-border"
+                  >
+                    <option value="">None (external URL)</option>
+                    {projects.map((p: any) => (
+                      <option key={p.name} value={p.name}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
-            </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Lock className="h-3.5 w-3.5 text-primary" />
-                <span>Zero authentication required for public viewers.</span>
+              <div>
+                <label className="block font-medium mb-1">Target Probe URL</label>
+                <input
+                  value={compTargetUrl}
+                  onChange={(e) => setCompTargetUrl(e.target.value)}
+                  placeholder="http://127.0.0.1:7777/health"
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border font-mono"
+                />
               </div>
+              <div>
+                <label className="block font-medium mb-1">Description</label>
+                <input
+                  value={compDesc}
+                  onChange={(e) => setCompDesc(e.target.value)}
+                  placeholder="Primary edge ingress health endpoint"
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t border-border/40">
               <button
-                onClick={() => {
-                  navigator.clipboard.writeText(`https://${settings.customDomain}`);
-                  toast.success("Public status URL copied to clipboard!");
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                type="button"
+                onClick={() => setShowAddComponentModal(false)}
+                className="px-3.5 py-2 text-xs text-muted-foreground"
               >
-                <Copy className="h-3 w-3" />
-                Copy Public Link
+                Cancel
+              </button>
+              <button
+                type="button"
+                data-testid="btn-save-status-component"
+                onClick={handleCreateComponent}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground"
+              >
+                Add &amp; Probe
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Create Incident */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-xl border border-border/80 bg-card p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-border/40 pb-3">
+              <h3 className="font-bold text-foreground text-base">Status Page Settings</h3>
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="p-1 text-muted-foreground hover:text-foreground text-sm"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-medium mb-1">Page Title</label>
+                <input
+                  value={titleInput}
+                  onChange={(e) => setTitleInput(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border"
+                />
+              </div>
+              <div>
+                <label className="block font-medium mb-1">Custom Domain</label>
+                <input
+                  value={domainInput}
+                  onChange={(e) => setDomainInput(e.target.value)}
+                  placeholder="status.example.com"
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border font-mono"
+                />
+              </div>
+              <label className="flex items-center gap-2 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={publicEnabledInput}
+                  onChange={(e) => setPublicEnabledInput(e.target.checked)}
+                />
+                <span>Expose unauthenticated public feed at /api/public/status</span>
+              </label>
+            </div>
+            <div className="flex justify-end gap-2 pt-3 border-t border-border/40">
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="px-3 py-2 text-xs text-muted-foreground"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSettings}
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground"
+              >
+                Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPublicPreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
+          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-xl border border-border/80 bg-card p-6 shadow-2xl space-y-5">
+            <div className="flex items-center justify-between border-b border-border/40 pb-4">
+              <div>
+                <h3 className="font-bold text-foreground text-base">
+                  {settingsRaw?.title || "HosteraX Cloud Status"}
+                </h3>
+                <p className="text-xs text-muted-foreground">Public endpoint: /api/public/status</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPublicPreview(false)}
+                className="p-1 text-muted-foreground hover:text-foreground text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 bg-background p-5 rounded-lg border border-border/40">
+              {components.map((c) => {
+                const b = getStatusBadge(c.status);
+                return (
+                  <div
+                    key={c.id}
+                    className="flex items-center justify-between p-3 rounded-md bg-card border border-border/40 text-xs"
+                  >
+                    <span className="font-medium text-foreground">{c.name}</span>
+                    <div
+                      className={`px-2 py-0.5 rounded text-[11px] font-medium border flex items-center gap-1.5 ${b.bg}`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full ${b.dot}`} />
+                      {b.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="flex items-center justify-between pt-2">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Lock className="h-3.5 w-3.5 text-primary" />
+                <span>Served publicly at {engine.url}/api/public/status</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  navigator.clipboard.writeText(`${engine.url}/api/public/status`);
+                  toast.success("Public status API URL copied!");
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-primary text-primary-foreground"
+              >
+                <Copy className="h-3 w-3" /> Copy Feed URL
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showNewIncidentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-lg rounded-xl border border-border/80 bg-card p-6 shadow-2xl space-y-4">
@@ -915,8 +1030,9 @@ export function StatusPageManager() {
                 Broadcast New Incident Update
               </h3>
               <button
+                type="button"
                 onClick={() => setShowNewIncidentModal(false)}
-                className="p-1 rounded-md text-muted-foreground hover:text-foreground text-sm"
+                className="p-1 text-muted-foreground hover:text-foreground text-sm"
               >
                 ✕
               </button>
@@ -924,13 +1040,13 @@ export function StatusPageManager() {
 
             <div className="space-y-3.5 text-xs">
               <div>
-                <label className="block text-foreground font-medium mb-1">Incident Headline</label>
+                <label className="block text-foreground font-medium mb-1">Incident Headline *</label>
                 <input
                   type="text"
                   value={newIncidentTitle}
                   onChange={(e) => setNewIncidentTitle(e.target.value)}
                   placeholder="e.g. Edge Ingress Gateway Latency Spikes"
-                  className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs"
                 />
               </div>
 
@@ -940,7 +1056,7 @@ export function StatusPageManager() {
                   <select
                     value={newIncidentSeverity}
                     onChange={(e) => setNewIncidentSeverity(e.target.value as IncidentSeverity)}
-                    className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs"
                   >
                     <option value="minor">Minor Degradation</option>
                     <option value="major">Major Outage</option>
@@ -956,8 +1072,9 @@ export function StatusPageManager() {
                   <select
                     value={newIncidentComponentId}
                     onChange={(e) => setNewIncidentComponentId(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs"
                   >
+                    <option value="">Platform-wide</option>
                     {components.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.name}
@@ -968,29 +1085,29 @@ export function StatusPageManager() {
               </div>
 
               <div>
-                <label className="block text-foreground font-medium mb-1">
-                  Initial Investigation Message
-                </label>
+                <label className="block text-foreground font-medium mb-1">Message</label>
                 <textarea
                   rows={3}
                   value={newIncidentMessage}
                   onChange={(e) => setNewIncidentMessage(e.target.value)}
-                  placeholder="Describe initial symptoms and engineering actions taken..."
-                  className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                  placeholder="Describe symptoms and mitigation steps..."
+                  className="w-full px-3 py-2 rounded-lg bg-background border border-border text-foreground text-xs"
                 />
               </div>
             </div>
 
             <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-border/40">
               <button
+                type="button"
                 onClick={() => setShowNewIncidentModal(false)}
                 className="px-3.5 py-2 text-xs font-medium rounded-lg text-muted-foreground hover:bg-muted"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleCreateIncident}
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground"
               >
                 Publish Incident
               </button>
@@ -999,60 +1116,55 @@ export function StatusPageManager() {
         </div>
       )}
 
-      {/* Modal: RCA Post-Mortem */}
       {selectedIncidentForRCA && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-xl border border-border/80 bg-card p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <h3 className="font-bold text-foreground text-base flex items-center gap-2">
                 <FileText className="h-4 w-4 text-primary" />
-                Root Cause Analysis (RCA) & Post-Mortem
+                Root Cause Analysis (RCA) &amp; Post-Mortem
               </h3>
               <button
+                type="button"
                 onClick={() => setSelectedIncidentForRCA(null)}
-                className="p-1 rounded-md text-muted-foreground hover:text-foreground text-sm"
+                className="p-1 text-muted-foreground hover:text-foreground text-sm"
               >
                 ✕
               </button>
             </div>
-
             <div className="bg-background border border-border/50 rounded-lg p-4 font-mono text-xs whitespace-pre-wrap text-foreground/90 max-h-[50vh] overflow-y-auto">
               {generatePostMortemMarkdown(selectedIncidentForRCA, components)}
             </div>
-
-            <div className="flex items-center justify-between pt-2">
-              <span className="text-xs text-muted-foreground">
-                Standard GitHub-flavored Markdown.
-              </span>
+            <div className="flex justify-end">
               <button
+                type="button"
                 onClick={() => {
                   navigator.clipboard.writeText(
                     generatePostMortemMarkdown(selectedIncidentForRCA, components),
                   );
-                  toast.success("RCA Markdown copied to clipboard!");
+                  toast.success("RCA Markdown copied!");
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-primary text-primary-foreground hover:bg-primary/90"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded bg-primary text-primary-foreground"
               >
-                <Copy className="h-3 w-3" />
-                Copy Markdown Report
+                <Copy className="h-3 w-3" /> Copy Markdown Report
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Badges & JSON API */}
       {showEmbedModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm p-4">
           <div className="w-full max-w-lg rounded-xl border border-border/80 bg-card p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-border/40 pb-3">
               <h3 className="font-bold text-foreground text-base flex items-center gap-2">
                 <Code className="h-4 w-4 text-primary" />
-                Status Badges & Public JSON Feed
+                Status Badges &amp; Public JSON Feed
               </h3>
               <button
+                type="button"
                 onClick={() => setShowEmbedModal(false)}
-                className="p-1 rounded-md text-muted-foreground hover:text-foreground text-sm"
+                className="p-1 text-muted-foreground hover:text-foreground text-sm"
               >
                 ✕
               </button>
@@ -1064,39 +1176,24 @@ export function StatusPageManager() {
                   GitHub README Status Badge
                 </label>
                 <div className="p-2.5 rounded bg-background border border-border font-mono text-[11px] break-all select-all text-muted-foreground">
-                  {generateStatusBadgeMarkdown(overallStatus, settings.customDomain)}
+                  {generateStatusBadgeMarkdown(overallStatus, displayDomain)}
                 </div>
-                <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(
-                      generateStatusBadgeMarkdown(overallStatus, settings.customDomain),
-                    );
-                    toast.success("Badge Markdown copied!");
-                  }}
-                  className="mt-1.5 text-[11px] text-primary hover:underline font-medium flex items-center gap-1"
-                >
-                  <Copy className="h-3 w-3" /> Copy Markdown
-                </button>
               </div>
-
               <div>
                 <label className="block text-foreground font-semibold mb-1">
-                  Live JSON API Endpoint
+                  Public JSON Status Feed
                 </label>
                 <div className="p-2.5 rounded bg-background border border-border font-mono text-[11px] break-all select-all text-muted-foreground">
-                  GET https://{settings.customDomain}/api/status.json
+                  GET {engine.url}/api/public/status
                 </div>
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  Returns real-time status, component health array, active incidents, and rolling
-                  SLA percentages.
-                </p>
               </div>
             </div>
 
             <div className="flex justify-end pt-2">
               <button
+                type="button"
                 onClick={() => setShowEmbedModal(false)}
-                className="px-4 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground hover:bg-muted"
+                className="px-4 py-2 text-xs font-semibold rounded-lg bg-card border border-border text-foreground"
               >
                 Close
               </button>

@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import { confirmAction } from "@/components/hx/confirm-modal";
 
 export const Route = createFileRoute("/_app/team")({
   head: () => ({ meta: [{ title: "Team & RBAC — HosteraX" }] }),
@@ -103,7 +104,13 @@ function TeamPage() {
 
   async function handleRemoveMember(memberId: string, name: string) {
     if (!activeOrg) return;
-    if (!confirm(`Are you sure you want to remove ${name} from this organization?`)) return;
+    const ok = await confirmAction({
+      title: "Remove Organization Member",
+      description: `Are you sure you want to remove ${name} from "${activeOrg.name}"?`,
+      confirmLabel: "Remove Member",
+      variant: "destructive",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/orgs/${activeOrg.id}/members/${memberId}`);
       toast.success(`Member removed from ${activeOrg.name}`);

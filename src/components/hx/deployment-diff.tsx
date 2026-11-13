@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { FileCode, X } from "lucide-react";
+import { useEngine } from "@/lib/engine";
 
 type Dep = {
   id: string;
@@ -13,6 +15,38 @@ type Dep = {
   duration_ms?: number | null;
 };
 
+type EnvDiffEntry = {
+  key: string;
+  base: string | null;
+  target: string | null;
+  baseFingerprint: string | null;
+  targetFingerprint: string | null;
+  change: "added" | "removed" | "modified";
+};
+
+type DeploymentDiffResponse = {
+  base: {
+    id: string;
+    version: string | null;
+    phase: string | null;
+    trigger: string | null;
+    started_at: number | null;
+    finished_at: number | null;
+    exit_code: number | null;
+  };
+  target: {
+    id: string;
+    version: string | null;
+    phase: string | null;
+    trigger: string | null;
+    started_at: number | null;
+    finished_at: number | null;
+    exit_code: number | null;
+  };
+  env_diff: EnvDiffEntry[];
+  duration_diff_ms: number;
+};
+
 type Props = {
   deployments: Dep[];
   initialBaseId?: string;
@@ -20,6 +54,7 @@ type Props = {
 };
 
 export function DeploymentDiffModal({ deployments, initialBaseId, onClose }: Props) {
+  const engine = useEngine();
   const [baseId, setBaseId] = useState<string>(
     initialBaseId ?? deployments[1]?.id ?? deployments[0]?.id ?? "",
   );
@@ -27,6 +62,20 @@ export function DeploymentDiffModal({ deployments, initialBaseId, onClose }: Pro
 
   const base = deployments.find((d) => d.id === baseId);
   const compare = deployments.find((d) => d.id === compareId);
+
+  const diffQuery = useQuery<DeploymentDiffResponse | null>({
+    queryKey: ["deployment-diff", engine.url, engine.token, baseId, compareId],
+    queryFn: async () => {
+      if (!baseId || !compareId) return null;
+      return engine.call<DeploymentDiffResponse>(
+        "GET",
+        `/api/deployments/${encodeURIComponent(baseId)}/diff/${encodeURIComponent(compareId)}`,
+      );
+    },
+    enabled: Boolean(baseId && compareId),
+  });
+
+  const diffData = diffQuery.data;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-md">
@@ -38,11 +87,14 @@ export function DeploymentDiffModal({ deployments, initialBaseId, onClose }: Pro
             </div>
             <div>
               <h3 className="text-sm font-semibold tracking-tight">Deployment Diff</h3>
-              <p className="text-xs text-muted-foreground">Compare two releases</p>
+              <p className="text-xs text-muted-foreground">
+                Compare release metadata, build duration, and masked environment fingerprints
+              </p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close deployment diff"
             className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
           >
             <X className="h-5 w-5" />
@@ -86,31 +138,104 @@ export function DeploymentDiffModal({ deployments, initialBaseId, onClose }: Pro
 
         <div className="flex-1 space-y-6 overflow-y-auto p-6">
           <div className="grid gap-6 md:grid-cols-2">
-            {[base, compare].map((d, i) => (
-              <div
-                key={i}
-                className="space-y-3 rounded-xl border border-border/80 bg-surface/30 p-5"
-              >
-                <div className="flex items-center justify-between border-b border-border/60 pb-3">
-                  <span className="font-mono text-sm font-semibold text-primary">
-                    {d?.version || (i === 0 ? "Release A" : "Release B")}
-                  </span>
-                  <span className="rounded bg-surface-2 px-2 py-0.5 font-mono text-xs uppercase text-muted-foreground">
-                    {d?.status ?? "—"}
-                  </span>
+            {[
+              { local: base, remote: diffData?.base, title: "Release A" },
+              { local: compare, remote: diffData?.target, title: "Release B" },
+            ].map(({ local: d, remote, title }, i) => {
+              const durationMs =
+                d?.duration_ms ??
+                (remote?.finished_at && remote?.started_at
+                  ? remote.finished_at - remote.started_at
+                  : null);
+              return (
+                <div
+                  key={i}
+                  className="space-y-3 rounded-xl border border-border/80 bg-surface/30 p-5"
+                >
+                  <div className="flex items-center justify-between border-b border-border/60 pb-3">
+                    <span className="font-mono text-sm font-semibold text-primary">
+                      {d?.version || remote?.version || title}
+                    </span>
+                    <span className="rounded bg-surface-2 px-2 py-0.5 font-mono text-xs uppercase text-muted-foreground">
+                      {d?.status ?? remote?.phase ?? "—"}
+                    </span>
+                  </div>
+                  <Row k="Commit" v={d?.commit_sha ?? "—"} mono />
+                  <Row k="Message" v={d?.commit_message ?? "—"} />
+                  <Row k="Branch" v={d?.branch ?? "—"} mono />
+                  <Row k="Environment" v={(d?.environment ?? "—").toUpperCase()} />
+                  <Row k="Trigger" v={d?.trigger_type ?? remote?.trigger ?? "—"} />
+                  <Row k="Exit Code" v={remote?.exit_code !== undefined && remote?.exit_code !== null ? String(remote.exit_code) : "—"} mono />
+                  <Row
+                    k="Duration"
+                    v={durationMs !== null && durationMs > 0 ? `${(durationMs / 1000).toFixed(1)}s` : "—"}
+                    mono
+                  />
                 </div>
-                <Row k="Commit" v={d?.commit_sha ?? "—"} mono />
-                <Row k="Message" v={d?.commit_message ?? "—"} />
-                <Row k="Branch" v={d?.branch ?? "—"} mono />
-                <Row k="Environment" v={(d?.environment ?? "—").toUpperCase()} />
-                <Row k="Trigger" v={d?.trigger_type ?? "—"} />
-                <Row
-                  k="Duration"
-                  v={d?.duration_ms ? `${(d.duration_ms / 1000).toFixed(1)}s` : "—"}
-                  mono
-                />
+              );
+            })}
+          </div>
+
+          <div className="rounded-xl border border-border/80 bg-surface/30 p-5 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-3">
+              <div>
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Environment &amp; Build Delta
+                </h4>
               </div>
-            ))}
+              {diffData && (
+                <span className="font-mono text-xs text-muted-foreground">
+                  Duration delta:{" "}
+                  <strong className="text-foreground">
+                    {diffData.duration_diff_ms >= 0 ? "+" : ""}
+                    {(diffData.duration_diff_ms / 1000).toFixed(2)}s
+                  </strong>
+                </span>
+              )}
+            </div>
+
+            {diffQuery.isPending ? (
+              <p className="text-xs text-muted-foreground">Loading diff from engine…</p>
+            ) : diffQuery.isError ? (
+              <p className="text-xs text-destructive">
+                {diffQuery.error instanceof Error
+                  ? diffQuery.error.message
+                  : "Could not load engine diff."}
+              </p>
+            ) : !diffData || diffData.env_diff.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                No environment variable fingerprint differences detected between these releases.
+              </p>
+            ) : (
+              <div className="divide-y divide-border/50 font-mono text-xs">
+                {diffData.env_diff.map((entry) => (
+                  <div
+                    key={entry.key}
+                    className="flex flex-wrap items-center justify-between gap-3 py-2"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                          entry.change === "added"
+                            ? "bg-emerald-500/15 text-emerald-400"
+                            : entry.change === "removed"
+                              ? "bg-destructive/15 text-destructive"
+                              : "bg-amber-500/15 text-amber-400"
+                        }`}
+                      >
+                        {entry.change}
+                      </span>
+                      <span className="font-semibold text-foreground">{entry.key}</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      <span>{entry.baseFingerprint ?? "none"}</span>
+                      <span className="mx-1.5">→</span>
+                      <span className="text-foreground">{entry.targetFingerprint ?? "none"}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

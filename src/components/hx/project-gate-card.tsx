@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Lock, LockOpen } from "lucide-react";
 import { useEngine } from "@/lib/engine";
+import { confirmAction } from "./confirm-modal";
 
 type GateState = { enabled: boolean; port?: number; updatedAt?: number };
 
@@ -41,8 +42,13 @@ export function ProjectGateCard({ projectName }: { projectName: string }) {
   }
 
   async function turnOff() {
-    if (!confirm("Remove the password? Anyone with the address will be able to open the app."))
-      return;
+    const ok = await confirmAction({
+      title: "Remove Password Protection",
+      description: "Remove the password? Anyone with the address will be able to open the app.",
+      confirmLabel: "Remove Password",
+      variant: "destructive",
+    });
+    if (!ok) return;
     try {
       await engine.call("DELETE", `/api/projects/${projectName}/gate`);
       toast.success("Password protection is off.");

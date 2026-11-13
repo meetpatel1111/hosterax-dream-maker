@@ -146,6 +146,18 @@ export class BackupManager {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS drill_certificates (
+        id TEXT PRIMARY KEY,
+        backup_id TEXT NOT NULL,
+        database_name TEXT NOT NULL,
+        db_type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        duration_seconds INTEGER NOT NULL DEFAULT 0,
+        message TEXT,
+        sha256 TEXT,
+        checked_at INTEGER NOT NULL
+      );
     `);
 
     for (const col of [
@@ -783,10 +795,39 @@ export class BackupManager {
     const message = ok
       ? `Restore drill passed: restored into a scratch ${kind} container and it answered (${seconds}s).`
       : `Restore drill failed: ${failure}`;
+    const now = Date.now();
     this.db
       .prepare("UPDATE backups SET verified_at=?, verify_status=?, verify_message=? WHERE id=?")
-      .run(Date.now(), ok ? "verified" : "failed", message, id);
+      .run(now, ok ? "verified" : "failed", message, id);
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO drill_certificates (id, backup_id, database_name, db_type, status, duration_seconds, message, sha256, checked_at)
+           VALUES (?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          "drl_" + crypto.randomBytes(6).toString("hex"),
+          bkp.id,
+          bkp.database_name,
+          bkp.db_type,
+          ok ? "verified" : "failed",
+          seconds,
+          message,
+          bkp.sha256,
+          now,
+        );
+    } catch {}
     return { ok, id, message, durationSeconds: seconds };
+  }
+
+  listDrills(limit = 50) {
+    try {
+      return this.db
+        .prepare("SELECT * FROM drill_certificates ORDER BY checked_at DESC LIMIT ?")
+        .all(limit);
+    } catch {
+      return [];
+    }
   }
 
   /**

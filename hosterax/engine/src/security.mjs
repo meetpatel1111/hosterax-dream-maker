@@ -3,6 +3,8 @@
 // and strict validators for values that end up in shell commands or proxy configs.
 
 import crypto from "node:crypto";
+import path from "node:path";
+import os from "node:os";
 
 // ───────────── API tokens ─────────────
 // Tokens are shown to the user once. Only the SHA-256 digest is persisted.
@@ -22,10 +24,30 @@ export function tokenPrefix(token) {
   return String(token || "").slice(0, 8);
 }
 
+export function cookieValue(req, name) {
+  const raw = String(req?.headers?.cookie || "");
+  if (!raw) return "";
+  for (const part of raw.split(";")) {
+    const idx = part.indexOf("=");
+    if (idx <= 0) continue;
+    const k = part.slice(0, idx).trim();
+    if (k === name) {
+      try {
+        return decodeURIComponent(part.slice(idx + 1).trim());
+      } catch {
+        return part.slice(idx + 1).trim();
+      }
+    }
+  }
+  return "";
+}
+
 export function bearerFrom(req) {
-  return String(req.headers?.authorization || "")
+  const auth = String(req?.headers?.authorization || "")
     .replace(/^Bearer\s+/i, "")
     .trim();
+  if (auth) return auth;
+  return cookieValue(req, "hx_session");
 }
 
 // ───────────── Trusted local requests ─────────────
@@ -53,6 +75,9 @@ function trustedOrigins(enginePort) {
       list.add(`http://127.0.0.1:${p}`);
     }
   }
+  if (process.env.HOSTERAX_PUBLIC_URL) {
+    list.add(String(process.env.HOSTERAX_PUBLIC_URL).trim().replace(/\/$/, ""));
+  }
   for (const o of String(process.env.HOSTERAX_TRUSTED_ORIGINS || "")
     .split(",")
     .map((s) => s.trim())
@@ -60,6 +85,30 @@ function trustedOrigins(enginePort) {
     list.add(o.replace(/\/$/, ""));
   }
   return list;
+}
+
+export function corsHeadersFor(req, enginePort = Number(process.env.HOSTERAX_PORT || 7777)) {
+  const origin = req?.headers?.origin ? String(req.headers.origin).replace(/\/$/, "") : "";
+  if (!origin) return {};
+  const allowed = trustedOrigins(enginePort);
+  const host = sanitizeHostHeader(req?.headers?.host, enginePort);
+  const sameHostHttp = `http://${host}`;
+  const sameHostHttps = `https://${host}`;
+  if (allowed.has(origin) || origin === sameHostHttp || origin === sameHostHttps) {
+    return {
+      "access-control-allow-origin": origin,
+      "access-control-allow-credentials": "true",
+      vary: "Origin",
+    };
+  }
+  return { vary: "Origin" };
+}
+
+export function sanitizeHostHeader(hostHeader, fallbackPort = Number(process.env.HOSTERAX_PORT || 7777)) {
+  const raw = String(hostHeader || "").trim();
+  if (/^[A-Za-z0-9.-]+(:\d{1,5})?$/.test(raw)) return raw;
+  if (/^\[[0-9a-fA-F:]+\](:\d{1,5})?$/.test(raw)) return raw;
+  return `localhost:${fallbackPort}`;
 }
 
 export function isTrustedLocalRequest(req, enginePort = Number(process.env.HOSTERAX_PORT || 7777)) {
@@ -82,6 +131,39 @@ export function isTrustedLocalRequest(req, enginePort = Number(process.env.HOSTE
   const site = h["sec-fetch-site"];
   if (site && site !== "same-origin" && site !== "none" && origin === undefined) return false;
   return true;
+}
+
+const BLOCKED_SYSTEM_PATHS = ["/etc", "/proc", "/sys", "/dev", "/boot", "/root/.ssh", "/var/run/docker.sock"];
+
+export function assertSafeLocalPath(rawPath, env = process.env) {
+  const str = String(rawPath || "");
+  if (!str.trim() || str.includes("\0")) {
+    throw new Error("Invalid local path");
+  }
+  const abs = path.resolve(str);
+  const sshDir = path.join(os.homedir(), ".ssh");
+  for (const blocked of [...BLOCKED_SYSTEM_PATHS, sshDir]) {
+    const cleanBlocked = path.resolve(blocked);
+    if (abs === cleanBlocked || abs.startsWith(cleanBlocked + path.sep)) {
+      throw new Error(`Access to protected system path "${abs}" is denied`);
+    }
+  }
+  if (/[/\\]\.ssh([/\\]|$)/.test(abs)) {
+    throw new Error("Access to SSH directory is denied");
+  }
+  const rawRoots = String(env?.HOSTERAX_WORKSPACE_ROOTS || "").trim();
+  if (rawRoots) {
+    const roots = rawRoots
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean)
+      .map((r) => path.resolve(r));
+    const allowed = roots.some((root) => abs === root || abs.startsWith(root + path.sep));
+    if (!allowed) {
+      throw new Error("Local path is outside HOSTERAX_WORKSPACE_ROOTS");
+    }
+  }
+  return abs;
 }
 
 // ───────────── Scope levels ─────────────
@@ -124,11 +206,18 @@ const ADMIN_ONLY = [
   /^\/api\/projects\/[^/]+\/chaos-test$/,
   /^\/api\/docker\/containers\/[^/]+\/exec$/,
   /^\/api\/ai\/config$/,
+  /^\/api\/databases\/query$/,
+  /^\/api\/siem(\/|$)/,
+  /^\/api\/security\/policy$/,
+  /^\/api\/oauth\/clients(\/|$)/,
 ];
 const SECRET_READS = [
   /\/env(\/|$)/,
   /\/download$/,
   /\/webhook(-config)?$/,
+  /^\/api\/deployments\/[^/]+\/diff(\/|$)/,
+  /^\/api\/vault(\/|$)/,
+  /^\/api\/audit-logs(\/|$)/,
   /^\/api\/servers/,
   /^\/api\/tokens/,
   /^\/api\/jobs\/(?!stats$)[^/]+$/,

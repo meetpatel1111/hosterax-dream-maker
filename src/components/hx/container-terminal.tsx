@@ -122,7 +122,7 @@ export function ContainerTerminal({ projectName, containerName }: ContainerTermi
         <div className="p-4 rounded-xl bg-card border border-border/60">
           <div className="text-xs font-medium text-muted-foreground mb-1">Docker State</div>
           <div className="flex items-center gap-2 font-mono text-sm">
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
             <span className="font-semibold text-emerald-400 capitalize">
               {inspect?.State?.Status || (isInspectLoading ? "…" : "Unknown")}
             </span>
