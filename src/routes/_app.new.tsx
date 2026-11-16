@@ -3,8 +3,14 @@ import { useState, useId } from "react";
 import { toast } from "sonner";
 import { useAuth } from "@/lib/auth-context";
 import { createTarGz } from "@/lib/tar";
-import { useEngine, useEngineHealth, useServerNodes } from "@/lib/engine";
-import { STACKS, REGIONS, TARGETS, WORKSPACES, StackDef } from "@/lib/stacks";
+import {
+  useEngine,
+  useEngineHealth,
+  useServerNodes,
+  useMagicDnsSettings,
+  formatMagicDnsUrl,
+} from "@/lib/engine";
+import { STACKS, TARGETS } from "@/lib/stacks";
 import {
   GitBranch,
   Upload,
@@ -15,25 +21,33 @@ import {
   Sparkles,
   CheckCircle2,
   FolderOpen,
-  Cpu,
   Globe,
-  Server,
   Copy,
   Check,
-  ExternalLink,
-  ChevronRight,
   Info,
   Settings2,
-  ArrowRight,
-  Code2,
   Radio,
   FileArchive,
   Terminal,
   ShieldCheck,
   Flame,
+  Search,
+  FileText,
 } from "lucide-react";
 import { StarterTemplatesCatalog } from "@/components/hx/starter-templates-catalog";
 import { OneClickAppsCatalog } from "@/components/hx/one-click-apps-catalog";
+import { PreDeployModal, PreDeployTarget } from "@/components/hx/pre-deploy-modal";
+import {
+  buildEnvUpsertsFromRows,
+  buildProjectCreatePayload,
+  deriveProjectNameFromImage,
+  mergeDotEnvIntoRows,
+  NewProjectTab,
+  normalizeHealthPath,
+  parseQuotaLimits,
+  resolveEffectiveTarget,
+  slugifyProjectName,
+} from "@/utils/new-project";
 
 export const Route = createFileRoute("/_app/new")({
   head: () => ({
@@ -42,23 +56,21 @@ export const Route = createFileRoute("/_app/new")({
       {
         name: "description",
         content:
-          "Deploy from Git repository, local folder upload, public URL archive, CLI push, starter templates, or 2,500+ one-click Docker apps.",
+          "Deploy from Git repository, Docker image, local folder upload, public URL archive, CLI push, starter templates, or 2,500+ one-click Docker apps.",
       },
     ],
   }),
   component: NewProject,
 });
 
-function slugify(s: string) {
-  return s
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 40);
-}
+type Trigger = NewProjectTab;
 
-type Trigger = "git" | "upload" | "url" | "cli" | "template" | "one-click";
+const QUICK_DOCKER_IMAGES = [
+  { label: "nginx:alpine", image: "nginx:alpine", port: 80 },
+  { label: "redis:alpine", image: "redis:alpine", port: 6379 },
+  { label: "ollama/ollama:latest", image: "ollama/ollama:latest", port: 11434 },
+  { label: "louislam/uptime-kuma:1", image: "louislam/uptime-kuma:1", port: 3001 },
+];
 
 // Popular quick-import open source repository presets
 const QUICK_GIT_PRESETS = [
@@ -121,14 +133,16 @@ const QUICK_GIT_PRESETS = [
 ];
 
 function NewProject() {
-  const { user } = useAuth();
+  useAuth();
   const nav = useNavigate();
   const engine = useEngine();
-  const { data: health } = useEngineHealth();
+  useEngineHealth();
+  const { data: magicDns } = useMagicDnsSettings();
 
   const [tab, setTab] = useState<Trigger>("git");
   const [name, setName] = useState("");
   const [repo, setRepo] = useState("");
+  const [dockerImage, setDockerImage] = useState("");
   const [sourceUrl, setSourceUrl] = useState("");
   const [branch, setBranch] = useState("main");
   const [folderPath, setFolderPath] = useState("");
@@ -136,29 +150,37 @@ function NewProject() {
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
   const [pendingArchive, setPendingArchive] = useState<File | null>(null);
   const [stack, setStack] = useState("auto");
-  const [region, setRegion] = useState("local");
   const [target, setTarget] = useState<"docker" | "process" | "ssh">("process");
   // "local" runs on the machine hosting the engine; otherwise the id of a server to deploy to over SSH.
   const [serverId, setServerId] = useState("local");
   const { data: servers = [] } = useServerNodes();
   const remoteServers = servers.filter((s) => s.type === "remote");
-  const [workspace, setWorkspace] = useState<string>("none");
-  const [buildTimeout, setBuildTimeout] = useState(30);
+  const [rootDirectory, setRootDirectory] = useState<string>("./");
+  const [healthPath, setHealthPath] = useState<string>("/");
+  const [cpuLimit, setCpuLimit] = useState<string>("");
+  const [memoryMbLimit, setMemoryMbLimit] = useState<string>("");
   const [customBuild, setCustomBuild] = useState("");
   const [customStart, setCustomStart] = useState("");
   const [customPort, setCustomPort] = useState<number | "">("");
-  const [sshHost, setSshHost] = useState("");
-  const [sshUser, setSshUser] = useState("root");
   const [envVars, setEnvVars] = useState<{ key: string; value: string }[]>([
     { key: "NODE_ENV", value: "production" },
   ]);
+  const [bulkPasteOpen, setBulkPasteOpen] = useState(false);
+  const [bulkPasteText, setBulkPasteText] = useState("");
+  const [preDeployTarget, setPreDeployTarget] = useState<PreDeployTarget | null>(null);
   const [copiedCli, setCopiedCli] = useState(false);
   const [busy, setBusy] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const activeStackDef = STACKS.find((s) => s.id === stack) || STACKS[0];
   const effectivePort = customPort !== "" ? Number(customPort) : activeStackDef.port || 3000;
-  const projectSlug = slugify(name) || "my-service";
+  const projectSlug = slugifyProjectName(name) || "my-service";
+  const magicDomainHost = formatMagicDnsUrl(projectSlug, magicDns?.activeProvider || "sslip.io");
+  const effectiveTarget = resolveEffectiveTarget({
+    tab,
+    selectedTarget: target,
+    serverId,
+  });
 
   function copyText(text: string) {
     navigator.clipboard.writeText(text);
@@ -181,6 +203,39 @@ function NewProject() {
     setEnvVars(envVars.filter((_, i) => i !== index));
   }
 
+  function applyBulkEnvPaste() {
+    const res = mergeDotEnvIntoRows(envVars, bulkPasteText);
+    if (res.addedCount === 0 && res.updatedCount === 0) {
+      toast.error("No valid KEY=VALUE entries found");
+      return;
+    }
+    setEnvVars(res.rows);
+    setBulkPasteText("");
+    setBulkPasteOpen(false);
+    if (res.errors.length > 0) {
+      toast.warning(`Imported ${res.addedCount + res.updatedCount} var(s) (${res.errors[0]})`);
+    } else {
+      toast.success(`Imported ${res.addedCount} added, ${res.updatedCount} updated`);
+    }
+  }
+
+  function openDockerPreDeployModal() {
+    const image = dockerImage.trim();
+    if (!image) {
+      toast.error("Enter a Docker registry image (e.g. nginx:alpine)");
+      return;
+    }
+    const { envMap } = buildEnvUpsertsFromRows(envVars);
+    setPreDeployTarget({
+      image,
+      name: name.trim() || deriveProjectNameFromImage(image),
+      slug: slugifyProjectName(name) || deriveProjectNameFromImage(image),
+      port: effectivePort,
+      env: envMap,
+      trigger: "docker-image",
+    });
+  }
+
   async function create(overrides?: {
     name?: string;
     stack?: string;
@@ -188,11 +243,17 @@ function NewProject() {
     source?: string;
     port?: number;
   }) {
-    const finalName = overrides?.name ?? name;
+    const finalName = (overrides?.name ?? name).trim();
     if (!finalName) return toast.error("Please enter a name for your project");
+
+    const quotas = parseQuotaLimits({ cpuLimit, memoryMbLimit });
+    if (quotas.error) {
+      return toast.error(quotas.error);
+    }
+
     setBusy(true);
 
-    const slug = slugify(finalName) || `p-${Date.now()}`;
+    const slug = slugifyProjectName(finalName) || `p-${Date.now()}`;
     const chosenStack = overrides?.stack ?? stack;
     const chosenTarget = overrides?.target ?? target;
     const stackDef = STACKS.find((s) => s.id === chosenStack);
@@ -200,37 +261,40 @@ function NewProject() {
     let source = overrides?.source;
     if (!source) {
       if (tab === "git") source = repo.trim();
+      else if (tab === "docker-image") source = dockerImage.trim();
       else if (tab === "url") source = sourceUrl.trim();
       else if (tab === "upload") source = folderPath.trim();
       else source = "";
-      const needsSource = tab === "git" || tab === "url" || tab === "upload";
+      const needsSource =
+        tab === "git" || tab === "docker-image" || tab === "url" || tab === "upload";
       const hasUpload = tab === "upload" && (pendingFiles?.length || pendingArchive);
       if (needsSource && !source && !hasUpload) {
         setBusy(false);
         return toast.error(
           tab === "upload"
             ? "Choose a folder or archive to upload, or enter a path on the engine host"
-            : "Enter the repository / archive URL to deploy from",
+            : tab === "docker-image"
+              ? "Enter a Docker registry image reference (e.g. nginx:alpine)"
+              : "Enter the repository / archive URL to deploy from",
         );
       }
     }
 
-    const envMap: Record<string, string> = {};
-    for (const row of envVars) {
-      if (row.key.trim()) envMap[row.key.trim()] = row.value;
-    }
-
-    // Projects on a remote server always run as a Docker container.
-    const apiTarget = chosenTarget === "docker" || serverId !== "local" ? "docker" : "process";
+    const { envMap, upserts } = buildEnvUpsertsFromRows(envVars);
+    const apiTarget = resolveEffectiveTarget({
+      tab,
+      selectedTarget: target,
+      serverId,
+      overrideTarget: overrides?.target ?? chosenTarget,
+    });
     const placement = serverId !== "local" ? { serverId } : {};
-    const buildCmd = customBuild || stackDef?.build || "";
-    const startCmd = customStart || stackDef?.start || "";
+    const buildCmd = tab === "docker-image" ? "" : customBuild || stackDef?.build || "";
+    const startCmd = tab === "docker-image" ? "" : customStart || stackDef?.start || "";
 
     try {
       let deployNow = Boolean(source);
 
       if (tab === "upload" && !overrides?.source && (pendingFiles?.length || pendingArchive)) {
-        // 1. open an upload session, 2. stream the archive, 3. let the engine unpack + detect the stack
         const session = await engine.call<{ sessionId: string; upload: { url: string } }>(
           "POST",
           "/api/projects/folder/session",
@@ -263,28 +327,51 @@ function NewProject() {
           ...(buildCmd ? { buildCmd } : {}),
           ...(startCmd ? { startCmd } : {}),
           port: overrides?.port || effectivePort,
+          healthPath: normalizeHealthPath(healthPath),
           env: envMap,
         });
         deployNow = true;
       } else {
-        // Create on the engine
-        await engine.call("POST", "/api/projects", {
+        const createBody = buildProjectCreatePayload({
           name: finalName,
           source: source || "",
+          tab,
+          selectedTarget: chosenTarget,
+          serverId,
           buildCmd,
           startCmd,
-          target: apiTarget,
-          ...placement,
           port: overrides?.port || effectivePort,
-          env: envMap,
-          ...(tab === "git" || tab === "url" ? { gitBranch: branch } : {}),
+          branch,
+          rootDirectory,
+          healthPath,
+          envMap,
         });
+        await engine.call("POST", "/api/projects", createBody);
       }
 
-      // Trigger immediate build & deploy if there is something to build
+      if (upserts.some((u) => u.isSecret)) {
+        try {
+          await engine.call("PATCH", `/api/projects/${encodeURIComponent(finalName)}/env`, {
+            upserts: upserts.filter((u) => u.isSecret),
+            environment: "production",
+          });
+        } catch {}
+      }
+
+      if (quotas.cpu_limit !== null || quotas.memory_mb_limit !== null) {
+        try {
+          await engine.call("POST", `/api/projects/${encodeURIComponent(finalName)}/quotas`, {
+            cpu_limit: quotas.cpu_limit,
+            memory_mb_limit: quotas.memory_mb_limit,
+          });
+        } catch (qErr: any) {
+          toast.warning(`Project created, but quotas were not applied: ${qErr.message}`);
+        }
+      }
+
       if (deployNow) {
         try {
-          await engine.call("POST", `/api/projects/${finalName}/deploy`, {
+          await engine.call("POST", `/api/projects/${encodeURIComponent(finalName)}/deploy`, {
             trigger: tab,
           });
         } catch (e: any) {
@@ -293,7 +380,7 @@ function NewProject() {
       }
 
       toast.success(
-        deployNow ? "✨ Project created & deployment started!" : "✨ Project created successfully!",
+        deployNow ? "Project created & deployment started" : "Project created successfully",
       );
       nav({ to: "/p/$slug", params: { slug } });
     } catch (err: any) {
@@ -305,11 +392,12 @@ function NewProject() {
 
   const TABS: { id: Trigger; label: string; icon: any; badge?: string }[] = [
     { id: "git", label: "Git Repository", icon: GitBranch, badge: "Popular" },
+    { id: "docker-image", label: "Docker Image", icon: Container },
     { id: "upload", label: "Folder Upload", icon: Upload },
     { id: "url", label: "From URL", icon: Link2 },
     { id: "cli", label: "CLI Push", icon: TerminalSquare },
     { id: "template", label: "Starter Templates", icon: Layers, badge: "12+" },
-    { id: "one-click", label: "1-Click Apps", icon: Container, badge: "2,500+" },
+    { id: "one-click", label: "1-Click Apps", icon: Sparkles, badge: "2,500+" },
   ];
 
   return (
@@ -317,45 +405,43 @@ function NewProject() {
       {/* Top Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/60 pb-5">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-foreground via-foreground/90 to-muted-foreground bg-clip-text text-transparent">
-              Create New Service
-            </h1>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              {health?.ok ? "Engine Ready" : "Engine Connected"}
-            </span>
-          </div>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Create New Service</h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Deploy from any source: Git repo, folder upload, remote archive, HosteraX CLI, or
-            instant starter templates.
+            Deploy from any source: Git repo, Docker registry image, folder upload, remote archive,
+            HosteraX CLI, starter templates, or 1-Click catalog.
           </p>
         </div>
 
-        {/* Quick Help Pill */}
-        <div className="flex items-center gap-2 text-xs text-muted-foreground bg-surface border border-border px-3 py-1.5 rounded-lg shadow-sm">
-          <Info className="w-4 h-4 text-primary" />
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Info className="w-4 h-4 text-primary shrink-0" />
           <span>Automatic zero-downtime rolling deploys with magic SSL DNS</span>
         </div>
       </div>
 
       {/* Tab Navigation Toolbar */}
-      <div className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card/80 p-1.5 shadow-sm backdrop-blur">
+      <div
+        role="tablist"
+        aria-label="Service deployment source"
+        className="flex flex-wrap gap-1.5 rounded-xl border border-border bg-card/80 p-1.5 shadow-sm backdrop-blur"
+      >
         {TABS.map((t) => {
           const isActive = tab === t.id;
           const Icon = t.icon;
           return (
             <button
               key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
               onClick={() => setTab(t.id)}
-              className={`flex flex-1 min-w-[150px] items-center justify-center gap-2.5 rounded-lg px-4 py-2.5 text-sm font-medium transition-all ${
+              className={`flex flex-1 min-w-[138px] items-center justify-center gap-2 rounded-lg px-3.5 py-2.5 text-sm font-medium whitespace-nowrap shrink-0 transition-all ${
                 isActive
                   ? "bg-primary text-primary-foreground shadow-md font-semibold"
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"
               }`}
             >
               <Icon
-                className={`h-4 w-4 ${isActive ? "text-primary-foreground" : "text-muted-foreground"}`}
+                className={`h-4 w-4 shrink-0 ${isActive ? "text-primary-foreground" : "text-muted-foreground"}`}
               />
               <span>{t.label}</span>
               {t.badge && (
@@ -386,19 +472,9 @@ function NewProject() {
           }}
         />
       ) : tab === "one-click" ? (
-        <OneClickAppsCatalog
-          onSelectApp={(item) => {
-            create({
-              name: item.slug || item.name.toLowerCase().replace(/[^a-z0-9_-]/g, "-"),
-              stack: "docker",
-              target: "docker",
-              source: item.image,
-              port: item.port,
-            });
-          }}
-        />
+        <OneClickAppsCatalog variant="new-project-tab" />
       ) : (
-        /* Unified 2-Column Responsive Layout for Git, Upload, URL, CLI */
+        /* Unified 2-Column Responsive Layout for Git, Docker Image, Upload, URL, CLI */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           {/* Left Main Form Column (7/12) */}
           <div className="lg:col-span-7 space-y-6">
@@ -407,11 +483,13 @@ function NewProject() {
               <div className="flex items-center justify-between border-b border-border pb-3">
                 <div className="flex items-center gap-2">
                   {tab === "git" && <GitBranch className="h-5 w-5 text-primary" />}
+                  {tab === "docker-image" && <Container className="h-5 w-5 text-primary" />}
                   {tab === "upload" && <Upload className="h-5 w-5 text-primary" />}
                   {tab === "url" && <Link2 className="h-5 w-5 text-primary" />}
                   {tab === "cli" && <TerminalSquare className="h-5 w-5 text-primary" />}
                   <h2 className="text-base font-semibold text-foreground">
                     {tab === "git" && "Git Repository Configuration"}
+                    {tab === "docker-image" && "Docker Registry Image Deployment"}
                     {tab === "upload" && "Folder & Archive Upload"}
                     {tab === "url" && "Import from Remote Archive or Git URL"}
                     {tab === "cli" && "CLI Push & Local Daemon Setup"}
@@ -425,21 +503,92 @@ function NewProject() {
                 label="Project Name"
                 desc="Unique service identifier used for your internal and external magic domains."
               >
-                <div className="relative">
-                  <input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. acme-api, billing-worker, web-client"
-                    className={inputCls}
-                    autoFocus
-                  />
-                  {name && (
-                    <div className="absolute right-3 top-2.5 text-xs text-muted-foreground font-mono">
-                      {projectSlug}.localhost
-                    </div>
-                  )}
-                </div>
+                {(id) => (
+                  <div className="relative">
+                    <input
+                      id={id}
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="e.g. acme-api, billing-worker, web-client"
+                      className={inputCls}
+                      autoFocus
+                    />
+                    {name && (
+                      <div className="mt-1.5 text-xs text-muted-foreground font-mono truncate">
+                        {magicDomainHost}
+                      </div>
+                    )}
+                  </div>
+                )}
               </Field>
+
+              {tab === "docker-image" && (
+                <div className="space-y-4 pt-2">
+                  <Field
+                    label="Docker Image Reference"
+                    desc="Any public or private image on Docker Hub, GHCR, Quay, or your self-hosted registry."
+                  >
+                    {(id) => (
+                      <div className="relative">
+                        <input
+                          id={id}
+                          value={dockerImage}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setDockerImage(val);
+                            if (!name && val.trim()) {
+                              setName(deriveProjectNameFromImage(val));
+                            }
+                          }}
+                          placeholder="e.g. nginx:alpine, ghcr.io/immich-app/immich-server:release"
+                          className={`${inputCls} font-mono`}
+                        />
+                        <Container className="absolute right-3 top-3 h-4 w-4 text-muted-foreground/60" />
+                      </div>
+                    )}
+                  </Field>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted-foreground font-medium">Quick Images:</span>
+                    {QUICK_DOCKER_IMAGES.map((preset) => (
+                      <button
+                        key={preset.image}
+                        type="button"
+                        onClick={() => {
+                          setDockerImage(preset.image);
+                          setName(deriveProjectNameFromImage(preset.image));
+                          setCustomPort(preset.port);
+                          setTarget("docker");
+                        }}
+                        className="px-2.5 py-1 rounded-md border border-border bg-surface/60 hover:bg-primary/10 hover:border-primary/40 text-xs font-mono text-foreground transition-colors whitespace-nowrap"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/80 bg-surface/50 p-3.5 text-xs">
+                    <div className="space-y-0.5">
+                      <div className="font-semibold text-foreground">
+                        Auto-Discover Ports, Required Secrets &amp; Companion Databases
+                      </div>
+                      <p className="text-muted-foreground">
+                        Inspect the OCI manifest and upstream Compose metadata before container
+                        boot.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={openDockerPreDeployModal}
+                      disabled={!dockerImage.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-primary/40 bg-primary/10 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/20 disabled:opacity-40 whitespace-nowrap shrink-0"
+                    >
+                      <Search className="w-3.5 h-3.5" />
+                      Inspect &amp; Attach DBs
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Tab 1: Git Repo Specific Inputs */}
               {tab === "git" && (
@@ -448,44 +597,53 @@ function NewProject() {
                     label="Git Repository URL"
                     desc="Supports public and authenticated HTTPS Git URLs from GitHub, GitLab, Bitbucket, or Codeberg."
                   >
-                    <div className="relative">
-                      <input
-                        value={repo}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setRepo(val);
-                          if (!name && val) {
-                            const derived =
-                              val
-                                .split("/")
-                                .pop()
-                                ?.replace(/\.git$/, "") || "";
-                            if (derived) setName(derived);
-                          }
-                        }}
-                        placeholder="https://github.com/username/repository.git"
-                        className={inputCls}
-                      />
-                      <GitBranch className="absolute right-3 top-3 h-4 w-4 text-muted-foreground/60" />
-                    </div>
+                    {(id) => (
+                      <div className="relative">
+                        <input
+                          id={id}
+                          value={repo}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setRepo(val);
+                            if (!name && val) {
+                              const derived =
+                                val
+                                  .split("/")
+                                  .pop()
+                                  ?.replace(/\.git$/, "") || "";
+                              if (derived) setName(derived);
+                            }
+                          }}
+                          placeholder="https://github.com/username/repository.git"
+                          className={inputCls}
+                        />
+                        <GitBranch className="absolute right-3 top-3 h-4 w-4 text-muted-foreground/60" />
+                      </div>
+                    )}
                   </Field>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <Field label="Production Branch" desc="Branch to build and deploy.">
-                      <input
-                        value={branch}
-                        onChange={(e) => setBranch(e.target.value)}
-                        placeholder="main"
-                        className={inputCls}
-                      />
+                      {(id) => (
+                        <input
+                          id={id}
+                          value={branch}
+                          onChange={(e) => setBranch(e.target.value)}
+                          placeholder="main"
+                          className={inputCls}
+                        />
+                      )}
                     </Field>
                     <Field label="Root Directory" desc="Subdirectory path for monorepos.">
-                      <input
-                        value={workspace !== "none" ? workspace : "./"}
-                        onChange={(e) => setWorkspace(e.target.value)}
-                        placeholder="./ or packages/api"
-                        className={inputCls}
-                      />
+                      {(id) => (
+                        <input
+                          id={id}
+                          value={rootDirectory}
+                          onChange={(e) => setRootDirectory(e.target.value)}
+                          placeholder="./ or packages/api"
+                          className={inputCls}
+                        />
+                      )}
                     </Field>
                   </div>
 
@@ -585,15 +743,18 @@ function NewProject() {
                     label="Or Local Absolute / Relative Directory Path"
                     desc="Point directly to any folder on your machine for the HosteraX Engine."
                   >
-                    <div className="relative">
-                      <input
-                        value={folderPath}
-                        onChange={(e) => setFolderPath(e.target.value)}
-                        placeholder="e.g. C:\Users\Projects\my-app or ./src/backend"
-                        className={inputCls}
-                      />
-                      <FolderOpen className="absolute right-3 top-3 h-4 w-4 text-muted-foreground/60" />
-                    </div>
+                    {(id) => (
+                      <div className="relative">
+                        <input
+                          id={id}
+                          value={folderPath}
+                          onChange={(e) => setFolderPath(e.target.value)}
+                          placeholder="e.g. C:\Users\Projects\my-app or ./src/backend"
+                          className={inputCls}
+                        />
+                        <FolderOpen className="absolute right-3 top-3 h-4 w-4 text-muted-foreground/60" />
+                      </div>
+                    )}
                   </Field>
                 </div>
               )}
@@ -605,26 +766,29 @@ function NewProject() {
                     label="Public Source URL"
                     desc="Direct link to a public Git repository, raw archive (.zip / .tar.gz), or Docker Compose URL."
                   >
-                    <div className="relative">
-                      <input
-                        value={sourceUrl}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setSourceUrl(val);
-                          if (!name && val) {
-                            const derived =
-                              val
-                                .split("/")
-                                .pop()
-                                ?.replace(/\.(tar\.gz|zip|git)$/, "") || "";
-                            if (derived) setName(derived);
-                          }
-                        }}
-                        placeholder="https://github.com/owner/repo/archive/refs/heads/main.zip"
-                        className={inputCls}
-                      />
-                      <Link2 className="absolute right-3 top-3 h-4 w-4 text-muted-foreground/60" />
-                    </div>
+                    {(id) => (
+                      <div className="relative">
+                        <input
+                          id={id}
+                          value={sourceUrl}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setSourceUrl(val);
+                            if (!name && val) {
+                              const derived =
+                                val
+                                  .split("/")
+                                  .pop()
+                                  ?.replace(/\.(tar\.gz|zip|git)$/, "") || "";
+                              if (derived) setName(derived);
+                            }
+                          }}
+                          placeholder="https://github.com/owner/repo/archive/refs/heads/main.zip"
+                          className={inputCls}
+                        />
+                        <Link2 className="absolute right-3 top-3 h-4 w-4 text-muted-foreground/60" />
+                      </div>
+                    )}
                   </Field>
 
                   <div className="rounded-lg border border-border/80 bg-surface/50 p-3 text-xs text-muted-foreground flex items-center gap-2">
@@ -706,56 +870,67 @@ function NewProject() {
 
               {/* Stack & Target Selection Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border/60">
-                <Field label="Framework / Runtime" desc="Auto-detected or override manually.">
-                  <select
-                    value={stack}
-                    onChange={(e) => setStack(e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="auto">✨ Auto-detect Framework</option>
-                    {STACKS.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.icon} {s.name} ({s.language})
-                      </option>
-                    ))}
-                  </select>
-                </Field>
+                {tab !== "docker-image" && (
+                  <Field label="Framework / Runtime" desc="Auto-detected or override manually.">
+                    {(id) => (
+                      <select
+                        id={id}
+                        value={stack}
+                        onChange={(e) => setStack(e.target.value)}
+                        className={inputCls}
+                      >
+                        <option value="auto">Auto-detect Framework</option>
+                        {STACKS.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.icon} {s.name} ({s.language})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </Field>
+                )}
 
                 <Field label="Target Execution Mode" desc="How HosteraX runs this app.">
-                  <select
-                    value={serverId !== "local" ? "docker" : target}
-                    onChange={(e) => setTarget(e.target.value as any)}
-                    disabled={serverId !== "local"}
-                    className={inputCls}
-                  >
-                    {TARGETS.map((t) => (
-                      <option key={t.id} value={t.id} disabled={t.id === "ssh"}>
-                        {t.icon} {t.name}
-                        {t.id === "ssh" ? " — choose a server instead" : ""}
-                      </option>
-                    ))}
-                  </select>
+                  {(id) => (
+                    <select
+                      id={id}
+                      value={effectiveTarget}
+                      onChange={(e) => setTarget(e.target.value as any)}
+                      disabled={serverId !== "local" || tab === "docker-image"}
+                      className={inputCls}
+                    >
+                      {TARGETS.map((t) => (
+                        <option key={t.id} value={t.id} disabled={t.id === "ssh"}>
+                          {t.icon} {t.name}
+                          {t.id === "ssh" ? " — choose a server instead" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </Field>
 
                 <Field
                   label="Run on"
-                  desc="This machine, or a server you added. A server runs the app as a Docker container."
+                  desc="This machine, or a remote VPS managed over SSH as a Docker container."
                 >
-                  <select
-                    value={serverId}
-                    onChange={(e) => setServerId(e.target.value)}
-                    className={inputCls}
-                  >
-                    <option value="local">This machine</option>
-                    {remoteServers.map((s) => (
-                      <option key={s.id} value={s.id} disabled={!s.ready}>
-                        {s.name}
-                        {s.ready
-                          ? ""
-                          : ` — ${s.last_error ? "needs attention" : "not connected yet"}`}
-                      </option>
-                    ))}
-                  </select>
+                  {(id) => (
+                    <select
+                      id={id}
+                      value={serverId}
+                      onChange={(e) => setServerId(e.target.value)}
+                      className={inputCls}
+                    >
+                      <option value="local">This machine</option>
+                      {remoteServers.map((s) => (
+                        <option key={s.id} value={s.id} disabled={!s.ready}>
+                          {s.name}
+                          {s.ready
+                            ? ""
+                            : ` — ${s.last_error ? "needs attention" : "not connected yet"}`}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </Field>
               </div>
 
@@ -763,71 +938,169 @@ function NewProject() {
               <div className="pt-2">
                 <button
                   type="button"
+                  aria-expanded={showAdvanced}
                   onClick={() => setShowAdvanced(!showAdvanced)}
                   className="flex items-center gap-2 text-xs font-semibold text-primary hover:underline"
                 >
                   <Settings2 className="w-3.5 h-3.5" />
                   {showAdvanced
-                    ? "Hide Advanced Build & Environment Settings"
-                    : "Show Advanced Build & Environment Settings"}
+                    ? "Hide Advanced Build, Health & Environment Settings"
+                    : "Show Advanced Build, Health & Environment Settings"}
                 </button>
 
                 {showAdvanced && (
                   <div className="mt-4 space-y-4 rounded-lg border border-border bg-surface/40 p-4 animate-in fade-in duration-200">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <Field label="Custom Build Command">
-                        <input
-                          value={customBuild}
-                          onChange={(e) => setCustomBuild(e.target.value)}
-                          placeholder={activeStackDef.build || "e.g. npm run build"}
-                          className={inputCls}
-                        />
-                      </Field>
-                      <Field label="Custom Start Command">
-                        <input
-                          value={customStart}
-                          onChange={(e) => setCustomStart(e.target.value)}
-                          placeholder={activeStackDef.start || "e.g. npm start"}
-                          className={inputCls}
-                        />
-                      </Field>
+                    <div
+                      className={`grid grid-cols-1 gap-4 ${
+                        tab === "docker-image" ? "sm:grid-cols-2 xl:grid-cols-4" : "sm:grid-cols-3"
+                      }`}
+                    >
+                      {tab !== "docker-image" && (
+                        <>
+                          <Field label="Custom Build Command">
+                            {(id) => (
+                              <input
+                                id={id}
+                                value={customBuild}
+                                onChange={(e) => setCustomBuild(e.target.value)}
+                                placeholder={activeStackDef.build || "e.g. npm run build"}
+                                className={inputCls}
+                              />
+                            )}
+                          </Field>
+                          <Field label="Custom Start Command">
+                            {(id) => (
+                              <input
+                                id={id}
+                                value={customStart}
+                                onChange={(e) => setCustomStart(e.target.value)}
+                                placeholder={activeStackDef.start || "e.g. npm start"}
+                                className={inputCls}
+                              />
+                            )}
+                          </Field>
+                        </>
+                      )}
                       <Field label="App Port">
-                        <input
-                          type="number"
-                          value={customPort}
-                          onChange={(e) =>
-                            setCustomPort(e.target.value ? Number(e.target.value) : "")
-                          }
-                          placeholder={String(activeStackDef.port || 3000)}
-                          className={inputCls}
-                        />
+                        {(id) => (
+                          <input
+                            id={id}
+                            type="number"
+                            value={customPort}
+                            onChange={(e) =>
+                              setCustomPort(e.target.value ? Number(e.target.value) : "")
+                            }
+                            placeholder={String(activeStackDef.port || 3000)}
+                            className={`${inputCls} font-mono tabular-nums`}
+                          />
+                        )}
+                      </Field>
+                      <Field label="Health Check Path">
+                        {(id) => (
+                          <input
+                            id={id}
+                            value={healthPath}
+                            onChange={(e) => setHealthPath(e.target.value)}
+                            placeholder="/health"
+                            className={`${inputCls} font-mono`}
+                          />
+                        )}
+                      </Field>
+                      <Field label="CPU Limit (Cores)">
+                        {(id) => (
+                          <input
+                            id={id}
+                            type="number"
+                            step="0.25"
+                            min="0.25"
+                            value={cpuLimit}
+                            onChange={(e) => setCpuLimit(e.target.value)}
+                            placeholder="Unlimited"
+                            className={`${inputCls} font-mono tabular-nums`}
+                          />
+                        )}
+                      </Field>
+                      <Field label="Memory Limit (MB)">
+                        {(id) => (
+                          <input
+                            id={id}
+                            type="number"
+                            step="64"
+                            min="16"
+                            value={memoryMbLimit}
+                            onChange={(e) => setMemoryMbLimit(e.target.value)}
+                            placeholder="Unlimited"
+                            className={`${inputCls} font-mono tabular-nums`}
+                          />
+                        )}
                       </Field>
                     </div>
 
                     {/* Environment Variables Table */}
                     <div>
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
                         <label className="text-xs font-semibold text-foreground">
                           Environment Variables
                         </label>
-                        <button
-                          type="button"
-                          onClick={addEnvRow}
-                          className="text-[11px] font-semibold text-primary hover:underline"
-                        >
-                          + Add Variable
-                        </button>
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setBulkPasteOpen(!bulkPasteOpen)}
+                            className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted-foreground hover:text-foreground"
+                          >
+                            <FileText className="w-3 h-3" />
+                            {bulkPasteOpen ? "Hide Paste .env" : "Paste .env"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={addEnvRow}
+                            className="text-[11px] font-semibold text-primary hover:underline"
+                          >
+                            + Add Variable
+                          </button>
+                        </div>
                       </div>
+
+                      {bulkPasteOpen && (
+                        <div className="mb-3 rounded-lg border border-border bg-card p-3 space-y-2">
+                          <textarea
+                            aria-label="Paste .env content"
+                            rows={4}
+                            value={bulkPasteText}
+                            onChange={(e) => setBulkPasteText(e.target.value)}
+                            placeholder={
+                              "DATABASE_URL=postgres://user:pass@host:5432/app\nJWT_SECRET=replace-me"
+                            }
+                            className="w-full rounded-md border border-border bg-surface px-3 py-2 font-mono text-xs text-foreground outline-none focus:border-primary"
+                          />
+                          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                            <span>
+                              Sensitive keys (SECRET, TOKEN, PASSWORD, DATABASE_URL) are masked
+                              automatically.
+                            </span>
+                            <button
+                              type="button"
+                              onClick={applyBulkEnvPaste}
+                              className="rounded-md bg-primary px-3 py-1 font-semibold text-primary-foreground hover:opacity-90"
+                            >
+                              Import Variables
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
                       <div className="space-y-2">
                         {envVars.map((row, idx) => (
                           <div key={idx} className="flex items-center gap-2">
                             <input
+                              aria-label={`Environment variable key ${idx + 1}`}
                               value={row.key}
                               onChange={(e) => updateEnvRow(idx, e.target.value, row.value)}
                               placeholder="KEY_NAME"
                               className={`${inputCls} font-mono text-xs`}
                             />
                             <input
+                              aria-label={`Environment variable value ${idx + 1}`}
                               value={row.value}
                               onChange={(e) => updateEnvRow(idx, row.key, e.target.value)}
                               placeholder="value"
@@ -835,6 +1108,7 @@ function NewProject() {
                             />
                             <button
                               type="button"
+                              aria-label={`Remove variable ${row.key || idx + 1}`}
                               onClick={() => removeEnvRow(idx)}
                               className="px-2 py-1 text-xs text-rose-400 hover:bg-rose-500/10 rounded"
                             >
@@ -844,27 +1118,6 @@ function NewProject() {
                         ))}
                       </div>
                     </div>
-
-                    {target === "ssh" && (
-                      <div className="grid grid-cols-2 gap-4 rounded-md border border-border bg-input/20 p-4">
-                        <Field label="SSH Host (IP or hostname)">
-                          <input
-                            value={sshHost}
-                            onChange={(e) => setSshHost(e.target.value)}
-                            placeholder="192.168.1.100"
-                            className={inputCls}
-                          />
-                        </Field>
-                        <Field label="SSH User">
-                          <input
-                            value={sshUser}
-                            onChange={(e) => setSshUser(e.target.value)}
-                            placeholder="root"
-                            className={inputCls}
-                          />
-                        </Field>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -880,9 +1133,7 @@ function NewProject() {
                   <Sparkles className="h-5 w-5 text-primary" />
                   <h2 className="text-base font-semibold text-foreground">Deployment Blueprint</h2>
                 </div>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
-                  Ready to Deploy
-                </span>
+                <span className="text-xs font-medium text-primary">Ready to Deploy</span>
               </div>
 
               {/* Blueprint Summary Rows */}
@@ -894,39 +1145,64 @@ function NewProject() {
                   </span>
                 </div>
 
-                <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
-                  <span className="text-muted-foreground">Magic Domain:</span>
-                  <span className="font-semibold text-emerald-400 font-mono flex items-center gap-1">
-                    <Globe className="w-3.5 h-3.5" />
-                    {projectSlug}.localhost
+                <div className="flex items-center justify-between gap-2 p-2.5 rounded-lg bg-surface/70 border border-border/60">
+                  <span className="text-muted-foreground shrink-0">Magic Domain:</span>
+                  <span className="font-semibold text-emerald-400 font-mono flex items-center gap-1 truncate">
+                    <Globe className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{magicDomainHost}</span>
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
-                  <span className="text-muted-foreground">Framework / Stack:</span>
-                  <span className="font-semibold text-foreground flex items-center gap-1.5">
-                    <span>{activeStackDef.icon}</span>
-                    <span>{activeStackDef.name}</span>
+                  <span className="text-muted-foreground">
+                    {tab === "docker-image" ? "Container Image:" : "Framework / Stack:"}
+                  </span>
+                  <span className="font-semibold text-foreground flex items-center gap-1.5 font-mono truncate max-w-[60%]">
+                    {tab === "docker-image" ? (
+                      dockerImage.trim() || "nginx:alpine"
+                    ) : (
+                      <>
+                        <span>{activeStackDef.icon}</span>
+                        <span className="font-sans">{activeStackDef.name}</span>
+                      </>
+                    )}
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
                   <span className="text-muted-foreground">Target Runtime:</span>
-                  <span className="font-semibold text-foreground capitalize flex items-center gap-1">
-                    {target === "docker" && "🐳 Docker Container"}
-                    {target === "process" && "⚡ Native Process"}
-                    {target === "ssh" && "🔐 Remote SSH"}
+                  <span className="font-semibold text-foreground flex items-center gap-1">
+                    {effectiveTarget === "docker"
+                      ? serverId !== "local"
+                        ? "Docker Container (Remote SSH)"
+                        : "Docker Container"
+                      : "Native Process"}
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
-                  <span className="text-muted-foreground">Internal Port:</span>
-                  <span className="font-semibold text-foreground font-mono">:{effectivePort}</span>
+                  <span className="text-muted-foreground">Internal Port &amp; Health:</span>
+                  <span className="font-semibold text-foreground font-mono tabular-nums">
+                    :{effectivePort} · {normalizeHealthPath(healthPath)}
+                  </span>
                 </div>
+
+                {(cpuLimit.trim() || memoryMbLimit.trim()) && (
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
+                    <span className="text-muted-foreground">Resource Quotas:</span>
+                    <span className="font-semibold text-foreground font-mono tabular-nums">
+                      {cpuLimit.trim() ? `${cpuLimit} vCPU` : "Unlimited CPU"} ·{" "}
+                      {memoryMbLimit.trim() ? `${memoryMbLimit} MB` : "Unlimited RAM"}
+                    </span>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
                   <span className="text-muted-foreground">Environment:</span>
-                  <span className="font-semibold text-emerald-400">🟢 Production</span>
+                  <span className="font-semibold text-emerald-400">
+                    Production ({envVars.filter((r) => r.key.trim()).length} var
+                    {envVars.filter((r) => r.key.trim()).length === 1 ? "" : "s"})
+                  </span>
                 </div>
               </div>
 
@@ -966,6 +1242,15 @@ function NewProject() {
           </div>
         </div>
       )}
+
+      <PreDeployModal
+        target={preDeployTarget}
+        onClose={() => setPreDeployTarget(null)}
+        onDeployed={(slug) => {
+          setPreDeployTarget(null);
+          nav({ to: "/p/$slug", params: { slug } });
+        }}
+      />
     </div>
   );
 }
@@ -980,7 +1265,7 @@ function Field({
 }: {
   label: string;
   desc?: string;
-  children: React.ReactNode;
+  children: React.ReactNode | ((id: string) => React.ReactNode);
 }) {
   const id = useId();
   return (
@@ -990,7 +1275,7 @@ function Field({
           {label}
         </label>
       </div>
-      {children}
+      {typeof children === "function" ? children(id) : children}
       {desc && <p className="text-[11px] text-muted-foreground leading-tight">{desc}</p>}
     </div>
   );

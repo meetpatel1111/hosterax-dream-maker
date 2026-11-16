@@ -110,7 +110,7 @@ export class DockerApiClient {
   /**
    * Low-level HTTP request dispatcher over Unix Socket, Windows Named Pipe, or TCP
    */
-  request(method, endpoint, { body = null, headers = {}, timeout = 15000 } = {}) {
+  request(method, endpoint, { body = null, headers = {}, timeout = 15000, _retriedVersion = false } = {}) {
     return new Promise((resolve, reject) => {
       const pathWithVersion = endpoint.startsWith("/v1.")
         ? endpoint
@@ -161,6 +161,23 @@ export class DockerApiClient {
             resolve(parsed);
           } else {
             const errMessage = parsed?.message || parsed || `HTTP ${res.statusCode}`;
+            const maxVerMatch =
+              !_retriedVersion &&
+              res.statusCode === 400 &&
+              typeof errMessage === "string" &&
+              errMessage.match(/Maximum supported API version is (1\.\d+)/i);
+            if (maxVerMatch) {
+              this.apiVersion = `v${maxVerMatch[1]}`;
+              resolve(
+                this.request(method, endpoint, {
+                  body,
+                  headers,
+                  timeout,
+                  _retriedVersion: true,
+                }),
+              );
+              return;
+            }
             const err = new Error(
               `Docker API Error [${res.statusCode} ${method} ${endpoint}]: ${errMessage}`,
             );

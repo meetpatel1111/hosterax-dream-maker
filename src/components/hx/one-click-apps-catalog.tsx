@@ -10,7 +10,7 @@ import {
 } from "@/lib/stacks";
 import { useEngine, useEngineHealth } from "@/lib/engine";
 import { AppLogo } from "@/components/hx/app-logo";
-import { confirmAction } from "@/components/hx/confirm-modal";
+import { PreDeployModal, PreDeployTarget } from "@/components/hx/pre-deploy-modal";
 import { useTranslation } from "@/lib/i18n";
 import {
   Search,
@@ -72,7 +72,6 @@ export function OneClickAppsCatalog({
   const [selectedSource, setSelectedSource] = useState<OneClickAppSource>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
-  const [installingId, setInstallingId] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState<number>(48);
   const [page, setPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(48);
@@ -83,10 +82,11 @@ export function OneClickAppsCatalog({
     return () => window.clearTimeout(timeout);
   }, [searchQuery]);
 
-  // Custom Docker Image Input
+  // Custom Docker Image Input & Pre-Deploy Dependency Modal
   const [customImage, setCustomImage] = useState("");
   const [inspectingCustom, setInspectingCustom] = useState(false);
   const [customInspectResult, setCustomInspectResult] = useState<any | null>(null);
+  const [preDeployTarget, setPreDeployTarget] = useState<PreDeployTarget | null>(null);
 
   // Query installed docker apps from engine
   const {
@@ -314,6 +314,41 @@ export function OneClickAppsCatalog({
     return filteredItems.slice(start, start + pageSize);
   }, [filteredItems, viewMode, visibleCount, currentPage, pageSize]);
 
+  function resolveWellKnownImage(tag: string) {
+    const WELL_KNOWN_MAP: Record<string, string> = {
+      ollama: "ollama/ollama:latest",
+      "ollama/ollama": "ollama/ollama:latest",
+      vaultwarden: "vaultwarden/server:latest",
+      nginx: "nginx:alpine",
+      caddy: "caddy:latest",
+      redis: "redis:alpine",
+      postgres: "postgres:alpine",
+      grafana: "grafana/grafana:latest",
+      prometheus: "prom/prometheus:latest",
+      uptimekuma: "louislam/uptime-kuma:latest",
+      "uptime-kuma": "louislam/uptime-kuma:latest",
+      n8n: "n8nio/n8n:latest",
+      portainer: "portainer/portainer-ce:latest",
+      dockge: "louislam/dockge:latest",
+      traefik: "traefik:v3.1",
+      jellyfin: "jellyfin/jellyfin:latest",
+      immich: "ghcr.io/immich-app/immich-server:latest",
+      paperless: "ghcr.io/paperless-ngx/paperless-ngx:latest",
+      "paperless-ngx": "ghcr.io/paperless-ngx/paperless-ngx:latest",
+      "it-tools": "corentinth/it-tools:latest",
+    };
+    const cleanInputKey = tag.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+    const baseInputKey = tag
+      .split(":")[0]
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]/g, "");
+    let resolved = WELL_KNOWN_MAP[cleanInputKey] || WELL_KNOWN_MAP[baseInputKey] || tag;
+    if (!resolved.includes(":") && !resolved.includes("/")) {
+      resolved = `${resolved}:latest`;
+    }
+    return { resolved, cleanInputKey };
+  }
+
   async function handleInspectCustomImage() {
     if (!customImage.trim()) return;
     if (!health?.ok) {
@@ -322,12 +357,13 @@ export function OneClickAppsCatalog({
     }
     try {
       setInspectingCustom(true);
-      const res = await eng.call<any>("POST", "/api/catalog/inspect", {
-        image: customImage.trim(),
+      const { resolved } = resolveWellKnownImage(customImage.trim());
+      const res = await eng.call<any>("POST", "/api/catalog/analyze-dependencies", {
+        image: resolved,
       });
       setCustomInspectResult(res);
       toast.success(
-        `Discovered ports: ${res.exposedPorts?.join(", ") || res.detectedPort || 3000}`,
+        `Discovered port :${res.detectedPort || 3000}, ${res.envVars?.length || 0} env var(s), ${res.databases?.length || 0} DB hint(s)`,
       );
     } catch (err: any) {
       toast.error(err.message || "Failed to inspect image");
@@ -336,141 +372,48 @@ export function OneClickAppsCatalog({
     }
   }
 
-  async function handleDeployCustomImage() {
+  function handleDeployCustomImage() {
     const tag = customImage.trim();
     if (!tag) {
       toast.error("Please enter a Docker image tag (e.g. caddy:latest)");
       return;
     }
-    if (!health?.ok) {
-      toast.error("HosteraX Engine must be connected to deploy");
-      return;
-    }
+    const { resolved, cleanInputKey } = resolveWellKnownImage(tag);
+    const cleanName =
+      tag
+        .split("/")
+        .pop()
+        ?.split(":")[0]
+        ?.replace(/[^a-z0-9_-]/gi, "-")
+        .toLowerCase() || "custom-app";
+    const targetPort =
+      customInspectResult?.detectedPort || (cleanInputKey === "ollama" ? 11434 : 3000);
 
-    try {
-      setInspectingCustom(true);
-      const WELL_KNOWN_MAP: Record<string, string> = {
-        ollama: "ollama/ollama:latest",
-        "ollama/ollama": "ollama/ollama:latest",
-        vaultwarden: "vaultwarden/server:latest",
-        nginx: "nginx:alpine",
-        caddy: "caddy:latest",
-        redis: "redis:alpine",
-        postgres: "postgres:alpine",
-        grafana: "grafana/grafana:latest",
-        prometheus: "prom/prometheus:latest",
-        uptimekuma: "louislam/uptime-kuma:latest",
-        "uptime-kuma": "louislam/uptime-kuma:latest",
-        n8n: "n8nio/n8n:latest",
-        portainer: "portainer/portainer-ce:latest",
-        dockge: "louislam/dockge:latest",
-        traefik: "traefik:v3.1",
-        jellyfin: "jellyfin/jellyfin:latest",
-        immich: "ghcr.io/immich-app/immich-server:latest",
-        paperless: "ghcr.io/paperless-ngx/paperless-ngx:latest",
-        "paperless-ngx": "ghcr.io/paperless-ngx/paperless-ngx:latest",
-        "it-tools": "corentinth/it-tools:latest",
-      };
-      const cleanInputKey = tag.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-      const baseInputKey = tag
-        .split(":")[0]
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]/g, "");
-      let resolvedSource = WELL_KNOWN_MAP[cleanInputKey] || WELL_KNOWN_MAP[baseInputKey] || tag;
-      if (!resolvedSource.includes(":") && !resolvedSource.includes("/")) {
-        resolvedSource = `${resolvedSource}:latest`;
-      }
-
-      const cleanName =
-        tag
-          .split("/")
-          .pop()
-          ?.split(":")[0]
-          ?.replace(/[^a-z0-9_-]/gi, "-")
-          .toLowerCase() || "custom-app";
-
-      const projName = `${cleanName}-${Math.random().toString(36).substring(2, 6)}`;
-      const targetPort =
-        customInspectResult?.detectedPort || (cleanInputKey === "ollama" ? 11434 : 3000);
-
-      // 1. Create project
-      await eng.call("POST", "/api/projects", {
-        name: projName,
-        source: resolvedSource,
-        buildCmd: "",
-        startCmd: "",
-        target: "docker",
-        port: targetPort,
-        env: {},
-      });
-
-      // 2. Queue immediate deployment
-      await eng.call("POST", `/api/projects/${projName}/deploy`, {
-        trigger: "custom-docker",
-      });
-
-      toast.success(`Custom image "${tag}" deployed successfully!`);
-      qc.invalidateQueries({ queryKey: ["engine-projects"] });
-      qc.invalidateQueries({ queryKey: ["projects"] });
-      nav({ to: "/p/$slug", params: { slug: projName } });
-    } catch (err: any) {
-      toast.error(err.message || `Failed to deploy custom image ${tag}`);
-    } finally {
-      setInspectingCustom(false);
-    }
+    setPreDeployTarget({
+      image: resolved,
+      name: cleanName,
+      slug: `${cleanName}-${Math.random().toString(36).substring(2, 6)}`,
+      port: targetPort,
+      trigger: "custom-docker",
+    });
   }
 
-  async function handleAction(item: OneClickAppDef) {
+  function handleAction(item: OneClickAppDef) {
     if (onSelectApp) {
       return onSelectApp(item);
     }
 
-    if (!health?.ok) {
-      toast.error("HosteraX Engine must be connected to deploy");
-      return;
-    }
-
-    // Directory entries don't publish container images; for most of them the image below is only
-    // a best guess derived from the project's repository name.
-    if (item.imageVerified === false) {
-      const ok = await confirmAction({
-        title: `Deploy Unverified Image "${item.name}"?`,
-        description: `HosteraX will try "${item.image}", which is inferred from the project repository and may not be an official image. Only continue if you recognise this image.`,
-        confirmLabel: "Deploy Anyway",
-        variant: "warning",
-      });
-      if (!ok) return;
-    }
-
-    try {
-      setInstallingId(item.id);
-      const projName = item.slug || item.name.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
-
-      // 1. Create first-class HosteraX project
-      await eng.call("POST", "/api/projects", {
-        name: projName,
-        source: item.image,
-        buildCmd: "",
-        startCmd: "",
-        target: "docker",
-        port: item.port || 3000,
-        env: item.env || {},
-      });
-
-      // 2. Queue immediate deployment
-      await eng.call("POST", `/api/projects/${projName}/deploy`, {
-        trigger: "one-click",
-      });
-
-      toast.success(`App project "${item.name}" created & deploy queued!`);
-      qc.invalidateQueries({ queryKey: ["engine-projects"] });
-      qc.invalidateQueries({ queryKey: ["projects"] });
-      nav({ to: "/p/$slug", params: { slug: projName } });
-    } catch (err: any) {
-      toast.error(err.message || `Failed to deploy ${item.name}`);
-    } finally {
-      setInstallingId(null);
-    }
+    setPreDeployTarget({
+      image: item.image,
+      name: item.name,
+      slug: item.slug || item.name.toLowerCase().replace(/[^a-z0-9_-]/g, "-"),
+      port: item.port || 3000,
+      env: item.env || {},
+      sourceUrl: item.url || "",
+      website: item.website || "",
+      imageVerified: item.imageVerified,
+      trigger: "one-click",
+    });
   }
 
   return (
@@ -585,21 +528,33 @@ export function OneClickAppsCatalog({
         </div>
 
         {customInspectResult && (
-          <div className="mt-2.5 p-2 rounded-lg bg-surface-2/60 border border-border/40 text-xs flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-foreground">Discovered Port:</span>
-              <span className="font-mono text-primary font-bold">
-                :{customInspectResult.detectedPort}
-              </span>
+          <div className="mt-2.5 p-2.5 rounded-lg bg-surface-2/60 border border-border/40 text-xs flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 font-mono tabular-nums">
+              <span className="font-sans font-semibold text-foreground">Port:</span>
+              <span className="text-primary font-bold">:{customInspectResult.detectedPort}</span>
               {customInspectResult.volumes?.length > 0 && (
-                <span className="text-[11px] text-muted-foreground">
-                  • {customInspectResult.volumes.length} volume(s)
+                <span className="text-[11px] font-sans text-muted-foreground">
+                  · {customInspectResult.volumes.length} volume(s)
+                </span>
+              )}
+              {customInspectResult.envVars?.length > 0 && (
+                <span className="text-[11px] font-sans text-muted-foreground">
+                  · {customInspectResult.envVars.length} env var(s)
+                </span>
+              )}
+              {customInspectResult.databases?.length > 0 && (
+                <span className="text-[11px] font-sans text-amber-400 font-medium">
+                  · Needs {customInspectResult.databases.map((d: any) => d.engine).join(", ")}
                 </span>
               )}
             </div>
-            <span className="text-[11px] text-emerald-500 font-medium">
-              ✓ {t("readyToDeploy", "Ready to deploy")}
-            </span>
+            <button
+              type="button"
+              onClick={handleDeployCustomImage}
+              className="text-[11px] text-primary hover:underline font-medium"
+            >
+              Configure & Deploy →
+            </button>
           </div>
         )}
       </div>
@@ -865,7 +820,6 @@ export function OneClickAppsCatalog({
               const isInstalled =
                 installedAppIds.has(item.id.toLowerCase()) ||
                 installedAppIds.has(item.name.toLowerCase());
-              const isInstalling = installingId === item.id;
 
               return (
                 <div
@@ -1021,21 +975,12 @@ export function OneClickAppsCatalog({
                       </button>
                     ) : (
                       <button
+                        type="button"
                         onClick={() => handleAction(item)}
-                        disabled={isInstalling}
-                        className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-primary hover:bg-primary/90 px-3 py-1.5 text-xs font-medium text-primary-foreground transition-all shadow-sm disabled:opacity-50"
+                        className="w-full flex items-center justify-center gap-1.5 rounded-lg bg-primary hover:bg-primary/90 px-3 py-1.5 text-xs font-medium text-primary-foreground transition-all shadow-sm"
                       >
-                        {isInstalling ? (
-                          <div className="flex items-center gap-1.5">
-                            <div className="w-3.5 h-3.5 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
-                            <span>Deploying...</span>
-                          </div>
-                        ) : (
-                          <>
-                            <Rocket className="w-3.5 h-3.5" />
-                            <span>1-Click Deploy</span>
-                          </>
-                        )}
+                        <Rocket className="w-3.5 h-3.5" />
+                        <span>1-Click Deploy</span>
                       </button>
                     )}
 
@@ -1218,6 +1163,17 @@ export function OneClickAppsCatalog({
           )}
         </>
       )}
+
+      <PreDeployModal
+        target={preDeployTarget}
+        onClose={() => setPreDeployTarget(null)}
+        onDeployed={(slug) => {
+          setPreDeployTarget(null);
+          qc.invalidateQueries({ queryKey: ["engine-projects"] });
+          qc.invalidateQueries({ queryKey: ["projects"] });
+          nav({ to: "/p/$slug", params: { slug } });
+        }}
+      />
     </div>
   );
 }

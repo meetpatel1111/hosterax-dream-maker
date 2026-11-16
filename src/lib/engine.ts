@@ -6,7 +6,11 @@ import { appLogger } from "../utils/app-logger";
 export * from "./schema";
 
 type EngineState = { url: string; token: string };
-type EngineRequestOptions = { signal?: AbortSignal; headers?: Record<string, string> };
+type EngineRequestOptions = {
+  signal?: AbortSignal;
+  headers?: Record<string, string>;
+  suppressStatuses?: number[];
+};
 
 const DEFAULT_URL = FALLBACK_ENGINE_URL;
 const DEFAULT_ORG_ID = "default";
@@ -77,7 +81,11 @@ function subscribeOrg(cb: () => void) {
 }
 
 export function useActiveOrgId(): string {
-  return useSyncExternalStore(subscribeOrg, () => activeOrgState, () => DEFAULT_ORG_ID);
+  return useSyncExternalStore(
+    subscribeOrg,
+    () => activeOrgState,
+    () => DEFAULT_ORG_ID,
+  );
 }
 
 export function setEngineConfig(url: string, token: string) {
@@ -151,13 +159,16 @@ export function useEngine() {
         });
 
         // Only show toaster for client mutations or unexpected server errors
-        if (method !== "GET" || r.status >= 500) {
+        const suppressed = options?.suppressStatuses?.includes(r.status);
+        if (!suppressed && (method !== "GET" || r.status >= 500)) {
           toast.error(`API Error ${r.status}: ${method.toUpperCase()} ${path}`, {
             description: errMessage,
           });
         }
 
-        throw new Error(errMessage);
+        const thrown = new Error(errMessage) as Error & { status?: number };
+        thrown.status = r.status;
+        throw thrown;
       }
 
       let data: any;

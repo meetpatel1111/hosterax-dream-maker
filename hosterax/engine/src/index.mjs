@@ -19,6 +19,7 @@ import { AccountManager, AccountError } from "./accounts.mjs";
 import { OidcClient, OidcError, loadOidcConfig } from "./oidc.mjs";
 import { ENGINE_VERSION } from "./version.mjs";
 import { createCatalogApi, catalogApps as catalogAppsList } from "./catalog-api.mjs";
+import { parseCompose } from "./compose-parser.mjs";
 import {
   generateToken,
   hashToken,
@@ -726,66 +727,7 @@ function detectStack(workdir, p, id) {
   };
 }
 
-// ---------- docker compose import ----------
-function parseCompose(workdir) {
-  const file = ["docker-compose.yml", "docker-compose.yaml", "compose.yml"]
-    .map((f) => path.join(workdir, f))
-    .find(fs.existsSync);
-  if (!file) return null;
-  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
-  const services = [];
-  let inServices = false,
-    cur = null,
-    key = null;
-  const indentOf = (l) => l.match(/^\s*/)[0].length;
-  for (const raw of lines) {
-    if (!raw.trim() || raw.trim().startsWith("#")) continue;
-    const ind = indentOf(raw);
-    const line = raw.trim();
-    if (ind === 0) {
-      inServices = /^services:/.test(line);
-      cur = null;
-      continue;
-    }
-    if (!inServices) continue;
-    if (ind <= 2 && line.endsWith(":")) {
-      cur = {
-        name: line.slice(0, -1),
-        image: null,
-        build_context: null,
-        ports: [],
-        volumes: [],
-        env: {},
-        depends: [],
-      };
-      services.push(cur);
-      key = null;
-      continue;
-    }
-    if (!cur) continue;
-    const kv = line.match(/^([a-zA-Z_]+):\s*(.*)$/);
-    if (kv) {
-      key = kv[1];
-      const val = kv[2].replace(/^["']|["']$/g, "");
-      if (key === "image" && val) cur.image = val;
-      else if (key === "build" && val) cur.build_context = val;
-      else if (key === "context" && val) cur.build_context = val;
-      continue;
-    }
-    const item = line.match(/^-\s*(.+)$/);
-    if (item) {
-      const val = item[1].replace(/^["']|["']$/g, "");
-      if (key === "ports") cur.ports.push(val);
-      else if (key === "volumes") cur.volumes.push(val);
-      else if (key === "depends_on") cur.depends.push(val);
-      else if (key === "environment") {
-        const [k, ...rest] = val.split("=");
-        if (k) cur.env[k] = rest.join("=");
-      }
-    }
-  }
-  return { file, services };
-}
+// ---------- docker compose import (provided by ./compose-parser.mjs) ----------
 
 function syncComposeServices(project, workdir, id) {
   const parsed = parseCompose(workdir);
@@ -2074,6 +2016,28 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
         isZeroConfigGenerated = true;
       }
 
+      const stripBuildKitMounts = (df) =>
+        String(df || "")
+          .replace(/^#\s*syntax=.*\r?\n/i, "")
+          .replace(/--mount=[^\s\\]+(?:\s*\\\r?\n\s*)?/g, "");
+
+      let preferLegacyBuild = false;
+      try {
+        const info = await dockerApi.getSystemInfo();
+        if (info?.DefaultRuntime === "crun" || info?.CgroupDriver === "none") {
+          preferLegacyBuild = true;
+        }
+      } catch {}
+
+      if (preferLegacyBuild && fs.existsSync(dockerfilePath)) {
+        try {
+          const curDf = fs.readFileSync(dockerfilePath, "utf8");
+          if (/--mount=/i.test(curDf) || /^#\s*syntax=/i.test(curDf)) {
+            fs.writeFileSync(dockerfilePath, stripBuildKitMounts(curDf), "utf8");
+          }
+        } catch {}
+      }
+
       publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
       let bc = await runStepArgv(
         deploymentId,
@@ -2082,9 +2046,26 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
         ["build", "-t", sanitizeImageTag(tag), "."],
         {
           ...env,
-          DOCKER_BUILDKIT: "1",
+          DOCKER_BUILDKIT: preferLegacyBuild ? "0" : "1",
         },
       );
+
+      // If BuildKit failed on kernel/cgroup restrictions, retry once with legacy builder before regenerating Dockerfile
+      if (bc !== 0 && !preferLegacyBuild) {
+        try {
+          const curDf = fs.readFileSync(dockerfilePath, "utf8");
+          if (/--mount=/i.test(curDf) || /^#\s*syntax=/i.test(curDf)) {
+            fs.writeFileSync(dockerfilePath, stripBuildKitMounts(curDf), "utf8");
+          }
+        } catch {}
+        bc = await runStepArgv(
+          deploymentId,
+          workdir,
+          "docker",
+          ["build", "-t", sanitizeImageTag(tag), "."],
+          { ...env, DOCKER_BUILDKIT: "0" },
+        );
+      }
 
       // Self-Healing Build Fallback: If original Dockerfile build failed, fallback to zero-config multi-stage build!
       if (bc !== 0 && !isZeroConfigGenerated) {
@@ -2093,7 +2074,8 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
           stream: "system",
           text: "[self-heal] Docker build failed with repository Dockerfile. Automatically generating zero-config multi-stage Dockerfile and retrying...",
         });
-        const generatedDockerfile = generateZeroConfigDockerfile(workdir);
+        let generatedDockerfile = generateZeroConfigDockerfile(workdir);
+        if (preferLegacyBuild) generatedDockerfile = stripBuildKitMounts(generatedDockerfile);
         fs.writeFileSync(dockerfilePath, generatedDockerfile, "utf8");
         publish(deploymentId, {
           ts: Date.now(),
@@ -2107,7 +2089,7 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
           ["build", "-t", sanitizeImageTag(tag), "."],
           {
             ...env,
-            DOCKER_BUILDKIT: "1",
+            DOCKER_BUILDKIT: preferLegacyBuild ? "0" : "1",
           },
         );
       }
@@ -2298,23 +2280,39 @@ pages:
       portArgs.push("-p", `127.0.0.1:${consoleHostPort}:9001`);
     }
 
-    // Resource limits (memory and CPU capping)
+    // Resource limits (memory and CPU capping, honoring kernel cgroup support)
     const resourceLimits = db
       .prepare("SELECT memory_mb_limit, cpu_limit FROM projects WHERE name=?")
       .get(project);
     const resArgs = [];
     const memLimit = Number(resourceLimits?.memory_mb_limit);
     const cpuLimit = Number(resourceLimits?.cpu_limit);
+    let sysCaps = null;
+    if ((Number.isFinite(memLimit) && memLimit > 0) || (Number.isFinite(cpuLimit) && cpuLimit > 0)) {
+      try {
+        sysCaps = await dockerApi.getSystemInfo();
+      } catch {}
+    }
     if (Number.isFinite(memLimit) && memLimit > 0) {
-      resArgs.push(
-        "--memory",
-        `${Math.floor(memLimit)}m`,
-        "--memory-swap",
-        `${Math.floor(memLimit * 2)}m`,
-      );
+      if (sysCaps?.MemoryLimit !== false) {
+        resArgs.push("--memory", `${Math.floor(memLimit)}m`);
+        if (sysCaps?.SwapLimit !== false) {
+          resArgs.push("--memory-swap", `${Math.floor(memLimit * 2)}m`);
+        }
+      }
     }
     if (Number.isFinite(cpuLimit) && cpuLimit > 0) {
-      resArgs.push("--cpus", String(cpuLimit));
+      if (sysCaps?.CpuCfsQuota !== false) {
+        resArgs.push("--cpus", String(cpuLimit));
+      } else if (sysCaps?.CPUShares === true) {
+        resArgs.push("--cpu-shares", String(Math.max(2, Math.round(cpuLimit * 1024))));
+      } else {
+        publish(deploymentId, {
+          ts: Date.now(),
+          stream: "system",
+          text: "[docker] Host kernel lacks CPU CFS cgroup support; deploying without --cpus quota",
+        });
+      }
     }
 
     // Step 1: Launch green container (old container still serves traffic)

@@ -4,6 +4,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { isSafeImageRef, corsHeadersFor } from "./security.mjs";
+import { analyzeImageDependenciesLive } from "./dependency-analyzer.mjs";
 
 const execFileAsync = promisify(execFile);
 /** Runs a docker CLI command without a shell and without blocking the event loop. */
@@ -1452,6 +1453,37 @@ export function createCatalogApi({ db, HOME, readBody }) {
           detectedPort: 3000,
         });
       }
+    }
+
+    // Analyze Pre-Deploy Dependencies (OCI + Docker Hub README + GitHub Compose/.env.example + Presets)
+    if (p === "/api/catalog/analyze-dependencies" && req.method === "POST") {
+      let body = {};
+      try {
+        body = await readBody(req);
+      } catch {}
+
+      const rawImage = body.image?.trim();
+      if (!rawImage) {
+        return sendJson(400, { error: "image is required" });
+      }
+      if (!isSafeImageRef(rawImage)) {
+        return sendJson(400, { error: "invalid Docker image reference" });
+      }
+
+      const analysis = await analyzeImageDependenciesLive(
+        {
+          image: rawImage,
+          appName: body.name || body.slug || "",
+          sourceUrl: body.sourceUrl || "",
+          website: body.website || "",
+          presetEnv: body.presetEnv && typeof body.presetEnv === "object" ? body.presetEnv : {},
+          presetPort: body.presetPort ? Number(body.presetPort) : undefined,
+          imageVerified: body.imageVerified !== false,
+        },
+        { dockerCli },
+      );
+
+      return sendJson(200, analysis);
     }
 
     // Multi-category Docker Hub search — aggregates all categories, deduplicates, returns paginated

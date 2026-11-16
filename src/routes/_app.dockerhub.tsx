@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useDeferredValue, useEffect, useRef } from "react";
 import {
   Search,
@@ -28,6 +28,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useEngine } from "@/lib/engine";
+import { PreDeployModal, PreDeployTarget } from "@/components/hx/pre-deploy-modal";
 
 /** Mirrors the engine's check (security.mjs `isSafeImageRef`) so bad input fails fast in the UI. */
 function isValidImageRef(ref: string): boolean {
@@ -326,10 +327,8 @@ function ContainerRegistryExplorerPage() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
-  // Deploy Dialog State
-  const [deployModalImage, setDeployModalImage] = useState<string | null>(null);
-  const [deployProjectName, setDeployProjectName] = useState("");
-  const [deployPort, setDeployPort] = useState(8080);
+  // Pre-Deploy Dependency Configuration Modal State
+  const [preDeployTarget, setPreDeployTarget] = useState<PreDeployTarget | null>(null);
 
   // Infinite Query for Stream / Infinite Scroll mode
   const infiniteQuery = useInfiniteQuery<SearchResponse>({
@@ -466,51 +465,25 @@ function ContainerRegistryExplorerPage() {
     enabled: !!selectedRepoForTags,
   });
 
-  // Deploy Mutation
-  const deployMutation = useMutation({
-    mutationFn: async ({ name, image, port }: { name: string; image: string; port: number }) => {
-      const cleanProjName = name
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]/g, "-");
-      // 1. Create project
-      await engine.call("POST", "/api/projects", {
-        name: cleanProjName,
-        source: image,
-        target: "docker",
-        port,
-      });
-      // 2. Trigger deployment
-      return engine.call("POST", `/api/projects/${encodeURIComponent(cleanProjName)}/deploy`, {
-        trigger: "container-explorer",
-      });
-    },
-    onSuccess: (_, vars) => {
-      const cleanProjName = vars.name
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]/g, "-");
-      toast.success(`Launched container project "${cleanProjName}" with image "${vars.image}"!`);
-      setDeployModalImage(null);
-      qc.invalidateQueries({ queryKey: ["projects"] });
-      qc.invalidateQueries({ queryKey: ["engine-projects"] });
-      nav({ to: `/p/${cleanProjName}` });
-    },
-    onError: (err: any) => {
-      toast.error(`Deploy failed: ${err.message}`);
-    },
-  });
-
-  const handleOpenDeploy = (imageTag: string, defaultPort: number = 8080) => {
-    setDeployModalImage(imageTag);
+  const handleOpenDeploy = (
+    imageTag: string,
+    defaultPort: number = 8080,
+    opts?: { name?: string; sourceUrl?: string },
+  ) => {
     const baseSlug = imageTag
       .split(":")[0]
       .split("/")
       .pop()!
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, "-");
-    setDeployProjectName(baseSlug);
-    setDeployPort(defaultPort);
+    setPreDeployTarget({
+      image: imageTag,
+      name: opts?.name || baseSlug,
+      slug: baseSlug,
+      port: defaultPort,
+      sourceUrl: opts?.sourceUrl || "",
+      trigger: "container-explorer",
+    });
   };
 
   const handleRegistrySwitch = (reg: "dockerhub" | "ghcr") => {
@@ -1008,7 +981,16 @@ function ContainerRegistryExplorerPage() {
                     </button>
 
                     <button
-                      onClick={() => handleOpenDeploy(fullImageUri, r.defaultPort || 8080)}
+                      onClick={() =>
+                        handleOpenDeploy(fullImageUri, r.defaultPort || 8080, {
+                          name: r.name || targetRepo,
+                          sourceUrl:
+                            r.ghcrUrl ||
+                            (activeRegistry === "ghcr"
+                              ? `https://github.com/${targetRepo}`
+                              : undefined),
+                        })
+                      }
                       className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-primary text-primary-foreground shadow-sm hover:opacity-90 transition-opacity"
                     >
                       <Plus className="h-3.5 w-3.5" />
@@ -1066,7 +1048,16 @@ function ContainerRegistryExplorerPage() {
                               </div>
 
                               <button
-                                onClick={() => handleOpenDeploy(t.tag, r.defaultPort || 8080)}
+                                onClick={() =>
+                                  handleOpenDeploy(t.tag, r.defaultPort || 8080, {
+                                    name: r.name || targetRepo,
+                                    sourceUrl:
+                                      r.ghcrUrl ||
+                                      (activeRegistry === "ghcr"
+                                        ? `https://github.com/${targetRepo}`
+                                        : undefined),
+                                  })
+                                }
                                 className="ml-2 px-2 py-1 rounded bg-primary/15 hover:bg-primary hover:text-primary-foreground text-primary text-[11px] font-semibold transition-colors shrink-0"
                               >
                                 Run
@@ -1161,82 +1152,17 @@ function ContainerRegistryExplorerPage() {
         )}
       </div>
 
-      {/* Deploy Modal Dialog */}
-      {deployModalImage && (
-        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl space-y-5 animate-in zoom-in-95 duration-150">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-lg font-semibold tracking-tight">Deploy Container Image</h3>
-                <p className="text-xs text-muted-foreground mt-0.5 font-mono">
-                  Target: {deployModalImage}
-                </p>
-              </div>
-              <button
-                onClick={() => setDeployModalImage(null)}
-                className="text-muted-foreground hover:text-foreground text-sm font-mono p-1 rounded-md hover:bg-surface"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">
-                  Project Name
-                </label>
-                <input
-                  type="text"
-                  value={deployProjectName}
-                  onChange={(e) => setDeployProjectName(e.target.value)}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-surface font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">
-                  Container Port
-                </label>
-                <input
-                  type="number"
-                  value={deployPort}
-                  onChange={(e) => setDeployPort(Number(e.target.value))}
-                  className="w-full px-3 py-2 text-sm rounded-lg border border-input bg-surface font-mono"
-                />
-                <p className="text-[11px] text-muted-foreground mt-1">
-                  HosteraX will automatically map this to a verified free host port and configure
-                  your wildcard domain.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                onClick={() => setDeployModalImage(null)}
-                className="px-4 py-2 text-xs font-medium rounded-lg border border-border hover:bg-surface transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() =>
-                  deployMutation.mutate({
-                    name: deployProjectName,
-                    image: deployModalImage,
-                    port: deployPort,
-                  })
-                }
-                disabled={deployMutation.isPending || !deployProjectName.trim()}
-                className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity shadow-sm disabled:opacity-50"
-              >
-                {deployMutation.isPending && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
-                <span>
-                  {deployMutation.isPending ? "Launching Project..." : "Deploy Container"}
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Dependency-Aware Pre-Deploy Modal */}
+      <PreDeployModal
+        target={preDeployTarget}
+        onClose={() => setPreDeployTarget(null)}
+        onDeployed={(slug) => {
+          setPreDeployTarget(null);
+          qc.invalidateQueries({ queryKey: ["projects"] });
+          qc.invalidateQueries({ queryKey: ["engine-projects"] });
+          nav({ to: `/p/${slug}` });
+        }}
+      />
     </div>
   );
 }

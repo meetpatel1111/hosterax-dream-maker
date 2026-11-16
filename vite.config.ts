@@ -25,22 +25,21 @@ function hosteraxEnginePlugin() {
         next();
       });
 
-      // 1. Ensure Docker socket daemon is running for container simulation
+      // 1. Ensure real Docker daemon supervisor is running (fallback to fake-dockerd only if dockerd is absent)
       try {
         if (!fs.existsSync("/var/run/docker.sock")) {
-          const dproc = spawn(
-            process.execPath,
-            [
-              "./hosterax/engine/test/helpers/fake-dockerd.mjs",
-              "/var/run/docker.sock",
-              "/tmp/docker-daemon.log",
-              "/tmp/docker-daemon.ports",
-            ],
-            {
-              stdio: "ignore",
-              detached: true,
-            },
-          );
+          const hasRealDocker =
+            fs.existsSync("/usr/sbin/dockerd") || fs.existsSync("/usr/bin/dockerd");
+          const scriptPath = hasRealDocker
+            ? "./hosterax/engine/src/real-docker-supervisor.mjs"
+            : "./hosterax/engine/test/helpers/fake-dockerd.mjs";
+          const scriptArgs = hasRealDocker
+            ? []
+            : ["/var/run/docker.sock", "/tmp/docker-daemon.log", "/tmp/docker-daemon.ports"];
+          const dproc = spawn(process.execPath, [scriptPath, ...scriptArgs], {
+            stdio: "ignore",
+            detached: true,
+          });
           dproc.unref();
         }
       } catch {}

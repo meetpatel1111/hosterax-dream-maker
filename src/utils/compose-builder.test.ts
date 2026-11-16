@@ -6,6 +6,11 @@ import {
   validateComposeStack,
   detectDependencyGraph,
   detectServiceCategory,
+  extractMagicVariables,
+  resolveStackMagicVariables,
+  parseCpuLimit,
+  parseMemoryLimitMb,
+  buildStackDeploymentPlan,
   PRESET_STACKS,
   ComposeStack,
 } from "./compose-builder";
@@ -194,6 +199,66 @@ test("detectDependencyGraph correctly detects valid DAG vs circular dependencies
   const valRes = validateComposeStack(dagStack);
   assert.equal(valRes.valid, false);
   assert.ok(valRes.errors.some((e) => e.includes("Circular dependency")));
+});
+
+test("extractMagicVariables and resolveStackMagicVariables share secrets consistently across services", () => {
+  const stack = JSON.parse(JSON.stringify(PRESET_STACKS[0].stack)) as ComposeStack;
+  stack.services[1].publicDomain = "api.acme.dev";
+
+  const descriptors = extractMagicVariables(stack);
+  const names = descriptors.map((d) => d.name);
+  assert.ok(names.includes("SERVICE_PASSWORD_POSTGRES"));
+  assert.ok(names.includes("SERVICE_URL_API"));
+  assert.ok(names.includes("SERVICE_BASE64_64_JWT"));
+
+  let counter = 1;
+  const { resolvedStack, resolvedVars } = resolveStackMagicVariables(stack, {
+    randomHex: (bytes) => String(counter++).padStart(2, "0").repeat(bytes),
+  });
+
+  const apiSvc = resolvedStack.services.find((s) => s.name === "api")!;
+  const dbSvc = resolvedStack.services.find((s) => s.name === "db")!;
+  const webSvc = resolvedStack.services.find((s) => s.name === "web")!;
+
+  const dbPass = dbSvc.env.find((e) => e.key === "POSTGRES_PASSWORD")?.value;
+  const apiDbUrl = apiSvc.env.find((e) => e.key === "DATABASE_URL")?.value;
+  const webApiUrl = webSvc.env.find((e) => e.key === "VITE_API_URL")?.value;
+
+  assert.equal(dbPass, resolvedVars.SERVICE_PASSWORD_POSTGRES);
+  assert.ok(apiDbUrl?.includes(`postgres:${dbPass}@db:5432/app`));
+  assert.equal(webApiUrl, "https://api.acme.dev");
+});
+
+test("buildStackDeploymentPlan orders dependencies first, parses resource quotas, and skips .localhost domains", () => {
+  const stack = JSON.parse(JSON.stringify(PRESET_STACKS[0].stack)) as ComposeStack;
+  stack.services[0].publicDomain = "app.acme.dev";
+  stack.services[1].publicDomain = "api.localhost";
+  stack.services[1].cpuLimit = "1.5";
+  stack.services[1].memoryLimit = "1G";
+
+  const { plan } = buildStackDeploymentPlan(stack, {
+    overrides: { SERVICE_PASSWORD_POSTGRES: "pgsecret99" },
+  });
+
+  const dbIdx = plan.findIndex((p) => p.serviceName === "db");
+  const apiIdx = plan.findIndex((p) => p.serviceName === "api");
+  const webIdx = plan.findIndex((p) => p.serviceName === "web");
+  assert.ok(dbIdx < apiIdx);
+  assert.ok(apiIdx < webIdx);
+
+  const apiPlan = plan[apiIdx];
+  assert.equal(apiPlan.cpuLimit, 1.5);
+  assert.equal(apiPlan.memoryMbLimit, 1024);
+  assert.equal(apiPlan.customDomainToBind, undefined);
+  assert.equal(apiPlan.env.DATABASE_URL, "postgres://postgres:pgsecret99@db:5432/app");
+
+  const webPlan = plan[webIdx];
+  assert.equal(webPlan.customDomainToBind, "app.acme.dev");
+
+  assert.equal(parseCpuLimit("0.5"), 0.5);
+  assert.equal(parseCpuLimit(""), null);
+  assert.equal(parseMemoryLimitMb("512m"), 512);
+  assert.equal(parseMemoryLimitMb("2Gi"), 2048);
 });
 
 test("all PRESET_STACKS validate without errors", () => {

@@ -107,6 +107,7 @@ function ContainersFleetPage() {
           { signal },
         );
       } catch (err: any) {
+        if (signal?.aborted || err?.name === "AbortError") throw err;
         toast.error(`Containers error: ${err.message}`);
         return [];
       }
@@ -449,7 +450,11 @@ function ContainersFleetPage() {
                           </Link>
                         ) : isSys ? (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
-                            Core Edge
+                            {name.startsWith("hx_db_")
+                              ? "Managed DB"
+                              : name.startsWith("hx_pr_")
+                                ? "PR Preview"
+                                : "Core Edge"}
                           </span>
                         ) : (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-medium bg-zinc-500/10 text-zinc-400 border border-zinc-500/20">

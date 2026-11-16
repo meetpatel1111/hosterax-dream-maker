@@ -49,8 +49,30 @@ import {
   Sparkles,
   Server,
   Box,
+  Code2,
+  Download,
+  Database,
+  Eye,
+  EyeOff,
+  HardDrive,
+  Lock,
+  RefreshCw,
+  Star,
+  Table2,
+  X,
 } from "lucide-react";
 import { SelfHealingPanel } from "@/components/hx/self-healing-panel";
+import { parseDotEnvText, formatDotEnvText } from "@/utils/env-parser";
+import { sanitizeDatabaseName, type ManagedDbEngine } from "@/utils/dependency-analyzer";
+import {
+  DB_ENGINE_SPECS,
+  DB_STORAGE_OPTIONS_MB,
+  buildInternalHostHint,
+  formatDbStorageLabel,
+  normalizeManualDbName,
+  resolveDbEnvUpserts,
+  summarizeDomainStatus,
+} from "@/utils/project-db";
 
 export const Route = createFileRoute("/_app/p/$slug")({
   head: ({ params }) => ({
@@ -373,7 +395,14 @@ function ProjectPage() {
       {tab === "domains" && (
         <ProjectDomains projectId={project.id} projectName={project.name} project={project} />
       )}
-      {tab === "databases" && <DatabasesTab projectId={project.id} projectName={project.name} />}
+      {tab === "databases" && (
+        <DatabasesTab
+          projectId={project.id}
+          projectName={project.name}
+          project={project}
+          environment={environment}
+        />
+      )}
       {tab === "settings" && (
         <Settings project={project} onDelete={() => setDeleteModalOpen(true)} />
       )}
@@ -839,6 +868,30 @@ function EnvVars({
   const [key, setKey] = useState("");
   const [value, setValue] = useState("");
   const [secret, setSecret] = useState(true);
+  const [devMode, setDevMode] = useState(false);
+  const [bulkText, setBulkText] = useState("");
+  const [savingBulk, setSavingBulk] = useState(false);
+
+  const parsedBulk = useMemo(() => parseDotEnvText(bulkText), [bulkText]);
+
+  function openDeveloperView() {
+    setBulkText(formatDotEnvText(vars, { includeSecretPlaceholders: true }));
+    setDevMode(true);
+  }
+
+  function downloadDotEnv() {
+    const content = devMode
+      ? bulkText
+      : formatDotEnvText(vars, { includeSecretPlaceholders: true });
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${projectName}.${environment}.env`;
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Downloaded ${projectName}.${environment}.env`);
+  }
 
   async function save(body: { upserts?: unknown[]; deletes?: string[] }, okMsg: string) {
     try {
@@ -860,6 +913,29 @@ function EnvVars({
     );
     setKey("");
     setValue("");
+  }
+
+  async function saveBulkDotEnv() {
+    if (parsedBulk.entries.length === 0) {
+      toast.error("No valid KEY=VALUE pairs found to save");
+      return;
+    }
+    setSavingBulk(true);
+    try {
+      const existingByKey = new Map(vars.map((v) => [v.key, v]));
+      const upserts = parsedBulk.entries.map((entry) => ({
+        key: entry.key,
+        value: entry.value,
+        isSecret: Boolean(existingByKey.get(entry.key)?.isSecret || entry.inferredSecret),
+      }));
+      await save(
+        { upserts },
+        `Saved ${upserts.length} variable(s) to ${environment} — redeploy for changes to take effect`,
+      );
+      setDevMode(false);
+    } finally {
+      setSavingBulk(false);
+    }
   }
 
   return (
@@ -907,82 +983,199 @@ function EnvVars({
           {drift.reason}
         </div>
       ) : null}
-      <div className="rounded-lg border border-border bg-card p-4">
-        <div className="mb-3 text-sm font-medium">Add variable</div>
-        <div className="flex flex-wrap gap-2">
-          <input
-            value={key}
-            onChange={(e) => setKey(e.target.value.replace(/[^A-Za-z0-9_.-]/g, ""))}
-            placeholder="KEY"
-            className="flex-1 min-w-[160px] rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
-          />
-          <input
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="value"
-            className="flex-[2] min-w-[200px] rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
-          />
-          <label className="flex items-center gap-2 rounded-md border border-border px-3 text-xs">
-            <input type="checkbox" checked={secret} onChange={(e) => setSecret(e.target.checked)} />{" "}
-            Secret
-          </label>
+
+      {/* Mode Switcher Bar: Normal View vs Developer .env View */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="inline-flex items-center rounded-lg border border-border bg-surface p-1">
           <button
-            onClick={add}
-            className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:opacity-90"
+            type="button"
+            onClick={() => setDevMode(false)}
+            className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+              !devMode
+                ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
           >
-            <Plus className="h-4 w-4" /> Add
+            List View ({vars.length})
+          </button>
+          <button
+            type="button"
+            onClick={openDeveloperView}
+            className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md transition-all ${
+              devMode
+                ? "bg-primary text-primary-foreground font-semibold shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <Code2 className="h-3.5 w-3.5" />
+            <span>Developer .env View</span>
           </button>
         </div>
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-          <span>
-            Secret values are hidden after saving and can only be overwritten, not read back.
-          </span>
-          <Link to="/vault" className="text-primary hover:underline font-medium">
-            Sync shared secret groups from Secrets Vault →
-          </Link>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              const txt = devMode
+                ? bulkText
+                : formatDotEnvText(vars, { includeSecretPlaceholders: true });
+              navigator.clipboard.writeText(txt);
+              toast.success("Copied .env to clipboard");
+            }}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium hover:bg-accent transition-colors"
+          >
+            <Copy className="h-3.5 w-3.5" />
+            <span>Copy .env</span>
+          </button>
+          <button
+            type="button"
+            onClick={downloadDotEnv}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1.5 text-xs font-medium hover:bg-accent transition-colors"
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span>Download .env</span>
+          </button>
         </div>
       </div>
-      <div className="rounded-lg border border-border bg-card">
-        {vars.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            No variables. Add API keys, connection strings, or configuration variables.
+
+      {devMode ? (
+        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-medium">Bulk .env Editor ({environment})</div>
+              <p className="text-xs text-muted-foreground">
+                Paste standard <span className="font-mono">KEY=VALUE</span> lines. Commented secrets
+                are preserved unless overwritten with a new line.
+              </p>
+            </div>
+            <span className="text-xs font-mono text-muted-foreground">
+              {parsedBulk.entries.length} valid key(s) detected
+            </span>
           </div>
-        ) : (
-          <div className="divide-y divide-border">
-            {vars.map((v) => (
-              <div key={v.key} className="flex items-center gap-3 p-3 font-mono text-sm">
-                <span className="w-56 truncate text-primary font-semibold">{v.key}</span>
-                <span className="flex-1 truncate text-muted-foreground">
-                  {v.isSecret ? "•••••••• (secret)" : v.value}
-                </span>
-                {!v.isSecret && (
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(v.value);
-                      toast.success("Copied");
-                    }}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                <button
-                  onClick={() => save({ deletes: [v.key] }, `${v.key} removed`)}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+
+          <textarea
+            aria-label="Bulk .env editor"
+            value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)}
+            rows={12}
+            spellCheck={false}
+            placeholder={"DATABASE_URL=postgres://...\nAPI_KEY=your_secret_key\nPORT=3000"}
+            className="w-full rounded-md border border-input bg-[#0d1117] p-3 font-mono text-xs text-foreground outline-none focus:border-primary leading-relaxed"
+          />
+
+          {parsedBulk.errors.length > 0 && (
+            <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+              {parsedBulk.errors.slice(0, 3).join(" ")}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setDevMode(false)}
+              className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-accent"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveBulkDotEnv()}
+              disabled={savingBulk || parsedBulk.entries.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50"
+            >
+              <Check className="h-3.5 w-3.5" />
+              <span>
+                {savingBulk ? "Saving..." : `Save Bulk .env (${parsedBulk.entries.length})`}
+              </span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="mb-3 text-sm font-medium">Add variable</div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                value={key}
+                onChange={(e) => setKey(e.target.value.replace(/[^A-Za-z0-9_.-]/g, ""))}
+                placeholder="KEY"
+                className="flex-1 min-w-[160px] rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
+              />
+              <input
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder="value"
+                className="flex-[2] min-w-[200px] rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
+              />
+              <label className="flex items-center gap-2 rounded-md border border-border px-3 text-xs">
+                <input
+                  type="checkbox"
+                  checked={secret}
+                  onChange={(e) => setSecret(e.target.checked)}
+                />{" "}
+                Secret
+              </label>
+              <button
+                onClick={add}
+                className="inline-flex items-center gap-1 rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground hover:opacity-90"
+              >
+                <Plus className="h-4 w-4" /> Add
+              </button>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+              <span>
+                Secret values are hidden after saving and can only be overwritten, not read back.
+              </span>
+              <Link to="/vault" className="text-primary hover:underline font-medium">
+                Sync shared secret groups from Secrets Vault →
+              </Link>
+            </div>
+          </div>
+          <div className="rounded-lg border border-border bg-card">
+            {vars.length === 0 ? (
+              <div className="p-8 text-center text-sm text-muted-foreground">
+                No variables. Add API keys, connection strings, or switch to Developer .env View to
+                paste a file.
               </div>
-            ))}
+            ) : (
+              <div className="divide-y divide-border">
+                {vars.map((v) => (
+                  <div key={v.key} className="flex items-center gap-3 p-3 font-mono text-sm">
+                    <span className="w-56 truncate text-primary font-semibold">{v.key}</span>
+                    <span className="flex-1 truncate text-muted-foreground">
+                      {v.isSecret ? "•••••••• (secret)" : v.value}
+                    </span>
+                    {!v.isSecret && (
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(v.value);
+                          toast.success("Copied");
+                        }}
+                        aria-label={`Copy ${v.key}`}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => save({ deletes: [v.key] }, `${v.key} removed`)}
+                      aria-label={`Delete ${v.key}`}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 }
 
 function ProjectDomains({
-  projectId,
   projectName,
   project,
 }: {
@@ -995,6 +1188,7 @@ function ProjectDomains({
   const { data: netInfo } = useNetworkInterfaces();
   const [domainInput, setDomainInput] = useState("");
   const [adding, setAdding] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
 
   const { data: domains = [] } = useQuery({
     queryKey: ["project-domains", projectName, engine.url],
@@ -1011,16 +1205,25 @@ function ProjectDomains({
     refetchInterval: 3000,
   });
 
+  function refreshDomains() {
+    qc.invalidateQueries({ queryKey: ["project-domains"] });
+    qc.invalidateQueries({ queryKey: ["all-domains"] });
+  }
+
   async function addDomain() {
-    if (!domainInput.trim()) return;
+    const clean = domainInput.trim().toLowerCase();
+    if (!clean) return;
     setAdding(true);
     try {
-      await engine.call("POST", `/api/projects/${projectName}/domains`, {
-        hostname: domainInput.trim().toLowerCase(),
-      });
-      toast.success(`Domain ${domainInput.trim()} saved to database`);
+      await engine.call(
+        "POST",
+        `/api/projects/${encodeURIComponent(projectName)}/domains`,
+        { hostname: clean },
+        { suppressStatuses: [400, 404, 409, 500] },
+      );
+      toast.success(`Domain ${clean} registered and synced to Edge Gateway`);
       setDomainInput("");
-      qc.invalidateQueries({ queryKey: ["project-domains"] });
+      refreshDomains();
     } catch (e: any) {
       toast.error(e.message || "Failed to add domain");
     } finally {
@@ -1028,18 +1231,102 @@ function ProjectDomains({
     }
   }
 
-  async function removeDomain(domainId: string) {
+  async function verifyDomain(domain: any) {
+    setBusyAction(`verify:${domain.id}`);
+    try {
+      const res = await engine.call<any>(
+        "POST",
+        `/api/domains/${encodeURIComponent(domain.id)}/verify`,
+        undefined,
+        { suppressStatuses: [400, 404, 500] },
+      );
+      if (res?.verified) {
+        toast.success(res.message || `${domain.hostname} verified via DNS`);
+      } else {
+        toast.warning(res?.message || `DNS TXT record not yet visible for ${domain.hostname}`);
+      }
+      refreshDomains();
+    } catch (e: any) {
+      toast.error(e.message || "DNS verification failed");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function provisionSsl(domain: any) {
+    if (!domain.verified) {
+      toast.error("Verify domain ownership before provisioning SSL");
+      return;
+    }
+    setBusyAction(`ssl:${domain.id}`);
+    try {
+      await engine.call("POST", `/api/domains/${encodeURIComponent(domain.id)}/ssl`, undefined, {
+        suppressStatuses: [400, 404, 500],
+      });
+      toast.success(`TLS certificate active for ${domain.hostname}`);
+      refreshDomains();
+    } catch (e: any) {
+      toast.error(e.message || "SSL provisioning failed");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function setPrimaryDomain(domain: any) {
+    setBusyAction(`primary:${domain.id}`);
+    try {
+      await engine.call(
+        "POST",
+        `/api/domains/${encodeURIComponent(domain.id)}/primary`,
+        undefined,
+        { suppressStatuses: [400, 404, 500] },
+      );
+      toast.success(`${domain.hostname} set as primary domain`);
+      refreshDomains();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to set primary domain");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function toggleForceHttps(domain: any, currentForceHttps: boolean, hstsEnabled: boolean) {
+    setBusyAction(`https:${domain.id}`);
+    try {
+      await engine.call(
+        "POST",
+        `/api/domains/${encodeURIComponent(domain.id)}/security`,
+        {
+          force_https: !currentForceHttps,
+          hsts_enabled: hstsEnabled,
+        },
+        { suppressStatuses: [400, 404, 500] },
+      );
+      toast.success(
+        !currentForceHttps
+          ? `Force HTTPS enabled for ${domain.hostname}`
+          : `Force HTTPS disabled for ${domain.hostname}`,
+      );
+      refreshDomains();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to update HTTPS policy");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function removeDomain(domain: any) {
     const ok = await confirmAction({
       title: "Remove Custom Domain",
-      description: "Remove this domain from the project routing configuration?",
+      description: `Remove ${domain.hostname} from the project routing configuration?`,
       confirmLabel: "Remove Domain",
       variant: "destructive",
     });
     if (!ok) return;
     try {
-      await engine.call("DELETE", `/api/domains/${domainId}`);
-      toast.success("Domain removed from database");
-      qc.invalidateQueries({ queryKey: ["project-domains"] });
+      await engine.call("DELETE", `/api/domains/${encodeURIComponent(domain.id)}`);
+      toast.success(`Removed ${domain.hostname}`);
+      refreshDomains();
     } catch (e: any) {
       toast.error(e.message || "Failed to delete domain");
     }
@@ -1057,9 +1344,6 @@ function ProjectDomains({
             <div className="font-semibold text-sm flex items-center gap-2">
               <Wifi className="h-4 w-4 text-emerald-400" />
               <span>Local Network (Wi-Fi / LAN) Access</span>
-              <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-emerald-950/60 border border-emerald-800/60 text-emerald-400 rounded-full">
-                Auto-Discovered
-              </span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               Access and test this project on smartphones, tablets, or other computers connected to
@@ -1085,10 +1369,12 @@ function ProjectDomains({
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
+                      type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(url);
                         toast.success("LAN URL copied to clipboard");
                       }}
+                      aria-label={`Copy LAN URL ${url}`}
                       className="p-1.5 hover:bg-surface-2 rounded text-muted-foreground hover:text-foreground transition-colors"
                       title="Copy LAN URL"
                     >
@@ -1098,6 +1384,7 @@ function ProjectDomains({
                       href={url}
                       target="_blank"
                       rel="noreferrer"
+                      aria-label={`Open LAN URL ${url}`}
                       className="p-1.5 hover:bg-surface-2 rounded text-muted-foreground hover:text-foreground transition-colors"
                       title="Open in new tab"
                     >
@@ -1117,25 +1404,39 @@ function ProjectDomains({
 
       {/* Custom Domains */}
       <div className="rounded-xl border border-border bg-card p-6 space-y-4">
-        <div>
-          <div className="font-semibold text-sm">Custom Domains</div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Connect production or preview custom domains to this project.
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-semibold text-sm">Custom Domains</div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Connect production or preview custom domains, verify DNS ownership, and provision TLS
+              certificates.
+            </p>
+          </div>
+          <Link to="/domains" className="text-xs text-primary hover:underline">
+            Global SSL &amp; Edge Middlewares →
+          </Link>
         </div>
         <div className="flex gap-2">
           <input
+            aria-label="Custom domain hostname"
             value={domainInput}
             onChange={(e) => setDomainInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void addDomain();
+              }
+            }}
             placeholder="app.example.com or custom.127-0-0-1.sslip.io"
             className="flex-1 rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
           />
           <button
-            onClick={addDomain}
+            type="button"
+            onClick={() => void addDomain()}
             disabled={adding}
             className="inline-flex items-center gap-1 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
           >
-            <Plus className="h-4 w-4" /> Add Domain
+            <Plus className="h-4 w-4" /> {adding ? "Adding..." : "Add Domain"}
           </button>
         </div>
 
@@ -1145,31 +1446,122 @@ function ProjectDomains({
               No custom domains added yet. Your default wildcard DNS endpoint is active.
             </div>
           ) : (
-            domains.map((d: any) => (
-              <div
-                key={d.id || d.hostname}
-                className="flex items-center justify-between py-3 font-mono text-xs"
-              >
-                <div className="flex items-center gap-2">
-                  <Globe className="h-3.5 w-3.5 text-primary" />
-                  <span className="font-medium text-foreground">{d.hostname}</span>
-                  {d.is_primary && (
-                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                      primary
-                    </span>
+            domains.map((d: any) => {
+              const summary = summarizeDomainStatus(d);
+              return (
+                <div key={d.id || d.hostname} className="py-3.5 space-y-2 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2 font-mono">
+                      <Globe className="h-3.5 w-3.5 text-primary shrink-0" />
+                      <span className="font-medium text-foreground">{d.hostname}</span>
+                      {summary.isPrimary && (
+                        <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-sans font-semibold text-primary">
+                          Primary
+                        </span>
+                      )}
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-sans font-medium ${
+                          summary.verified
+                            ? "bg-emerald-500/15 text-emerald-400"
+                            : "bg-amber-500/15 text-amber-300"
+                        }`}
+                      >
+                        {summary.verified ? "DNS Verified" : "Pending DNS"}
+                      </span>
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[10px] font-sans font-medium ${
+                          summary.sslStatus === "active"
+                            ? "bg-emerald-500/15 text-emerald-400"
+                            : "bg-muted text-muted-foreground"
+                        }`}
+                      >
+                        SSL: {summary.sslStatus}
+                      </span>
+                      {summary.forceHttps && (
+                        <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-sans text-sky-400">
+                          HTTPS Enforced
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => void verifyDomain(d)}
+                        disabled={busyAction === `verify:${d.id}`}
+                        className="inline-flex items-center gap-1 rounded border border-border bg-surface px-2.5 py-1 text-[11px] font-medium hover:bg-accent disabled:opacity-50"
+                      >
+                        <RefreshCw
+                          className={`h-3 w-3 ${busyAction === `verify:${d.id}` ? "animate-spin" : ""}`}
+                        />
+                        Verify DNS
+                      </button>
+                      {summary.canProvisionSsl && (
+                        <button
+                          type="button"
+                          onClick={() => void provisionSsl(d)}
+                          disabled={busyAction === `ssl:${d.id}`}
+                          className="inline-flex items-center gap-1 rounded border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                        >
+                          <ShieldCheck className="h-3 w-3" />
+                          {busyAction === `ssl:${d.id}` ? "Provisioning..." : "Provision SSL"}
+                        </button>
+                      )}
+                      {!summary.isPrimary && (
+                        <button
+                          type="button"
+                          onClick={() => void setPrimaryDomain(d)}
+                          disabled={busyAction === `primary:${d.id}`}
+                          className="inline-flex items-center gap-1 rounded border border-border bg-surface px-2.5 py-1 text-[11px] font-medium hover:bg-accent disabled:opacity-50"
+                        >
+                          <Star className="h-3 w-3" />
+                          Set Primary
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void toggleForceHttps(d, summary.forceHttps, summary.hstsEnabled)
+                        }
+                        disabled={busyAction === `https:${d.id}`}
+                        className="inline-flex items-center gap-1 rounded border border-border bg-surface px-2.5 py-1 text-[11px] font-medium hover:bg-accent disabled:opacity-50"
+                        title="Toggle automatic HTTP -> HTTPS redirect"
+                      >
+                        <Lock className="h-3 w-3" />
+                        {summary.forceHttps ? "HTTPS On" : "HTTPS Off"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void removeDomain(d)}
+                        aria-label={`Remove ${d.hostname}`}
+                        className="rounded p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {!summary.verified && d.challenge_token && (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-background/60 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                      <span className="truncate">
+                        TXT <strong className="text-foreground">_hosterax-challenge</strong> ={" "}
+                        <span className="text-primary">{d.challenge_token}</span>
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(d.challenge_token);
+                          toast.success("DNS challenge token copied");
+                        }}
+                        className="inline-flex items-center gap-1 text-foreground hover:text-primary font-sans"
+                      >
+                        <Copy className="h-3 w-3" /> Copy Token
+                      </button>
+                    </div>
                   )}
-                  <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    {d.ssl_status || "edge-ready"}
-                  </span>
                 </div>
-                <button
-                  onClick={() => removeDomain(d.id)}
-                  className="text-muted-foreground hover:text-destructive transition-colors"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -1177,9 +1569,42 @@ function ProjectDomains({
   );
 }
 
-function DatabasesTab({ projectId, projectName }: { projectId: string; projectName: string }) {
+interface ProvisionedCredentialNote {
+  id: string;
+  name: string;
+  engine: ManagedDbEngine;
+  port?: number;
+  connectionString: string;
+  internalConnectionString: string;
+  injectedKeys: string[];
+}
+
+function DatabasesTab({
+  projectName,
+  project,
+  environment,
+}: {
+  projectId: string;
+  projectName: string;
+  project?: any;
+  environment: "production" | "preview" | "development";
+}) {
   const engine = useEngine();
   const qc = useQueryClient();
+
+  const [provisionOpen, setProvisionOpen] = useState(false);
+  const [selectedEngine, setSelectedEngine] = useState<ManagedDbEngine>("postgres");
+  const [dbNameInput, setDbNameInput] = useState(() =>
+    sanitizeDatabaseName(projectName, "postgres"),
+  );
+  const [nameEditedManually, setNameEditedManually] = useState(false);
+  const [storageMb, setStorageMb] = useState<number>(1024);
+  const [autoWireEnv, setAutoWireEnv] = useState(true);
+  const [provisioning, setProvisioning] = useState(false);
+  const [backingUpId, setBackingUpId] = useState<string | null>(null);
+  const [sessionCreds, setSessionCreds] = useState<Record<string, ProvisionedCredentialNote>>({});
+  const [revealedIds, setRevealedIds] = useState<Record<string, boolean>>({});
+
   const databasesQuery = useQuery({
     queryKey: ["dbs", projectName, engine.url, engine.token],
     queryFn: ({ signal }) =>
@@ -1194,34 +1619,160 @@ function DatabasesTab({ projectId, projectName }: { projectId: string; projectNa
   });
   const dbs = databasesQuery.data || [];
 
-  async function provision(engineType: string) {
-    const name = prompt(`Name for ${engineType} instance?`, `${engineType}-main`);
-    if (!name) return;
-    try {
-      await engine.call("POST", `/api/projects/${projectName}/databases`, {
-        name,
-        engine: engineType,
-        size_mb: 1024,
-      });
-      qc.invalidateQueries({ queryKey: ["dbs", projectName] });
-      toast.success(`${engineType} database provisioning started in SQLite engine`);
-    } catch (e: any) {
-      toast.error(e.message || "Failed to provision database");
+  const normalizedDbName = useMemo(
+    () => normalizeManualDbName(dbNameInput, selectedEngine),
+    [dbNameInput, selectedEngine],
+  );
+
+  function openProvisionModal(engineType: ManagedDbEngine) {
+    setSelectedEngine(engineType);
+    setDbNameInput(sanitizeDatabaseName(projectName, engineType));
+    setNameEditedManually(false);
+    setStorageMb(1024);
+    setAutoWireEnv(true);
+    setProvisionOpen(true);
+  }
+
+  function handleEngineChange(nextEngine: ManagedDbEngine) {
+    setSelectedEngine(nextEngine);
+    if (!nameEditedManually) {
+      setDbNameInput(sanitizeDatabaseName(projectName, nextEngine));
     }
   }
 
-  async function del(id: string) {
+  useEffect(() => {
+    if (!provisionOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !provisioning) setProvisionOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [provisionOpen, provisioning]);
+
+  async function submitProvision(e: React.FormEvent) {
+    e.preventDefault();
+    const targetName = normalizeManualDbName(dbNameInput, selectedEngine);
+    setProvisioning(true);
+    try {
+      const created = await engine.call<{
+        ok: boolean;
+        id: string;
+        name: string;
+        engine: string;
+        port?: number;
+        connection_string?: string;
+        internal_connection_string?: string;
+      }>(
+        "POST",
+        `/api/projects/${encodeURIComponent(projectName)}/databases`,
+        {
+          name: targetName,
+          engine: selectedEngine,
+          size_mb: storageMb,
+        },
+        { suppressStatuses: [400, 404, 409, 500, 503] },
+      );
+
+      let injectedKeys: string[] = [];
+      const internalUri = created.internal_connection_string || created.connection_string || "";
+      if (autoWireEnv && internalUri) {
+        try {
+          const existingEnv = await engine
+            .call<Array<{ key: string }>>(
+              "GET",
+              `/api/projects/${encodeURIComponent(projectName)}/env?environment=${encodeURIComponent(environment)}`,
+            )
+            .catch(() => []);
+          const resolved = resolveDbEnvUpserts({
+            engine: selectedEngine,
+            internalConnectionString: internalUri,
+            existingKeys: (existingEnv || []).map((item) => item.key),
+            projectImage: project?.repo_url || "",
+          });
+          if (resolved.upserts.length > 0) {
+            await engine.call("PATCH", `/api/projects/${encodeURIComponent(projectName)}/env`, {
+              upserts: resolved.upserts,
+              environment,
+            });
+            injectedKeys = resolved.keys;
+            qc.invalidateQueries({ queryKey: ["envs"] });
+            qc.invalidateQueries({ queryKey: ["env-drift", projectName, environment] });
+          }
+        } catch (wireErr: any) {
+          toast.warning(
+            `Database created, but automatic env injection failed: ${wireErr?.message || "unknown error"}`,
+          );
+        }
+      }
+
+      if (created.id && (created.connection_string || created.internal_connection_string)) {
+        setSessionCreds((prev) => ({
+          ...prev,
+          [created.id]: {
+            id: created.id,
+            name: created.name || targetName,
+            engine: selectedEngine,
+            port: created.port,
+            connectionString: created.connection_string || internalUri,
+            internalConnectionString: created.internal_connection_string || internalUri,
+            injectedKeys,
+          },
+        }));
+      }
+
+      qc.invalidateQueries({ queryKey: ["dbs", projectName] });
+      qc.invalidateQueries({ queryKey: ["databases"] });
+      toast.success(
+        injectedKeys.length > 0
+          ? `${created.name || targetName} provisioned and wired to ${injectedKeys.join(", ")} (${environment})`
+          : `${created.name || targetName} provisioned`,
+      );
+      setProvisionOpen(false);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to provision database");
+    } finally {
+      setProvisioning(false);
+    }
+  }
+
+  async function triggerBackup(dbRow: any) {
+    setBackingUpId(dbRow.id);
+    try {
+      const res = await engine.call<{ sizeMb?: number }>(
+        "POST",
+        `/api/databases/${encodeURIComponent(dbRow.id)}/backup`,
+        undefined,
+        { suppressStatuses: [400, 404, 500, 503] },
+      );
+      toast.success(
+        `Snapshot created for ${dbRow.name}${res?.sizeMb !== undefined ? ` (${res.sizeMb} MB)` : ""}`,
+      );
+      qc.invalidateQueries({ queryKey: ["backups"] });
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to create database snapshot");
+    } finally {
+      setBackingUpId(null);
+    }
+  }
+
+  async function del(dbRow: any) {
     const ok = await confirmAction({
       title: "Delete Database Instance",
-      description: "Permanently delete this database instance and its record?",
+      description: `Permanently delete "${dbRow.name}" (${dbRow.engine}) and its persistent volume?`,
       confirmLabel: "Delete Database",
       variant: "destructive",
     });
     if (!ok) return;
     try {
-      await engine.call("DELETE", `/api/databases/${id}`);
+      await engine.call("DELETE", `/api/databases/${encodeURIComponent(dbRow.id)}`);
+      setSessionCreds((prev) => {
+        const next = { ...prev };
+        delete next[dbRow.id];
+        return next;
+      });
       qc.invalidateQueries({ queryKey: ["dbs", projectName] });
-      toast.success("Database removed from SQLite database");
+      qc.invalidateQueries({ queryKey: ["databases"] });
+      toast.success(`Database ${dbRow.name} removed`);
     } catch (e: any) {
       toast.error(e.message || "Failed to delete database");
     }
@@ -1229,17 +1780,27 @@ function DatabasesTab({ projectId, projectName }: { projectId: string; projectNa
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        {["postgres", "mysql", "mongodb", "redis"].map((e) => (
-          <button
-            key={e}
-            onClick={() => provision(e)}
-            className="inline-flex items-center gap-1 rounded-md border border-border bg-card px-3 py-2 text-sm hover:border-primary/40 capitalize font-medium"
-          >
-            <Plus className="h-4 w-4" /> {e}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-2">
+          {DB_ENGINE_SPECS.map((spec) => (
+            <button
+              key={spec.id}
+              type="button"
+              onClick={() => openProvisionModal(spec.id)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-2 text-sm hover:border-primary/50 font-medium transition-colors"
+            >
+              <Plus className="h-4 w-4 text-primary" /> {spec.label}
+            </button>
+          ))}
+        </div>
+        <Link
+          to="/databases"
+          className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline font-medium"
+        >
+          <Table2 className="h-3.5 w-3.5" /> Open Database Studio
+        </Link>
       </div>
+
       <div className="rounded-lg border border-border bg-card">
         {databasesQuery.isError && dbs.length > 0 && (
           <div role="status" className="border-b border-border px-4 py-2 text-xs text-amber-400">
@@ -1265,33 +1826,292 @@ function DatabasesTab({ projectId, projectName }: { projectId: string; projectNa
           </div>
         ) : dbs.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
-            No databases attached. Provision one above.
+            No companion databases attached yet. Provision PostgreSQL, Redis, MySQL, MariaDB, or
+            MongoDB above and auto-wire credentials into{" "}
+            <span className="font-mono">{environment}</span>.
           </div>
         ) : (
           <div className="divide-y divide-border">
-            {dbs.map((d: any) => (
-              <div key={d.id} className="flex items-center gap-3 p-4">
-                <div className="flex h-9 w-9 items-center justify-center rounded-md bg-surface-2 font-mono text-xs uppercase text-primary">
-                  {d.engine.slice(0, 2)}
-                </div>
-                <div className="flex-1">
-                  <div className="text-sm font-medium">{d.name}</div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">
-                    {d.engine} · {d.size_mb} MB{d.port ? ` · Port ${d.port}` : ""}
+            {dbs.map((d: any) => {
+              const cred = sessionCreds[d.id];
+              const revealed = Boolean(revealedIds[d.id]);
+              const internalHost = buildInternalHostHint(d.engine, d.port);
+              const spec = DB_ENGINE_SPECS.find((s) => s.id === String(d.engine).toLowerCase());
+
+              return (
+                <div key={d.id} className="p-4 space-y-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-surface-2 font-mono text-xs font-semibold uppercase text-primary">
+                      {spec?.shortTag || String(d.engine).slice(0, 2)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-medium font-mono">{d.name}</span>
+                        <StatusBadge status={d.status} />
+                      </div>
+                      <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span>{spec?.label || d.engine}</span>
+                        <span>·</span>
+                        <span>{formatDbStorageLabel(d.size_mb)}</span>
+                        <span>·</span>
+                        <span className="font-mono text-[11px]">{internalHost}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(internalHost);
+                            toast.success(`Copied ${internalHost}`);
+                          }}
+                          aria-label={`Copy internal host for ${d.name}`}
+                          className="text-muted-foreground hover:text-foreground"
+                          title="Copy container host:port"
+                        >
+                          <Copy className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void triggerBackup(d)}
+                        disabled={backingUpId === d.id}
+                        aria-label={`Backup ${d.name}`}
+                        className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium hover:bg-accent disabled:opacity-50"
+                      >
+                        <HardDrive className="h-3.5 w-3.5 text-primary" />
+                        {backingUpId === d.id ? "Snapshotting..." : "Snapshot"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void del(d)}
+                        aria-label={`Delete database ${d.name}`}
+                        className="rounded-md p-1.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
+
+                  {cred && (
+                    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-2 text-xs">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-medium text-emerald-300 flex items-center gap-1.5">
+                          <Check className="h-3.5 w-3.5" />
+                          <span>
+                            Connection credentials (shown once this session)
+                            {cred.injectedKeys.length > 0
+                              ? ` · Wired to ${cred.injectedKeys.join(", ")}`
+                              : ""}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRevealedIds((prev) => ({ ...prev, [d.id]: !prev[d.id] }))
+                          }
+                          className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                        >
+                          {revealed ? (
+                            <>
+                              <EyeOff className="h-3 w-3" /> Hide URI
+                            </>
+                          ) : (
+                            <>
+                              <Eye className="h-3 w-3" /> Reveal URI
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <div className="flex items-center justify-between gap-2 rounded border border-border/70 bg-background/60 px-2.5 py-1.5 font-mono text-[11px]">
+                          <span className="truncate">
+                            <span className="text-muted-foreground mr-1.5">Internal:</span>
+                            {revealed ? cred.internalConnectionString : "••••••••••••••••••••••••"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(cred.internalConnectionString);
+                              toast.success("Internal container URI copied");
+                            }}
+                            aria-label={`Copy internal URI for ${d.name}`}
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 rounded border border-border/70 bg-background/60 px-2.5 py-1.5 font-mono text-[11px]">
+                          <span className="truncate">
+                            <span className="text-muted-foreground mr-1.5">Host:</span>
+                            {revealed ? cred.connectionString : "••••••••••••••••••••••••"}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              navigator.clipboard.writeText(cred.connectionString);
+                              toast.success("Host connection URI copied");
+                            }}
+                            aria-label={`Copy host URI for ${d.name}`}
+                            className="shrink-0 text-muted-foreground hover:text-foreground"
+                          >
+                            <Copy className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <StatusBadge status={d.status} />
-                <button
-                  onClick={() => del(d.id)}
-                  className="text-muted-foreground hover:text-destructive"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
+
+      {provisionOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !provisioning) setProvisionOpen(false);
+          }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provision-db-title"
+            onSubmit={submitProvision}
+            className="w-full max-w-lg rounded-xl border border-border bg-card p-6 shadow-2xl space-y-5"
+          >
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <div className="flex items-center gap-2">
+                <Database className="h-4 w-4 text-primary" />
+                <h3 id="provision-db-title" className="text-sm font-semibold">
+                  Provision Companion Database
+                </h3>
+              </div>
+              <button
+                type="button"
+                aria-label="Close database provisioning modal"
+                disabled={provisioning}
+                onClick={() => setProvisionOpen(false)}
+                className="rounded p-1 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <div className="mb-1.5 text-xs font-medium text-muted-foreground">Engine</div>
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                  {DB_ENGINE_SPECS.map((spec) => (
+                    <button
+                      key={spec.id}
+                      type="button"
+                      onClick={() => handleEngineChange(spec.id)}
+                      className={`rounded-md border px-2.5 py-2 text-xs font-medium transition-colors ${
+                        selectedEngine === spec.id
+                          ? "border-primary bg-primary/15 text-foreground"
+                          : "border-border bg-surface/60 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      {spec.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="provision-db-name"
+                  className="mb-1.5 block text-xs font-medium text-muted-foreground"
+                >
+                  Instance Name
+                </label>
+                <input
+                  id="provision-db-name"
+                  value={dbNameInput}
+                  onChange={(e) => {
+                    setDbNameInput(e.target.value);
+                    setNameEditedManually(true);
+                  }}
+                  placeholder="app_postgres"
+                  className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-sm outline-none focus:border-primary"
+                />
+                <div className="mt-1 flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>
+                    Normalized ID:{" "}
+                    <span className="font-mono text-primary">{normalizedDbName}</span>
+                  </span>
+                  <span>a-z, 0-9, _ (max 41 chars)</span>
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="provision-db-size"
+                  className="mb-1.5 block text-xs font-medium text-muted-foreground"
+                >
+                  Volume Allocation
+                </label>
+                <select
+                  id="provision-db-size"
+                  value={storageMb}
+                  onChange={(e) => setStorageMb(Number(e.target.value))}
+                  className="w-full rounded-md border border-input bg-input/40 px-3 py-2 text-sm outline-none focus:border-primary"
+                >
+                  {DB_STORAGE_OPTIONS_MB.map((mb) => (
+                    <option key={mb} value={mb}>
+                      {formatDbStorageLabel(mb)} persistent Docker volume
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <label className="flex items-start gap-2.5 rounded-lg border border-border bg-surface/40 p-3 text-xs cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={autoWireEnv}
+                  onChange={(e) => setAutoWireEnv(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-border"
+                />
+                <span>
+                  <span className="block font-medium text-foreground">
+                    Auto-inject connection URI into {environment} environment
+                  </span>
+                  <span className="block text-muted-foreground mt-0.5">
+                    Saves{" "}
+                    <span className="font-mono">
+                      {DB_ENGINE_SPECS.find((s) => s.id === selectedEngine)?.primaryEnvKey}
+                    </span>{" "}
+                    (using <span className="font-mono">host.docker.internal</span>) as an encrypted
+                    secret variable.
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-border pt-4">
+              <button
+                type="button"
+                disabled={provisioning}
+                onClick={() => setProvisionOpen(false)}
+                className="rounded-md border border-border px-3.5 py-2 text-xs font-medium hover:bg-accent"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={provisioning}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                <Database className="h-3.5 w-3.5" />
+                {provisioning ? "Provisioning Container..." : "Provision Database"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }
@@ -1350,10 +2170,7 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
           <div>
             <div className="text-sm font-semibold flex items-center gap-2">
               <Moon className="h-4 w-4 text-amber-400" />
-              <span>Scale-to-Zero & Compute Optimization</span>
-              <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-amber-950/60 border border-amber-800/60 text-amber-300 rounded-full">
-                Temps v2 Engine
-              </span>
+              <span>Scale-to-Zero &amp; Compute Optimization</span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">
               Automatically suspend idle preview/staging containers to reclaim 60–80% server RAM.

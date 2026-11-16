@@ -20,11 +20,13 @@ import {
   ShieldCheck,
   KeyRound,
   AlertTriangle,
+  Sparkles,
 } from "lucide-react";
 import { useEngine, useServerNodes, type HostKeyScan, type ServerNode } from "@/lib/engine";
 import { AddServerDialog } from "@/components/hx/add-server-dialog";
 import { confirmAction } from "@/components/hx/confirm-modal";
 import { ResourceMonitor } from "@/components/hx/resource-monitor";
+import { buildReclaimedSummary } from "@/utils/new-project";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,6 +55,7 @@ function ServersPage() {
   const [scan, setScan] = useState<HostKeyScan | null>(null);
   const [scanError, setScanError] = useState("");
   const [trusting, setTrusting] = useState(false);
+  const [pruningDocker, setPruningDocker] = useState(false);
 
   const { data: servers = [], isLoading, refetch } = useServerNodes();
 
@@ -155,6 +158,30 @@ function ServersPage() {
     setCopiedBootstrap(true);
     toast.success("Bootstrap script copied to clipboard!");
     setTimeout(() => setCopiedBootstrap(false), 2000);
+  }
+
+  async function handleDockerPrune() {
+    const ok = await confirmAction({
+      title: "Run Docker System Cleanup?",
+      description:
+        "Removes stopped containers, dangling images, unused networks, unused volumes, and build cache on the local Docker daemon. Active deployments remain untouched.",
+      variant: "warning",
+      confirmLabel: "Prune Unused Resources",
+    });
+    if (!ok) return;
+    setPruningDocker(true);
+    try {
+      const res = await engine.call<{ ok?: boolean; result?: Record<string, any> }>(
+        "POST",
+        "/api/docker/system/prune",
+      );
+      toast.success(buildReclaimedSummary(res?.result));
+      refetch();
+    } catch (e: any) {
+      toast.error(e?.message || "Docker cleanup failed");
+    } finally {
+      setPruningDocker(false);
+    }
   }
 
   return (
@@ -434,6 +461,20 @@ function ServersPage() {
                         onClick={() => handleOpenBootstrap(server)}
                       >
                         <Terminal className="w-3 h-3 mr-1" /> Bootstrap Script
+                      </Button>
+                    )}
+                    {server.id === "local" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs px-2 whitespace-nowrap"
+                        disabled={pruningDocker}
+                        onClick={handleDockerPrune}
+                      >
+                        <Sparkles
+                          className={`w-3 h-3 mr-1 ${pruningDocker ? "animate-spin" : ""}`}
+                        />
+                        {pruningDocker ? "Pruning…" : "Docker Cleanup"}
                       </Button>
                     )}
                     <Button

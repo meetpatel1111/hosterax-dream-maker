@@ -497,6 +497,353 @@ export function detectDependencyGraph(stack: ComposeStack): {
 }
 
 /**
+ * Coolify-compatible Magic Compose Variables Engine:
+ * Supports ${SERVICE_PASSWORD_*}, ${SERVICE_PASSWORD_64_*}, ${SERVICE_BASE64_*},
+ * ${SERVICE_BASE64_64_*}, ${SERVICE_USER_*}, ${SERVICE_FQDN_*}, and ${SERVICE_URL_*}.
+ */
+export type MagicVariableKind =
+  "password" | "password64" | "base64" | "base64_64" | "user" | "fqdn" | "url";
+
+export interface MagicVariableDescriptor {
+  name: string;
+  kind: MagicVariableKind;
+  services: string[];
+  targetService?: string;
+  targetPort?: number;
+}
+
+export interface StackDeploymentServicePlan {
+  projectName: string;
+  serviceName: string;
+  image: string;
+  port: number;
+  healthPath: string;
+  env: Record<string, string>;
+  publicDomain?: string;
+  customDomainToBind?: string;
+  cpuLimit: number | null;
+  memoryMbLimit: number | null;
+  dependsOn: string[];
+  orderIndex: number;
+}
+
+const MAGIC_VAR_RE =
+  /\$\{(SERVICE_(?:PASSWORD(?:_64)?|BASE64(?:_64)?|USER|FQDN|URL)_[A-Za-z0-9_]+)(?::-[^}]*)?\}|\$(SERVICE_(?:PASSWORD(?:_64)?|BASE64(?:_64)?|USER|FQDN|URL)_[A-Za-z0-9_]+)/g;
+
+function classifyMagicVar(varName: string): {
+  kind: MagicVariableKind;
+  token: string;
+  targetPort?: number;
+} {
+  if (varName.startsWith("SERVICE_PASSWORD_64_")) {
+    return { kind: "password64", token: varName.slice("SERVICE_PASSWORD_64_".length) };
+  }
+  if (varName.startsWith("SERVICE_PASSWORD_")) {
+    return { kind: "password", token: varName.slice("SERVICE_PASSWORD_".length) };
+  }
+  if (varName.startsWith("SERVICE_BASE64_64_")) {
+    return { kind: "base64_64", token: varName.slice("SERVICE_BASE64_64_".length) };
+  }
+  if (varName.startsWith("SERVICE_BASE64_")) {
+    return { kind: "base64", token: varName.slice("SERVICE_BASE64_".length) };
+  }
+  if (varName.startsWith("SERVICE_USER_")) {
+    return { kind: "user", token: varName.slice("SERVICE_USER_".length) };
+  }
+  const isUrl = varName.startsWith("SERVICE_URL_");
+  const rawSuffix = isUrl
+    ? varName.slice("SERVICE_URL_".length)
+    : varName.slice("SERVICE_FQDN_".length);
+  const portMatch = rawSuffix.match(/^(.*)_(\d{2,5})$/);
+  return {
+    kind: isUrl ? "url" : "fqdn",
+    token: portMatch ? portMatch[1] : rawSuffix,
+    targetPort: portMatch ? Number(portMatch[2]) : undefined,
+  };
+}
+
+function defaultRandomHex(byteLength: number): string {
+  const bytes = new Uint8Array(byteLength);
+  if (typeof globalThis !== "undefined" && globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < byteLength; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBase64Url(hex: string): string {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64");
+  }
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary);
+}
+
+function formatServiceHost(
+  stackName: string,
+  serviceName: string,
+  magicHostFormat?: string,
+): string {
+  const slug = `${stackName}-${serviceName}`
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  if (magicHostFormat && magicHostFormat.includes("{name}")) {
+    return magicHostFormat.replace(/\{name\}/g, slug || "service");
+  }
+  return `${slug || "service"}.127-0-0-1.sslip.io`;
+}
+
+export function extractMagicVariables(stack: ComposeStack): MagicVariableDescriptor[] {
+  const map = new Map<string, MagicVariableDescriptor>();
+
+  const scanString = (text: string | undefined, serviceName: string) => {
+    if (!text) return;
+    MAGIC_VAR_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = MAGIC_VAR_RE.exec(text)) !== null) {
+      const name = match[1] || match[2];
+      if (!name) continue;
+      let existing = map.get(name);
+      if (!existing) {
+        const meta = classifyMagicVar(name);
+        const matchedSvc =
+          meta.kind === "fqdn" || meta.kind === "url"
+            ? stack.services.find(
+                (s) =>
+                  s.name.toLowerCase().replace(/[^a-z0-9]/g, "") ===
+                  meta.token.toLowerCase().replace(/[^a-z0-9]/g, ""),
+              )?.name || meta.token.toLowerCase()
+            : undefined;
+        existing = {
+          name,
+          kind: meta.kind,
+          services: [],
+          targetService: matchedSvc,
+          targetPort: meta.targetPort,
+        };
+        map.set(name, existing);
+      }
+      if (!existing.services.includes(serviceName)) {
+        existing.services.push(serviceName);
+      }
+    }
+  };
+
+  for (const svc of stack.services) {
+    for (const row of svc.env) {
+      scanString(row.value, svc.name);
+    }
+    scanString(svc.command, svc.name);
+    scanString(svc.publicDomain, svc.name);
+  }
+
+  return Array.from(map.values());
+}
+
+export function generateMagicVariableValue(
+  varName: string,
+  stack: ComposeStack,
+  options?: {
+    magicHostFormat?: string;
+    randomHex?: (bytes: number) => string;
+  },
+): string {
+  const meta = classifyMagicVar(varName);
+  const randHex = options?.randomHex || defaultRandomHex;
+
+  switch (meta.kind) {
+    case "password":
+      return randHex(16); // 32 hex chars
+    case "password64":
+      return randHex(32); // 64 hex chars
+    case "base64":
+      return hexToBase64Url(randHex(32));
+    case "base64_64":
+      return hexToBase64Url(randHex(64));
+    case "user": {
+      const cleanToken = meta.token
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, "_")
+        .replace(/^_+|_+$/g, "");
+      return cleanToken ? `${cleanToken}_user`.slice(0, 24) : "app_user";
+    }
+    case "fqdn":
+    case "url": {
+      const svc = stack.services.find(
+        (s) =>
+          s.name.toLowerCase().replace(/[^a-z0-9]/g, "") ===
+          meta.token.toLowerCase().replace(/[^a-z0-9]/g, ""),
+      );
+      const explicitDomain =
+        svc?.publicDomain && !svc.publicDomain.endsWith(".localhost")
+          ? svc.publicDomain.trim()
+          : "";
+      const host =
+        explicitDomain ||
+        formatServiceHost(stack.name, svc?.name || meta.token, options?.magicHostFormat);
+      const scheme =
+        host.endsWith(".127-0-0-1.sslip.io") || host.includes("localhost") ? "http" : "https";
+      const portSuffix = meta.targetPort ? `:${meta.targetPort}` : "";
+      return meta.kind === "url" ? `${scheme}://${host}${portSuffix}` : host;
+    }
+  }
+}
+
+export function resolveStackMagicVariables(
+  stack: ComposeStack,
+  options?: {
+    magicHostFormat?: string;
+    overrides?: Record<string, string>;
+    randomHex?: (bytes: number) => string;
+  },
+): {
+  resolvedStack: ComposeStack;
+  resolvedVars: Record<string, string>;
+  descriptors: MagicVariableDescriptor[];
+} {
+  const descriptors = extractMagicVariables(stack);
+  const resolvedVars: Record<string, string> = {};
+
+  for (const desc of descriptors) {
+    const override = options?.overrides?.[desc.name];
+    if (override !== undefined && override !== "") {
+      resolvedVars[desc.name] = override;
+    } else {
+      resolvedVars[desc.name] = generateMagicVariableValue(desc.name, stack, options);
+    }
+  }
+
+  const replaceInStr = (input?: string): string | undefined => {
+    if (!input) return input;
+    return input.replace(MAGIC_VAR_RE, (full, bracedName, bareName) => {
+      const key = bracedName || bareName;
+      return key && resolvedVars[key] !== undefined ? resolvedVars[key] : full;
+    });
+  };
+
+  const resolvedServices: ComposeService[] = stack.services.map((svc) => ({
+    ...svc,
+    publicDomain: replaceInStr(svc.publicDomain),
+    command: replaceInStr(svc.command),
+    env: svc.env.map((e) => ({
+      key: e.key,
+      value: replaceInStr(e.value) ?? "",
+    })),
+  }));
+
+  return {
+    resolvedStack: {
+      ...stack,
+      services: resolvedServices,
+    },
+    resolvedVars,
+    descriptors,
+  };
+}
+
+export function parseCpuLimit(raw?: string): number | null {
+  if (!raw) return null;
+  const n = Number(String(raw).trim());
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Number(n.toFixed(2));
+}
+
+export function parseMemoryLimitMb(raw?: string): number | null {
+  if (!raw) return null;
+  const match = String(raw)
+    .trim()
+    .match(/^(\d+(?:\.\d+)?)\s*(gib|gb|gi|g|mib|mb|mi|m|kib|kb|ki|k|b)?$/i);
+  if (!match) return null;
+  const val = Number(match[1]);
+  if (!Number.isFinite(val) || val <= 0) return null;
+  const unit = (match[2] || "m").toLowerCase();
+  if (unit.startsWith("g")) return Math.round(val * 1024);
+  if (unit.startsWith("k")) return Math.max(1, Math.round(val / 1024));
+  if (unit === "b") return Math.max(1, Math.round(val / (1024 * 1024)));
+  return Math.round(val);
+}
+
+/**
+ * Builds an ordered deployment plan following DAG topological order with Coolify magic variables resolved.
+ */
+export function buildStackDeploymentPlan(
+  stack: ComposeStack,
+  options?: {
+    magicHostFormat?: string;
+    overrides?: Record<string, string>;
+    randomHex?: (bytes: number) => string;
+  },
+): {
+  plan: StackDeploymentServicePlan[];
+  resolvedVars: Record<string, string>;
+  descriptors: MagicVariableDescriptor[];
+} {
+  const { resolvedStack, resolvedVars, descriptors } = resolveStackMagicVariables(stack, options);
+  const dag = detectDependencyGraph(resolvedStack);
+  const orderNames =
+    dag.topologicalOrder.length === resolvedStack.services.length
+      ? dag.topologicalOrder
+      : resolvedStack.services.map((s) => s.name);
+
+  const byName = new Map(resolvedStack.services.map((s) => [s.name, s]));
+  const stackSlug = (resolvedStack.name || "stack")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+  const plan: StackDeploymentServicePlan[] = [];
+  orderNames.forEach((svcName, index) => {
+    const svc = byName.get(svcName);
+    if (!svc) return;
+    const svcSlug = svc.name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    const projectName = `${stackSlug}-${svcSlug}`.slice(0, 48).replace(/-+$/g, "");
+
+    const envMap: Record<string, string> = {};
+    for (const row of svc.env) {
+      if (row.key.trim()) {
+        envMap[row.key.trim()] = row.value;
+      }
+    }
+
+    const rawDomain = (svc.publicDomain || "").trim().toLowerCase();
+    const customDomainToBind =
+      svc.isPublic && rawDomain && !rawDomain.endsWith(".localhost") && rawDomain.includes(".")
+        ? rawDomain
+        : undefined;
+
+    plan.push({
+      projectName,
+      serviceName: svc.name,
+      image: svc.image || "",
+      port: svc.ports[0]?.container || 3000,
+      healthPath: "/",
+      env: envMap,
+      publicDomain: svc.isPublic ? rawDomain || undefined : undefined,
+      customDomainToBind,
+      cpuLimit: parseCpuLimit(svc.cpuLimit),
+      memoryMbLimit: parseMemoryLimitMb(svc.memoryLimit),
+      dependsOn: [...svc.dependsOn],
+      orderIndex: index + 1,
+    });
+  });
+
+  return { plan, resolvedVars, descriptors };
+}
+
+/**
  * Curated flagship production presets for instant 1-click loading.
  */
 export const PRESET_STACKS: {
@@ -527,7 +874,7 @@ export const PRESET_STACKS: {
           ports: [{ host: 3000, container: 3000 }],
           env: [
             { key: "NODE_ENV", value: "production" },
-            { key: "VITE_API_URL", value: "http://api:4000" },
+            { key: "VITE_API_URL", value: "${SERVICE_URL_API}" },
           ],
           volumes: [],
           dependsOn: ["api"],
@@ -545,8 +892,12 @@ export const PRESET_STACKS: {
           env: [
             { key: "NODE_ENV", value: "production" },
             { key: "PORT", value: "4000" },
-            { key: "DATABASE_URL", value: "postgres://postgres:postgres@db:5432/app" },
+            {
+              key: "DATABASE_URL",
+              value: "postgres://postgres:${SERVICE_PASSWORD_POSTGRES}@db:5432/app",
+            },
             { key: "REDIS_URL", value: "redis://cache:6379" },
+            { key: "JWT_SECRET", value: "${SERVICE_BASE64_64_JWT}" },
           ],
           volumes: [],
           dependsOn: ["db", "cache"],
@@ -562,7 +913,7 @@ export const PRESET_STACKS: {
           ports: [{ host: 5432, container: 5432 }],
           env: [
             { key: "POSTGRES_USER", value: "postgres" },
-            { key: "POSTGRES_PASSWORD", value: "postgres" },
+            { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_POSTGRES}" },
             { key: "POSTGRES_DB", value: "app" },
           ],
           volumes: [{ hostPath: "pgdata", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
@@ -605,7 +956,10 @@ export const PRESET_STACKS: {
           category: "backend",
           ports: [{ host: 8000, container: 8000 }],
           env: [
-            { key: "DATABASE_URL", value: "postgresql://user:pass@postgres:5432/app" },
+            {
+              key: "DATABASE_URL",
+              value: "postgresql://${SERVICE_USER_PG}:${SERVICE_PASSWORD_PG}@postgres:5432/app",
+            },
             { key: "CELERY_BROKER_URL", value: "redis://redis:6379/0" },
           ],
           volumes: [],
@@ -622,7 +976,10 @@ export const PRESET_STACKS: {
           category: "worker",
           ports: [],
           env: [
-            { key: "DATABASE_URL", value: "postgresql://user:pass@postgres:5432/app" },
+            {
+              key: "DATABASE_URL",
+              value: "postgresql://${SERVICE_USER_PG}:${SERVICE_PASSWORD_PG}@postgres:5432/app",
+            },
             { key: "CELERY_BROKER_URL", value: "redis://redis:6379/0" },
           ],
           volumes: [],
@@ -638,8 +995,8 @@ export const PRESET_STACKS: {
           category: "database",
           ports: [{ host: 5433, container: 5432 }],
           env: [
-            { key: "POSTGRES_USER", value: "user" },
-            { key: "POSTGRES_PASSWORD", value: "pass" },
+            { key: "POSTGRES_USER", value: "${SERVICE_USER_PG}" },
+            { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_PG}" },
             { key: "POSTGRES_DB", value: "app" },
           ],
           volumes: [
@@ -684,8 +1041,12 @@ export const PRESET_STACKS: {
           category: "frontend",
           ports: [{ host: 3000, container: 3000 }],
           env: [
-            { key: "DATABASE_URL", value: "postgresql://postgres:secret@db:5432/saas" },
+            {
+              key: "DATABASE_URL",
+              value: "postgresql://postgres:${SERVICE_PASSWORD_SAASDB}@db:5432/saas",
+            },
             { key: "MEILISEARCH_HOST", value: "http://search:7700" },
+            { key: "MEILI_MASTER_KEY", value: "${SERVICE_PASSWORD_MEILI}" },
             { key: "SMTP_HOST", value: "mailhog" },
             { key: "SMTP_PORT", value: "1025" },
           ],
@@ -702,7 +1063,7 @@ export const PRESET_STACKS: {
           category: "backend",
           ports: [{ host: 7700, container: 7700 }],
           env: [
-            { key: "MEILI_MASTER_KEY", value: "masterKeySuperSecret123" },
+            { key: "MEILI_MASTER_KEY", value: "${SERVICE_PASSWORD_MEILI}" },
             { key: "MEILI_ENV", value: "production" },
           ],
           volumes: [{ hostPath: "meilidata", containerPath: "/meili_data", mode: "rw" }],
@@ -718,7 +1079,7 @@ export const PRESET_STACKS: {
           ports: [{ host: 5434, container: 5432 }],
           env: [
             { key: "POSTGRES_USER", value: "postgres" },
-            { key: "POSTGRES_PASSWORD", value: "secret" },
+            { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_SAASDB}" },
             { key: "POSTGRES_DB", value: "saas" },
           ],
           volumes: [{ hostPath: "saas_db", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
@@ -765,8 +1126,8 @@ export const PRESET_STACKS: {
           ports: [{ host: 8080, container: 80 }],
           env: [
             { key: "WORDPRESS_DB_HOST", value: "mariadb:3306" },
-            { key: "WORDPRESS_DB_USER", value: "wp_user" },
-            { key: "WORDPRESS_DB_PASSWORD", value: "wp_pass_secure" },
+            { key: "WORDPRESS_DB_USER", value: "${SERVICE_USER_WP}" },
+            { key: "WORDPRESS_DB_PASSWORD", value: "${SERVICE_PASSWORD_WP}" },
             { key: "WORDPRESS_DB_NAME", value: "wordpress" },
           ],
           volumes: [{ hostPath: "wp_data", containerPath: "/var/www/html", mode: "rw" }],
@@ -782,10 +1143,10 @@ export const PRESET_STACKS: {
           category: "database",
           ports: [{ host: 3306, container: 3306 }],
           env: [
-            { key: "MYSQL_ROOT_PASSWORD", value: "root_pass_secure" },
+            { key: "MYSQL_ROOT_PASSWORD", value: "${SERVICE_PASSWORD_MYSQLROOT}" },
             { key: "MYSQL_DATABASE", value: "wordpress" },
-            { key: "MYSQL_USER", value: "wp_user" },
-            { key: "MYSQL_PASSWORD", value: "wp_pass_secure" },
+            { key: "MYSQL_USER", value: "${SERVICE_USER_WP}" },
+            { key: "MYSQL_PASSWORD", value: "${SERVICE_PASSWORD_WP}" },
           ],
           volumes: [{ hostPath: "db_data", containerPath: "/var/lib/mysql", mode: "rw" }],
           dependsOn: [],

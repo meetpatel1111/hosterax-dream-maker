@@ -1,18 +1,22 @@
-import { useState, useId } from "react";
+import { useState, useMemo } from "react";
 import {
   generateDockerComposeYaml,
   parseDockerComposeYaml,
   validateComposeStack,
   detectDependencyGraph,
   detectServiceCategory,
+  extractMagicVariables,
+  resolveStackMagicVariables,
+  buildStackDeploymentPlan,
   PRESET_STACKS,
   type ComposeStack,
   type ComposeService,
   type ServiceCategory,
 } from "@/utils/compose-builder";
 import { toast } from "sonner";
-import { useEngine } from "@/lib/engine";
-import { useNavigate } from "@tanstack/react-router";
+import { useEngine, useMagicDnsSettings, formatMagicDnsUrl } from "@/lib/engine";
+import { isLikelySecretEnvKey } from "@/utils/env-parser";
+import { Link } from "@tanstack/react-router";
 import {
   Boxes,
   Plus,
@@ -105,7 +109,7 @@ export function VisualStackBuilder({
   onDeploySuccess,
 }: VisualStackBuilderProps) {
   const engine = useEngine();
-  const nav = useNavigate();
+  const { data: magicDns } = useMagicDnsSettings();
 
   const [stack, setStack] = useState<ComposeStack>(initialStack);
   const [viewMode, setViewMode] = useState<"visual" | "yaml" | "dag">("visual");
@@ -116,6 +120,24 @@ export function VisualStackBuilder({
   );
   const [copiedYaml, setCopiedYaml] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
+  const [magicOverrides, setMagicOverrides] = useState<Record<string, string>>({});
+  const [deployedProjects, setDeployedProjects] = useState<
+    { projectName: string; serviceName: string; status: "queued" | "warn"; note?: string }[]
+  >([]);
+
+  const activeHostFormat = useMemo(() => {
+    return formatMagicDnsUrl("{name}", magicDns?.activeProvider || "sslip.io");
+  }, [magicDns?.activeProvider]);
+
+  const magicDescriptors = useMemo(() => extractMagicVariables(stack), [stack]);
+  const magicPreview = useMemo(
+    () =>
+      resolveStackMagicVariables(stack, {
+        magicHostFormat: activeHostFormat,
+        overrides: magicOverrides,
+      }),
+    [stack, activeHostFormat, magicOverrides],
+  );
 
   // Sync stack changes to YAML when in visual mode
   const updateStack = (newStack: ComposeStack) => {
@@ -243,6 +265,12 @@ export function VisualStackBuilder({
     updateStack({ ...stack, services: nextServices });
   };
 
+  const regenerateMagicSecrets = () => {
+    const fresh = resolveStackMagicVariables(stack, { magicHostFormat: activeHostFormat });
+    setMagicOverrides(fresh.resolvedVars);
+    toast.success(`Generated ${Object.keys(fresh.resolvedVars).length} cryptographic magic values`);
+  };
+
   const deployStack = async () => {
     const validation = validateComposeStack(stack);
     if (!validation.valid) {
@@ -251,40 +279,139 @@ export function VisualStackBuilder({
     }
 
     setIsDeploying(true);
+    setDeployedProjects([]);
+    const { plan, resolvedVars } = buildStackDeploymentPlan(stack, {
+      magicHostFormat: activeHostFormat,
+      overrides: magicOverrides,
+    });
+    // Persist resolved secrets in overrides so consecutive deploys reuse identical DB credentials
+    setMagicOverrides(resolvedVars);
+
     const toastId = toast.loading(
-      `Provisioning stack "${stack.name}" across ${stack.services.length} services...`,
+      `Deploying stack "${stack.name}" across ${plan.length} services in dependency order...`,
     );
 
+    const results: {
+      projectName: string;
+      serviceName: string;
+      status: "queued" | "warn";
+      note?: string;
+    }[] = [];
+
     try {
-      // 1. Ensure projects / services are created in HosteraX Engine
-      for (const svc of stack.services) {
-        const envMap: Record<string, string> = {};
-        for (const e of svc.env) {
-          if (e.key.trim()) envMap[e.key.trim()] = e.value;
+      for (const svcPlan of plan) {
+        const upserts = Object.entries(svcPlan.env).map(([k, v]) => ({
+          key: k,
+          value: v,
+          isSecret: isLikelySecretEnvKey(k, v),
+        }));
+        const hasSecrets = upserts.some((u) => u.isSecret);
+        let projectReady = false;
+        try {
+          await engine.call(
+            "POST",
+            "/api/projects",
+            {
+              name: svcPlan.projectName,
+              source: svcPlan.image,
+              target: "docker",
+              port: svcPlan.port,
+              env: svcPlan.env,
+            },
+            { suppressStatuses: [409] },
+          );
+          projectReady = true;
+        } catch (createErr: any) {
+          if (createErr?.status === 409) {
+            projectReady = true;
+          } else {
+            results.push({
+              projectName: svcPlan.projectName,
+              serviceName: svcPlan.serviceName,
+              status: "warn",
+              note: createErr?.message || "Project registration failed",
+            });
+            continue;
+          }
         }
 
-        const port = svc.ports[0]?.container || 3000;
+        if (projectReady && upserts.length > 0 && hasSecrets) {
+          await engine
+            .call("PATCH", `/api/projects/${encodeURIComponent(svcPlan.projectName)}/env`, {
+              environment: "production",
+              upserts,
+            })
+            .catch(() => {});
+        }
+
+        if (svcPlan.cpuLimit !== null || svcPlan.memoryMbLimit !== null) {
+          await engine
+            .call(
+              "POST",
+              `/api/projects/${encodeURIComponent(svcPlan.projectName)}/quotas`,
+              {
+                cpu_limit: svcPlan.cpuLimit,
+                memory_mb_limit: svcPlan.memoryMbLimit,
+              },
+              { suppressStatuses: [400, 404, 500] },
+            )
+            .catch(() => {});
+        }
+
+        if (svcPlan.customDomainToBind) {
+          await engine
+            .call(
+              "POST",
+              `/api/projects/${encodeURIComponent(svcPlan.projectName)}/domains`,
+              { hostname: svcPlan.customDomainToBind },
+              { suppressStatuses: [409, 400] },
+            )
+            .catch(() => {});
+        }
+
         try {
-          await engine.call("POST", "/api/projects", {
-            name: `${stack.name}-${svc.name}`,
-            source: svc.image || "",
-            target: "docker",
-            port,
-            env: envMap,
+          await engine.call(
+            "POST",
+            `/api/projects/${encodeURIComponent(svcPlan.projectName)}/deploy`,
+            { trigger: "compose-stack" },
+            { suppressStatuses: [400, 500] },
+          );
+          results.push({
+            projectName: svcPlan.projectName,
+            serviceName: svcPlan.serviceName,
+            status: "queued",
           });
-        } catch {
-          // May already exist
+        } catch (depErr: any) {
+          results.push({
+            projectName: svcPlan.projectName,
+            serviceName: svcPlan.serviceName,
+            status: "warn",
+            note: depErr?.message || "Deploy trigger returned warning",
+          });
         }
       }
 
-      toast.success(`✨ Multi-service stack "${stack.name}" deployed successfully!`, {
-        id: toastId,
-      });
-
-      if (onDeploySuccess) {
-        onDeploySuccess(stack.name);
+      setDeployedProjects(results);
+      const queuedCount = results.filter((r) => r.status === "queued").length;
+      const warnCount = results.length - queuedCount;
+      if (warnCount === 0) {
+        toast.success(
+          `Stack "${stack.name}" queued (${queuedCount}/${results.length} services in DAG order)`,
+          { id: toastId },
+        );
+      } else if (queuedCount > 0) {
+        toast.warning(`Stack "${stack.name}": ${queuedCount} queued, ${warnCount} with warnings`, {
+          id: toastId,
+        });
       } else {
-        nav({ to: "/dashboard" });
+        toast.error(
+          `Stack "${stack.name}" could not queue deployments: ${results[0]?.note || "Check engine"}`,
+          { id: toastId },
+        );
+      }
+
+      if (onDeploySuccess && queuedCount > 0) {
+        onDeploySuccess(stack.name);
       }
     } catch (err: any) {
       toast.error(`Deploy error: ${err.message || "Failed to deploy stack"}`, { id: toastId });
@@ -356,7 +483,7 @@ export function VisualStackBuilder({
               className="px-2.5 py-1 text-sm font-semibold text-foreground bg-surface border border-border rounded-lg outline-none focus:border-primary font-mono"
             />
           </div>
-          <span className="text-xs px-2 py-0.5 rounded-md bg-surface text-muted-foreground border border-border font-mono">
+          <span className="text-xs px-2 py-0.5 rounded-md bg-surface text-muted-foreground border border-border font-mono whitespace-nowrap">
             {stack.services.length} services
           </span>
         </div>
@@ -435,6 +562,111 @@ export function VisualStackBuilder({
         <div className="flex items-center gap-3 p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-rose-300 text-xs">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 text-rose-400" />
           <div className="flex-1 font-medium">{validation.errors.join(" ")}</div>
+        </div>
+      )}
+
+      {/* Deployed Services Result Strip */}
+      {deployedProjects.length > 0 && (
+        <div
+          role="status"
+          className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-xs space-y-2"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-emerald-300 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4" />
+              Stack Services Provisioned in Boot Order ({deployedProjects.length})
+            </span>
+            <Link to="/dashboard" className="text-primary hover:underline font-medium">
+              Open Dashboard →
+            </Link>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {deployedProjects.map((dp) => (
+              <Link
+                key={dp.projectName}
+                to="/p/$slug"
+                params={{ slug: dp.projectName }}
+                title={dp.note || `Inspect ${dp.projectName}`}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border font-mono text-[11px] transition-colors ${
+                  dp.status === "queued"
+                    ? "bg-card/80 border-emerald-500/30 text-foreground hover:border-primary"
+                    : "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                }`}
+              >
+                <span>{dp.projectName}</span>
+                <span className="text-[10px] opacity-75">
+                  ({dp.status === "queued" ? "queued" : "warning"})
+                </span>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Coolify-Compatible Magic Compose Variables Panel */}
+      {magicDescriptors.length > 0 && (
+        <div className="rounded-xl border border-border/80 bg-card/60 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Key className="w-4 h-4 text-amber-400" />
+              <div>
+                <h3 className="text-xs font-bold text-foreground">
+                  Magic Compose Variables ({magicDescriptors.length})
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Placeholders like{" "}
+                  <span className="font-mono text-foreground/80">${"{SERVICE_PASSWORD_*}"}</span>{" "}
+                  and <span className="font-mono text-foreground/80">${"{SERVICE_URL_*}"}</span>{" "}
+                  stay synchronized across dependent services on deploy.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={regenerateMagicSecrets}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-300 hover:bg-amber-500/20 text-xs font-semibold transition-all"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              <span>Generate Magic Secrets</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {magicDescriptors.map((desc) => {
+              const currentVal =
+                magicOverrides[desc.name] ?? magicPreview.resolvedVars[desc.name] ?? "";
+              return (
+                <div
+                  key={desc.name}
+                  className="flex items-center gap-2 p-2 rounded-lg border border-border/70 bg-surface/60"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-[11px] font-semibold text-primary truncate">
+                        {desc.name}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono shrink-0">
+                        [{desc.services.join(", ")}]
+                      </span>
+                    </div>
+                    <input
+                      aria-label={`Value for ${desc.name}`}
+                      value={magicOverrides[desc.name] ?? ""}
+                      onChange={(e) =>
+                        setMagicOverrides((prev) => ({ ...prev, [desc.name]: e.target.value }))
+                      }
+                      placeholder={
+                        desc.kind === "url" || desc.kind === "fqdn" || desc.kind === "user"
+                          ? `Auto: ${currentVal}`
+                          : "Auto-generated on deploy (or enter custom)"
+                      }
+                      className="mt-1 w-full px-2 py-1 text-[11px] font-mono bg-background/60 border border-border/70 rounded outline-none focus:border-primary text-foreground"
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
@@ -523,8 +755,9 @@ export function VisualStackBuilder({
                           e.stopPropagation();
                           deleteService(svc.id);
                         }}
+                        aria-label={`Delete service ${svc.name}`}
                         className="text-muted-foreground/60 hover:text-rose-400 p-1 rounded hover:bg-rose-500/10 transition-all"
-                        title="Delete service"
+                        title={`Delete service ${svc.name}`}
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -621,6 +854,61 @@ export function VisualStackBuilder({
                       onChange={(e) => updateSelectedService({ image: e.target.value })}
                       placeholder="e.g. postgres:16-alpine"
                       className="w-full px-3 py-2 text-xs font-mono bg-surface border border-border rounded-lg outline-none focus:border-primary text-foreground"
+                    />
+                  </div>
+                </div>
+
+                {/* Public Exposure, Domain & Runtime Limits */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3.5 rounded-xl border border-border/70 bg-surface/40">
+                  <div className="sm:col-span-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-semibold text-foreground/90">
+                        Public Routing & Domain
+                      </label>
+                      <label className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(activeService.isPublic)}
+                          onChange={(e) => updateSelectedService({ isPublic: e.target.checked })}
+                        />
+                        <span>Expose via Edge</span>
+                      </label>
+                    </div>
+                    <input
+                      value={activeService.publicDomain || ""}
+                      disabled={!activeService.isPublic}
+                      onChange={(e) => updateSelectedService({ publicDomain: e.target.value })}
+                      placeholder={
+                        activeService.isPublic
+                          ? activeHostFormat.replace(
+                              /\{name\}/g,
+                              `${stack.name}-${activeService.name}`,
+                            )
+                          : "Internal-only service"
+                      }
+                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-surface border border-border rounded-lg outline-none focus:border-primary text-foreground disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-foreground/90 block mb-1">
+                      CPU Limit
+                    </label>
+                    <input
+                      value={activeService.cpuLimit || ""}
+                      onChange={(e) => updateSelectedService({ cpuLimit: e.target.value })}
+                      placeholder="e.g. 1.0"
+                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-surface border border-border rounded-lg outline-none focus:border-primary text-foreground"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-foreground/90 block mb-1">
+                      Memory Limit
+                    </label>
+                    <input
+                      value={activeService.memoryLimit || ""}
+                      onChange={(e) => updateSelectedService({ memoryLimit: e.target.value })}
+                      placeholder="e.g. 512m"
+                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-surface border border-border rounded-lg outline-none focus:border-primary text-foreground"
                     />
                   </div>
                 </div>

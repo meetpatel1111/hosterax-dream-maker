@@ -8,16 +8,12 @@ import {
   Trash2,
   CheckCircle2,
   XCircle,
-  AlertTriangle,
   Terminal,
   Globe,
   Database,
   Calendar,
   Layers,
-  ChevronRight,
-  Copy,
-  Check,
-  Zap,
+  Pencil,
 } from "lucide-react";
 import {
   useCronJobs,
@@ -116,7 +112,7 @@ function JobsPage() {
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
   const [logSheetJob, setLogSheetJob] = useState<CronJob | null>(null);
   const [executingId, setExecutingId] = useState<string | null>(null);
-  const [copiedLogId, setCopiedLogId] = useState<string | null>(null);
+  const [loadingEditDetails, setLoadingEditDetails] = useState(false);
   const selectedRunsQuery = useJobRuns(logSheetJob?.id, Boolean(logSheetJob));
 
   // Form State
@@ -137,6 +133,7 @@ function JobsPage() {
 
   function openCreateModal() {
     setSelectedJob(null);
+    setLoadingEditDetails(false);
     setFormName("");
     setFormProject("");
     setFormCron("0 0 * * *");
@@ -147,6 +144,42 @@ function JobsPage() {
     setFormHttpMethod("GET");
     setFormTimeout("300");
     setCreateOpen(true);
+  }
+
+  async function openEditModal(job: CronJob) {
+    setSelectedJob(job);
+    setFormName(job.name || "");
+    setFormProject(job.project_name || "");
+    setFormCron(job.cron_expression || "0 0 * * *");
+    setFormType((job.job_type as "command" | "http" | "backup") || "command");
+    setFormCommand("");
+    setFormTargetContainer(job.target_container || "");
+    setFormHttpUrl("");
+    setFormHttpMethod(job.http_method || "GET");
+    setFormTimeout(String(job.timeout_seconds ?? 300));
+    setCreateOpen(true);
+
+    setLoadingEditDetails(true);
+    try {
+      const full = await eng.call<{
+        command?: string;
+        http_url?: string;
+        http_method?: string;
+        timeout_seconds?: number;
+        target_container?: string | null;
+      }>("GET", `/api/jobs/${encodeURIComponent(job.id)}`);
+      setFormCommand(full.command || "");
+      setFormHttpUrl(full.http_url || "");
+      if (full.http_method) setFormHttpMethod(full.http_method);
+      if (full.timeout_seconds !== undefined) setFormTimeout(String(full.timeout_seconds));
+      if (full.target_container !== undefined) {
+        setFormTargetContainer(full.target_container || "");
+      }
+    } catch {
+      toast.warning("Loaded schedule metadata; command/URL details require admin access");
+    } finally {
+      setLoadingEditDetails(false);
+    }
   }
 
   async function handleSaveJob() {
@@ -249,17 +282,11 @@ function JobsPage() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-border/50 pb-6">
         <div>
-          <div className="flex items-center gap-2 mb-1">
-            <Badge
-              variant="outline"
-              className="bg-primary/10 text-primary border-primary/20 text-xs font-mono"
-            >
-              <Zap className="w-3 h-3 mr-1" /> Phase 1 Parity
-            </Badge>
-            <span className="text-xs text-muted-foreground">CRON & Scheduled Automation</span>
-          </div>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/70 bg-clip-text">
-            Jobs & Scheduled Automation
+          <p className="text-xs font-mono text-muted-foreground mb-1">
+            CRON &amp; Scheduled Automation · 5-Field Scheduler
+          </p>
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
+            Jobs &amp; Scheduled Automation
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
             Autonomous in-engine 5-field CRON scheduler, container execution runner, HTTP webhooks,
@@ -424,6 +451,7 @@ function JobsPage() {
                   <tr key={job.id} className="hover:bg-muted/20 transition-colors">
                     <td className="py-3 px-4">
                       <Switch
+                        aria-label={`Toggle schedule for ${job.name}`}
                         checked={Boolean(job.enabled)}
                         onCheckedChange={(val) => handleToggleEnabled(job, val)}
                       />
@@ -518,10 +546,11 @@ function JobsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 px-2 text-xs hover:text-emerald-400"
+                          className="h-8 px-2 text-xs hover:text-emerald-400 whitespace-nowrap"
                           disabled={executingId === job.id}
                           onClick={() => handleRunNow(job)}
                           title="Run Job Now"
+                          aria-label={`Run ${job.name} now`}
                         >
                           <Play
                             className={`w-3.5 h-3.5 mr-1 ${executingId === job.id ? "animate-spin" : ""}`}
@@ -531,9 +560,21 @@ function JobsPage() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 px-2 text-xs"
+                          className="h-8 px-2 text-xs whitespace-nowrap"
+                          onClick={() => openEditModal(job)}
+                          title="Edit Job Schedule"
+                          aria-label={`Edit ${job.name}`}
+                        >
+                          <Pencil className="w-3.5 h-3.5 mr-1" />
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 px-2 text-xs whitespace-nowrap"
                           onClick={() => setLogSheetJob(job)}
                           title="View Execution Logs"
+                          aria-label={`View logs for ${job.name}`}
                         >
                           <Terminal className="w-3.5 h-3.5 mr-1" />
                           Logs
@@ -544,6 +585,7 @@ function JobsPage() {
                           className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
                           onClick={() => handleDeleteJob(job)}
                           title="Delete Job"
+                          aria-label={`Delete ${job.name}`}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
@@ -830,7 +872,9 @@ function JobsPage() {
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSaveJob}>Save Schedule</Button>
+            <Button onClick={handleSaveJob} disabled={loadingEditDetails}>
+              {loadingEditDetails ? "Loading…" : selectedJob ? "Save Changes" : "Save Schedule"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
