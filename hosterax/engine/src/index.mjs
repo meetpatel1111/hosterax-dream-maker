@@ -77,6 +77,8 @@ import { MetricsManager } from "./metrics-manager.mjs";
 import { DockerApiClient } from "./docker-api.mjs";
 import { generateUniversalDockerfile } from "./dockerfile-generator.mjs";
 import { createEnterpriseApi } from "./enterprise-apis.mjs";
+import { normalizeBuildPack, isValidBuildPack, planBuildPackExecution } from "./buildpacks.mjs";
+import { normalizeGitProvider, SUPPORTED_GIT_PROVIDERS } from "./webhook-providers.mjs";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1499,7 +1501,9 @@ function stopProject(project, reason = "manual stop") {
 function stopProjectHere(project, reason) {
   const cleanName = project.toLowerCase().replace(/[^a-z0-9]/g, "_");
   try {
-    const child = spawn("docker", ["rm", "-f", `hx_${cleanName}`]);
+    const namesToRemove = [`hx_${cleanName}`];
+    for (let r = 2; r <= 10; r++) namesToRemove.push(`hx_${cleanName}_r${r}`);
+    const child = spawn("docker", ["rm", "-f", ...namesToRemove]);
     child.on("error", () => {});
   } catch (err) {
     // A server that cannot be reached cannot have its container removed; say so rather than pretend.
@@ -1971,118 +1975,131 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
         });
       }
     } else {
-      // Ensure a Dockerfile exists; if missing or release-only, generate a zero-config multi-stage Dockerfile
+      // Pluggable Build Pack selection (auto | universal | nixpacks | railpack | buildpacks | dockerfile | compose)
       const dockerfilePath = path.join(workdir, "Dockerfile");
-      let isZeroConfigGenerated = false;
+      const hasComposeFile =
+        fs.existsSync(path.join(workdir, "docker-compose.yml")) ||
+        fs.existsSync(path.join(workdir, "compose.yaml"));
+      const requestedBuilder = normalizeBuildPack(projRow?.builder || "auto");
+      const buildPlan = planBuildPackExecution({
+        builder: requestedBuilder,
+        hasDockerfile: fs.existsSync(dockerfilePath),
+        hasCompose: hasComposeFile,
+      });
 
-      // Inspect if existing Dockerfile is a release-only Dockerfile (e.g. GoReleaser COPY binary) missing the binary on disk
-      if (fs.existsSync(dockerfilePath)) {
-        try {
-          const dfContent = fs.readFileSync(dockerfilePath, "utf8");
-          const copyMatches = [...dfContent.matchAll(/^\s*COPY\s+([^\s]+)\s+/gm)];
-          const missingCopy = copyMatches.some(([_, src]) => {
-            const trimmed = src.trim();
-            if (trimmed.startsWith("--from=")) return false;
-            return !fs.existsSync(path.join(workdir, trimmed));
-          });
-          if (
-            missingCopy &&
-            (fs.existsSync(path.join(workdir, "go.mod")) ||
-              fs.existsSync(path.join(workdir, "Cargo.toml")) ||
-              fs.existsSync(path.join(workdir, "package.json")) ||
-              fs.existsSync(path.join(workdir, "requirements.txt")))
-          ) {
-            publish(deploymentId, {
-              ts: Date.now(),
-              stream: "system",
-              text: "[self-heal] Detected release distribution Dockerfile with missing pre-compiled binary. Generating resilient multi-stage build...",
-            });
-            const backupPath = path.join(workdir, "Dockerfile.original");
-            if (!fs.existsSync(backupPath)) fs.writeFileSync(backupPath, dfContent, "utf8");
-            fs.writeFileSync(dockerfilePath, generateZeroConfigDockerfile(workdir), "utf8");
-            isZeroConfigGenerated = true;
-          }
-        } catch {}
-      }
-
-      if (!fs.existsSync(dockerfilePath)) {
+      if (buildPlan.error) {
         publish(deploymentId, {
           ts: Date.now(),
-          stream: "system",
-          text: `[docker] No Dockerfile found; generating zero-config Dockerfile for ${project}`,
+          stream: "stderr",
+          text: `[buildpack] ❌ ${buildPlan.error}`,
         });
-        const generatedDockerfile = generateZeroConfigDockerfile(workdir);
-        fs.writeFileSync(dockerfilePath, generatedDockerfile, "utf8");
-        isZeroConfigGenerated = true;
+        return 1;
       }
 
-      const stripBuildKitMounts = (df) =>
-        String(df || "")
-          .replace(/^#\s*syntax=.*\r?\n/i, "")
-          .replace(/--mount=[^\s\\]+(?:\s*\\\r?\n\s*)?/g, "");
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "system",
+        text: `[buildpack] Selected builder: ${requestedBuilder} (${buildPlan.reason})`,
+      });
 
-      let preferLegacyBuild = false;
-      try {
-        const info = await dockerApi.getSystemInfo();
-        if (info?.DefaultRuntime === "crun" || info?.CgroupDriver === "none") {
-          preferLegacyBuild = true;
+      let builtByExternalPack = false;
+      if (buildPlan.strategy === "external" && buildPlan.cli) {
+        const cleanTag = sanitizeImageTag(tag);
+        let cliArgs = [];
+        if (buildPlan.cli === "nixpacks") {
+          cliArgs = ["build", ".", "--name", cleanTag];
+        } else if (buildPlan.cli === "railpack") {
+          cliArgs = ["build", ".", "--name", cleanTag];
+        } else if (buildPlan.cli === "pack") {
+          cliArgs = ["build", cleanTag, "--builder", "paketobuildpacks/builder-jammy-base"];
         }
-      } catch {}
-
-      if (preferLegacyBuild && fs.existsSync(dockerfilePath)) {
-        try {
-          const curDf = fs.readFileSync(dockerfilePath, "utf8");
-          if (/--mount=/i.test(curDf) || /^#\s*syntax=/i.test(curDf)) {
-            fs.writeFileSync(dockerfilePath, stripBuildKitMounts(curDf), "utf8");
-          }
-        } catch {}
-      }
-
-      publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
-      let bc = await runStepArgv(
-        deploymentId,
-        workdir,
-        "docker",
-        ["build", "-t", sanitizeImageTag(tag), "."],
-        {
-          ...env,
-          DOCKER_BUILDKIT: preferLegacyBuild ? "0" : "1",
-        },
-      );
-
-      // If BuildKit failed on kernel/cgroup restrictions, retry once with legacy builder before regenerating Dockerfile
-      if (bc !== 0 && !preferLegacyBuild) {
-        try {
-          const curDf = fs.readFileSync(dockerfilePath, "utf8");
-          if (/--mount=/i.test(curDf) || /^#\s*syntax=/i.test(curDf)) {
-            fs.writeFileSync(dockerfilePath, stripBuildKitMounts(curDf), "utf8");
-          }
-        } catch {}
-        bc = await runStepArgv(
-          deploymentId,
-          workdir,
-          "docker",
-          ["build", "-t", sanitizeImageTag(tag), "."],
-          { ...env, DOCKER_BUILDKIT: "0" },
-        );
-      }
-
-      // Self-Healing Build Fallback: If original Dockerfile build failed, fallback to zero-config multi-stage build!
-      if (bc !== 0 && !isZeroConfigGenerated) {
         publish(deploymentId, {
           ts: Date.now(),
           stream: "system",
-          text: "[self-heal] Docker build failed with repository Dockerfile. Automatically generating zero-config multi-stage Dockerfile and retrying...",
+          text: `[buildpack] Executing ${buildPlan.cli} ${cliArgs.join(" ")}...`,
         });
-        let generatedDockerfile = generateZeroConfigDockerfile(workdir);
-        if (preferLegacyBuild) generatedDockerfile = stripBuildKitMounts(generatedDockerfile);
-        fs.writeFileSync(dockerfilePath, generatedDockerfile, "utf8");
-        publish(deploymentId, {
-          ts: Date.now(),
-          stream: "system",
-          text: `docker build (self-healing retry) → ${tag}`,
-        });
-        bc = await runStepArgv(
+        const extCode = await runStepArgv(deploymentId, workdir, buildPlan.cli, cliArgs, env);
+        if (extCode === 0) {
+          builtByExternalPack = true;
+        } else if (buildPlan.fallbackToUniversal) {
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "system",
+            text: `[buildpack] ${buildPlan.cli} CLI unavailable or exited ${extCode} — falling back to HosteraX Universal Dockerfile builder`,
+          });
+        } else {
+          return extCode;
+        }
+      }
+
+      if (!builtByExternalPack) {
+        let isZeroConfigGenerated = false;
+
+        // Inspect if existing Dockerfile is a release-only Dockerfile (e.g. GoReleaser COPY binary) missing the binary on disk
+        if (fs.existsSync(dockerfilePath) && requestedBuilder !== "universal") {
+          try {
+            const dfContent = fs.readFileSync(dockerfilePath, "utf8");
+            const copyMatches = [...dfContent.matchAll(/^\s*COPY\s+([^\s]+)\s+/gm)];
+            const missingCopy = copyMatches.some(([_, src]) => {
+              const trimmed = src.trim();
+              if (trimmed.startsWith("--from=")) return false;
+              return !fs.existsSync(path.join(workdir, trimmed));
+            });
+            if (
+              missingCopy &&
+              (fs.existsSync(path.join(workdir, "go.mod")) ||
+                fs.existsSync(path.join(workdir, "Cargo.toml")) ||
+                fs.existsSync(path.join(workdir, "package.json")) ||
+                fs.existsSync(path.join(workdir, "requirements.txt")))
+            ) {
+              publish(deploymentId, {
+                ts: Date.now(),
+                stream: "system",
+                text: "[self-heal] Detected release distribution Dockerfile with missing pre-compiled binary. Generating resilient multi-stage build...",
+              });
+              const backupPath = path.join(workdir, "Dockerfile.original");
+              if (!fs.existsSync(backupPath)) fs.writeFileSync(backupPath, dfContent, "utf8");
+              fs.writeFileSync(dockerfilePath, generateZeroConfigDockerfile(workdir), "utf8");
+              isZeroConfigGenerated = true;
+            }
+          } catch {}
+        }
+
+        if (!fs.existsSync(dockerfilePath) || requestedBuilder === "universal") {
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "system",
+            text: `[docker] Generating Universal Dockerfile for ${project}`,
+          });
+          const generatedDockerfile = generateZeroConfigDockerfile(workdir);
+          fs.writeFileSync(dockerfilePath, generatedDockerfile, "utf8");
+          isZeroConfigGenerated = true;
+        }
+
+        const stripBuildKitMounts = (df) =>
+          String(df || "")
+            .replace(/^#\s*syntax=.*\r?\n/i, "")
+            .replace(/--mount=[^\s\\]+(?:\s*\\\r?\n\s*)?/g, "");
+
+        let preferLegacyBuild = false;
+        try {
+          const info = await dockerApi.getSystemInfo();
+          if (info?.DefaultRuntime === "crun" || info?.CgroupDriver === "none") {
+            preferLegacyBuild = true;
+          }
+        } catch {}
+
+        if (preferLegacyBuild && fs.existsSync(dockerfilePath)) {
+          try {
+            const curDf = fs.readFileSync(dockerfilePath, "utf8");
+            if (/--mount=/i.test(curDf) || /^#\s*syntax=/i.test(curDf)) {
+              fs.writeFileSync(dockerfilePath, stripBuildKitMounts(curDf), "utf8");
+            }
+          } catch {}
+        }
+
+        publish(deploymentId, { ts: Date.now(), stream: "system", text: `docker build → ${tag}` });
+        let bc = await runStepArgv(
           deploymentId,
           workdir,
           "docker",
@@ -2092,9 +2109,53 @@ async function startService(deploymentId, project, workdir, cmd, env, target, po
             DOCKER_BUILDKIT: preferLegacyBuild ? "0" : "1",
           },
         );
-      }
 
-      if (bc !== 0) return bc;
+        // If BuildKit failed on kernel/cgroup restrictions, retry once with legacy builder before regenerating Dockerfile
+        if (bc !== 0 && !preferLegacyBuild) {
+          try {
+            const curDf = fs.readFileSync(dockerfilePath, "utf8");
+            if (/--mount=/i.test(curDf) || /^#\s*syntax=/i.test(curDf)) {
+              fs.writeFileSync(dockerfilePath, stripBuildKitMounts(curDf), "utf8");
+            }
+          } catch {}
+          bc = await runStepArgv(
+            deploymentId,
+            workdir,
+            "docker",
+            ["build", "-t", sanitizeImageTag(tag), "."],
+            { ...env, DOCKER_BUILDKIT: "0" },
+          );
+        }
+
+        // Self-Healing Build Fallback: If original Dockerfile build failed, fallback to zero-config multi-stage build!
+        if (bc !== 0 && !isZeroConfigGenerated && requestedBuilder !== "dockerfile") {
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "system",
+            text: "[self-heal] Docker build failed with repository Dockerfile. Automatically generating zero-config multi-stage Dockerfile and retrying...",
+          });
+          let generatedDockerfile = generateZeroConfigDockerfile(workdir);
+          if (preferLegacyBuild) generatedDockerfile = stripBuildKitMounts(generatedDockerfile);
+          fs.writeFileSync(dockerfilePath, generatedDockerfile, "utf8");
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "system",
+            text: `docker build (self-healing retry) → ${tag}`,
+          });
+          bc = await runStepArgv(
+            deploymentId,
+            workdir,
+            "docker",
+            ["build", "-t", sanitizeImageTag(tag), "."],
+            {
+              ...env,
+              DOCKER_BUILDKIT: preferLegacyBuild ? "0" : "1",
+            },
+          );
+        }
+
+        if (bc !== 0) return bc;
+      }
       imageInspect = await inspectDockerImage(tag);
     }
 
@@ -2432,6 +2493,61 @@ pages:
       stream: "system",
       text: `[blue/green] ✓ Zero-downtime cutover complete (${oldName})`,
     });
+
+    // Horizontal Replicas (replicas 2..N on distinct local ports, synced to edge load balancer)
+    const desiredReplicas = Math.max(1, Math.min(10, Number(projRow?.replicas) || 1));
+    const replicaPorts = [hostPort];
+    if (!remoteServerId && desiredReplicas > 1) {
+      publish(deploymentId, {
+        ts: Date.now(),
+        stream: "system",
+        text: `[scale] Scaling "${project}" to ${desiredReplicas} horizontal replicas...`,
+      });
+      for (let r = 2; r <= desiredReplicas; r++) {
+        const repName = `hx_${cleanName}_r${r}`;
+        stopContainer(repName);
+        const repPort = await allocateFreeProjectPort(`${project}_r${r}`, containerInternalPort);
+        const repRunArgs = [
+          "run",
+          "-d",
+          "--init",
+          "--name",
+          repName,
+          "--restart",
+          "unless-stopped",
+          "--label",
+          `hosterax.replica=${r}`,
+          "--add-host",
+          "host.docker.internal:host-gateway",
+          "-p",
+          `127.0.0.1:${repPort}:${containerInternalPort}`,
+          ...volArgs,
+          ...resArgs,
+          ...envArgs,
+          assertSafeImageRef(sanitizeImageTag(tag)),
+          ...extraArgs,
+        ];
+        const repRc = await runStepArgv(deploymentId, workdir, "docker", repRunArgs);
+        if (repRc === 0) {
+          replicaPorts.push(repPort);
+          publish(deploymentId, {
+            ts: Date.now(),
+            stream: "system",
+            text: `[scale] ✓ Replica #${r} (${repName}) listening on 127.0.0.1:${repPort}`,
+          });
+        }
+      }
+    }
+    try {
+      db.prepare("UPDATE projects SET replica_ports_json=? WHERE name=?").run(
+        JSON.stringify(replicaPorts.length > 1 ? replicaPorts : []),
+        project,
+      );
+      if (replicaPorts.length > 1) {
+        edgeManager.syncRoutes().catch(() => {});
+      }
+    } catch {}
+
     setPhase(deploymentId, "ready", { finished_at: Date.now(), exit_code: 0 });
 
     running.set(project, {
@@ -3352,12 +3468,17 @@ const DB_ENGINES = {
   mariadb: { image: "mariadb:11", port: 3306, dataDir: "/var/lib/mysql" },
   mongodb: { image: "mongo:7", port: 27017, dataDir: "/data/db" },
   redis: { image: "redis:7-alpine", port: 6379, dataDir: "/data" },
+  clickhouse: { image: "clickhouse/clickhouse-server:24-alpine", port: 8123, dataDir: "/var/lib/clickhouse" },
+  libsql: { image: "ghcr.io/tursodatabase/libsql-server:latest", port: 8080, dataDir: "/var/lib/sqld" },
 };
 const DB_ENGINE_ALIASES = {
   postgresql: "postgres",
   pg: "postgres",
   mongo: "mongodb",
   valkey: "redis",
+  ch: "clickhouse",
+  turso: "libsql",
+  sqld: "libsql",
 };
 
 function isPortFree(port) {
@@ -3395,7 +3516,10 @@ async function provisionDatabase({ project, name, engine, sizeMb = 1024 }) {
       status: 400,
       error: `Unsupported engine "${engine}". Use: ${Object.keys(DB_ENGINES).join(", ")}`,
     };
-  const dbName = String(name || "").toLowerCase();
+  const rawLower = String(name || "").trim().toLowerCase();
+  const dbName = /^[a-z][a-z0-9_-]*$/.test(rawLower)
+    ? rawLower.replace(/-/g, "_").replace(/_+/g, "_").replace(/_+$/g, "").slice(0, 41)
+    : rawLower;
   if (!/^[a-z][a-z0-9_]{0,40}$/.test(dbName))
     return {
       ok: false,
@@ -3468,6 +3592,31 @@ async function provisionDatabase({ project, name, engine, sizeMb = 1024 }) {
       spec.image,
     );
     conn = `mongodb://${user}:${password}@127.0.0.1:${hostPort}/${dbName}?authSource=admin`;
+  } else if (eng === "clickhouse") {
+    args.push(
+      "-e",
+      `CLICKHOUSE_USER=${user}`,
+      "-e",
+      `CLICKHOUSE_PASSWORD=${password}`,
+      "-e",
+      `CLICKHOUSE_DB=${dbName}`,
+      "-e",
+      "CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1",
+      spec.image,
+    );
+    conn = `http://${user}:${password}@127.0.0.1:${hostPort}/${dbName}`;
+  } else if (eng === "libsql") {
+    const basicToken = Buffer.from(`${user}:${password}`).toString("base64");
+    args.push(
+      "-e",
+      "SQLD_NODE=primary",
+      "-e",
+      "SQLD_DB_PATH=/var/lib/sqld/iku.db",
+      "-e",
+      `SQLD_HTTP_AUTH=basic:${basicToken}`,
+      spec.image,
+    );
+    conn = `libsql://${user}:${password}@127.0.0.1:${hostPort}`;
   } else {
     args.push(
       "-e",
@@ -3794,12 +3943,15 @@ const server = http.createServer((req, res) =>
     }
   }
 
-  // Git provider webhooks — public, but every request must carry a valid HMAC signature.
+  // Git provider webhooks (GitHub, GitLab, Gitea/Forgejo, Bitbucket) — public, signature verified.
   if (
-    (url.pathname === "/webhooks/github" || url.pathname.startsWith("/webhooks/github/")) &&
+    (m = url.pathname.match(
+      /^\/webhooks\/(github|gitlab|gitea|forgejo|bitbucket)(?:\/([^/]+))?$/i,
+    )) &&
     req.method === "POST"
   ) {
-    const project = decodeURIComponent(url.pathname.split("/")[3] || "") || null;
+    const provider = normalizeGitProvider(m[1]);
+    const project = m[2] ? decodeURIComponent(m[2]) : null;
     let raw;
     try {
       raw = await readRawBody(req, 5 * 1024 * 1024);
@@ -3814,9 +3966,10 @@ const server = http.createServer((req, res) =>
     } catch {}
     try {
       // Webhooks configured through POST /api/projects/:n/webhook (explicit secret + branch)
-      const legacy = project
-        ? db.prepare("SELECT * FROM webhooks WHERE project=?").get(project)
-        : null;
+      const legacy =
+        provider === "github" && project
+          ? db.prepare("SELECT * FROM webhooks WHERE project=?").get(project)
+          : null;
       if (legacy) {
         const expected =
           "sha256=" + crypto.createHmac("sha256", legacy.secret).update(raw).digest("hex");
@@ -3830,11 +3983,11 @@ const server = http.createServer((req, res) =>
         const r = await runDeployment(project, { trigger: "git" });
         return json(res, 200, { deployed: r.id });
       }
-      const result = await webhookManager.handleGitHubWebhook({
-        event,
+      const result = await webhookManager.handleGitWebhook({
+        provider,
+        headers: req.headers,
         payload,
         rawBodyText: raw,
-        signatureHeader,
         projectName: project,
         requireSignature: true,
       });
@@ -4935,6 +5088,28 @@ const server = http.createServer((req, res) =>
       });
       return json(res, 200, backups);
     }
+    if (url.pathname === "/api/backups/volumes" && req.method === "GET") {
+      try {
+        const volumes = await backupManager.listVolumes({ dockerApi });
+        return json(res, 200, volumes);
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
+    }
+    if (url.pathname === "/api/backups/volumes/create" && req.method === "POST") {
+      const b = await readBody(req);
+      if (!b?.volumeName) return json(res, 400, { error: "volumeName is required" });
+      try {
+        const bkp = await backupManager.createVolumeBackup({
+          volumeName: b.volumeName,
+          projectName: b.projectName,
+          encrypt: Boolean(b.encrypt),
+        });
+        return json(res, 200, bkp);
+      } catch (err) {
+        return json(res, 500, { error: err.message });
+      }
+    }
     if (url.pathname === "/api/backups/create" && req.method === "POST") {
       const b = await readBody(req);
       try {
@@ -5258,15 +5433,17 @@ const server = http.createServer((req, res) =>
       }
     }
 
-    // ────────── GitHub Webhooks & Ephemeral PR Previews ──────────
+    // ────────── Git Provider Webhooks (GitHub, GitLab, Gitea/Forgejo, Bitbucket) & Ephemeral PR/MR Previews ──────────
     if (
-      (url.pathname === "/api/webhooks/github" ||
-        (m = url.pathname.match(/^\/api\/projects\/([^/]+)\/webhooks\/github$/))) &&
+      ((m = url.pathname.match(/^\/api\/webhooks\/(github|gitlab|gitea|forgejo|bitbucket)$/i)) ||
+        (m = url.pathname.match(
+          /^\/api\/projects\/([^/]+)\/webhooks\/(github|gitlab|gitea|forgejo|bitbucket)$/i,
+        ))) &&
       req.method === "POST"
     ) {
-      const projectName = m ? m[1] : null;
-      const event = req.headers["x-github-event"] || "push";
-      const sig = req.headers["x-hub-signature-256"] || "";
+      const hasProject = m.length === 3;
+      const projectName = hasProject ? decodeURIComponent(m[1]) : null;
+      const provider = normalizeGitProvider(hasProject ? m[2] : m[1]);
       const rawText = await readRawBody(req);
 
       let payload = {};
@@ -5275,17 +5452,16 @@ const server = http.createServer((req, res) =>
       } catch {}
 
       try {
-        const result = await webhookManager.handleGitHubWebhook({
-          event,
+        const result = await webhookManager.handleGitWebhook({
+          provider,
+          headers: req.headers,
           payload,
           rawBodyText: rawText,
-          signatureHeader: sig,
           projectName,
-          deliveryGuid: req.headers["x-github-delivery"] || null,
         });
         return json(res, 200, result);
       } catch (err) {
-        return json(res, 400, { error: err.message });
+        return json(res, err.status || 400, { error: err.message });
       }
     }
     if (
@@ -6227,6 +6403,116 @@ const server = http.createServer((req, res) =>
         });
         return json(res, 200, cfg);
       }
+    }
+
+    // Horizontal Replicas & Multi-Node Placement Scaling
+    if ((m = url.pathname.match(/^\/api\/projects\/([^/]+)\/scale$/)) && req.method === "POST") {
+      const projectName = decodeURIComponent(m[1]);
+      const proj = db.prepare("SELECT * FROM projects WHERE name=?").get(projectName);
+      if (!proj) return json(res, 404, { error: "Project not found" });
+      const b = await readBody(req);
+      const replicas = Math.round(Number(b.replicas ?? proj.replicas ?? 1));
+      if (!Number.isInteger(replicas) || replicas < 1 || replicas > 10) {
+        return json(res, 400, { error: "replicas must be an integer between 1 and 10" });
+      }
+      const placementNodes = Array.isArray(b.placementNodes)
+        ? b.placementNodes.map((n) => String(n)).filter(Boolean)
+        : undefined;
+      if (placementNodes !== undefined) {
+        db.prepare("UPDATE projects SET replicas=?, placement_nodes_json=? WHERE name=?").run(
+          replicas,
+          JSON.stringify(placementNodes),
+          projectName,
+        );
+      } else {
+        db.prepare("UPDATE projects SET replicas=? WHERE name=?").run(replicas, projectName);
+      }
+
+      const cleanName = projectName.toLowerCase().replace(/[^a-z0-9]/g, "_");
+      const activePorts = proj.port ? [Number(proj.port)] : [];
+      if (proj.target === "docker" && (!proj.server_id || proj.server_id === "local")) {
+        // Remove extra replicas beyond target count
+        for (let r = replicas + 1; r <= 10; r++) {
+          stopContainer(`hx_${cleanName}_r${r}`);
+        }
+        // Inspect existing primary container to clone configuration for replicas 2..N if primary is running
+        if (replicas > 1) {
+          let primaryImg = null;
+          let internalPort = Number(proj.port) || 3000;
+          try {
+            const out = spawnSync("docker", [
+              "inspect",
+              `hx_${cleanName}`,
+              "--format",
+              "{{.Config.Image}}",
+            ], { encoding: "utf8", timeout: 3000 });
+            if (out.status === 0 && out.stdout?.trim()) {
+              primaryImg = out.stdout.trim();
+              const insp = await inspectDockerImage(primaryImg);
+              if (insp.exposedPorts?.length) internalPort = pickPrimaryHttpPort(insp.exposedPorts);
+            }
+          } catch {}
+          if (primaryImg) {
+            const envObj = {
+              HOST: "0.0.0.0",
+              ...decryptJson(proj.env_json),
+              PORT: String(internalPort),
+            };
+            const repEnvArgs = [];
+            for (const [k, v] of Object.entries(envObj)) {
+              if (isValidEnvKey(k)) repEnvArgs.push("-e", `${k}=${String(v ?? "")}`);
+            }
+            for (let r = 2; r <= replicas; r++) {
+              const repName = `hx_${cleanName}_r${r}`;
+              stopContainer(repName);
+              const repPort = await allocateFreeProjectPort(`${projectName}_r${r}`, internalPort);
+              const resRun = spawnSync(
+                "docker",
+                [
+                  "run",
+                  "-d",
+                  "--init",
+                  "--name",
+                  repName,
+                  "--restart",
+                  "unless-stopped",
+                  "--label",
+                  `hosterax.replica=${r}`,
+                  "--add-host",
+                  "host.docker.internal:host-gateway",
+                  "-p",
+                  `127.0.0.1:${repPort}:${internalPort}`,
+                  ...repEnvArgs,
+                  assertSafeImageRef(sanitizeImageTag(primaryImg)),
+                ],
+                { encoding: "utf8", timeout: 30000 },
+              );
+              if (resRun.status === 0) activePorts.push(repPort);
+            }
+          }
+        }
+      }
+      const persistedPorts = activePorts.length > 1 ? activePorts : [];
+      db.prepare("UPDATE projects SET replica_ports_json=? WHERE name=?").run(
+        JSON.stringify(persistedPorts),
+        projectName,
+      );
+      await edgeManager.syncRoutes().catch(() => {});
+      return json(res, 200, {
+        ok: true,
+        project: projectName,
+        replicas,
+        placementNodes:
+          placementNodes ??
+          (() => {
+            try {
+              return JSON.parse(proj.placement_nodes_json || "[]");
+            } catch {
+              return [];
+            }
+          })(),
+        replicaPorts: persistedPorts,
+      });
     }
 
     // Manual Sleep & Wake

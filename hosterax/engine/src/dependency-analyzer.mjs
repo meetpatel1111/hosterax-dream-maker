@@ -58,24 +58,73 @@ const PLACEHOLDER_VAL_RE =
 const WELL_KNOWN_PORTS = {
   ollama: 11434,
   "ollama/ollama": 11434,
+  "open-webui": 8080,
+  "ghcr.io/open-webui/open-webui": 8080,
   vaultwarden: 80,
   nginx: 80,
   caddy: 80,
   redis: 6379,
+  valkey: 6379,
   postgres: 5432,
   postgresql: 5432,
   mariadb: 3306,
   mysql: 3306,
+  clickhouse: 8123,
+  libsql: 8080,
+  sqld: 8080,
   grafana: 3000,
   prometheus: 9090,
+  loki: 3100,
   uptimekuma: 3001,
   "uptime-kuma": 3001,
+  beszel: 8090,
   n8n: 5678,
+  activepieces: 80,
+  windsor: 8000,
+  windmill: 8000,
   portainer: 9000,
   dockge: 5001,
   searxng: 8080,
   audiobookshelf: 13378,
   "it-tools": 80,
+  authentik: 9000,
+  keycloak: 8080,
+  infisical: 8080,
+  plausible: 8000,
+  umami: 3000,
+  posthog: 8000,
+  metabase: 3000,
+  superset: 8088,
+  immich: 2283,
+  nextcloud: 80,
+  minio: 9000,
+  docmost: 3000,
+  outline: 3000,
+  bookstack: 80,
+  affine: 3010,
+  plane: 3000,
+  twenty: 3000,
+  directus: 8055,
+  nocodb: 8080,
+  pocketbase: 8080,
+  appwrite: 80,
+  ghost: 2368,
+  wordpress: 80,
+  strapi: 1337,
+  langfuse: 3000,
+  dify: 3000,
+  flowise: 3000,
+  qdrant: 6333,
+  meilisearch: 7700,
+  typesense: 8108,
+  paperless: 8000,
+  "paperless-ngx": 8000,
+  jellyfin: 8096,
+  plex: 32400,
+  stirling: 8080,
+  listmonk: 9000,
+  chatwoot: 3000,
+  trigger: 3030,
 };
 
 const CURATED_APP_BLUEPRINTS = [
@@ -576,6 +625,400 @@ const CURATED_APP_BLUEPRINTS = [
       },
     ],
   },
+  {
+    id: "authentik",
+    match: /authentik/i,
+    port: 9000,
+    volumes: ["/media", "/templates"],
+    databases: [
+      { engine: "postgres", reason: "Authentik identity & policy directory requires PostgreSQL", envKey: "AUTHENTIK_POSTGRESQL__HOST", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Authentik requires Redis for task queues and sessions", envKey: "AUTHENTIK_REDIS__HOST", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "AUTHENTIK_SECRET_KEY", defaultValue: "", required: true, secret: true, description: "Cryptographic signing secret", source: "blueprint" },
+      { key: "AUTHENTIK_ERROR_REPORTING__ENABLED", defaultValue: "false", required: false, secret: false, description: "Disable telemetry reporting", source: "blueprint" },
+    ],
+  },
+  {
+    id: "keycloak",
+    match: /keycloak/i,
+    port: 8080,
+    volumes: ["/opt/keycloak/data"],
+    databases: [{ engine: "postgres", reason: "Keycloak IAM realm storage", envKey: "KC_DB_URL", confidence: "high", recommended: true }],
+    envVars: [
+      { key: "KC_BOOTSTRAP_ADMIN_USERNAME", defaultValue: "admin", required: true, secret: false, description: "Initial admin username", source: "blueprint" },
+      { key: "KC_BOOTSTRAP_ADMIN_PASSWORD", defaultValue: "", required: true, secret: true, description: "Initial admin password", source: "blueprint" },
+      { key: "KC_PROXY_HEADERS", defaultValue: "xforwarded", required: false, secret: false, description: "Reverse proxy forwarding mode", source: "blueprint" },
+    ],
+  },
+  {
+    id: "plausible",
+    match: /plausible/i,
+    port: 8000,
+    volumes: [],
+    databases: [
+      { engine: "postgres", reason: "Plausible user & site metadata store", envKey: "DATABASE_URL", confidence: "high", recommended: true },
+      { engine: "clickhouse", reason: "Plausible event & timeseries analytics engine", envKey: "CLICKHOUSE_DATABASE_URL", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "BASE_URL", defaultValue: "", required: true, secret: false, description: "Canonical HTTPS URL for Plausible", source: "blueprint" },
+      { key: "SECRET_KEY_BASE", defaultValue: "", required: true, secret: true, description: "64-byte Phoenix session secret", source: "blueprint" },
+    ],
+  },
+  {
+    id: "langfuse",
+    match: /langfuse/i,
+    port: 3000,
+    volumes: [],
+    databases: [
+      { engine: "postgres", reason: "Langfuse LLM trace & prompt registry store", envKey: "DATABASE_URL", confidence: "high", recommended: true },
+      { engine: "clickhouse", reason: "ClickHouse high-throughput LLM observability store", envKey: "CLICKHOUSE_URL", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Redis queue/cache for ingestion", envKey: "REDIS_CONNECTION_STRING", confidence: "medium", recommended: false },
+    ],
+    envVars: [
+      { key: "NEXTAUTH_SECRET", defaultValue: "", required: true, secret: true, description: "NextAuth encryption secret", source: "blueprint" },
+      { key: "SALT", defaultValue: "", required: true, secret: true, description: "API key hashing salt", source: "blueprint" },
+      { key: "NEXTAUTH_URL", defaultValue: "", required: true, secret: false, description: "Public HTTPS URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "immich",
+    match: /immich/i,
+    port: 2283,
+    volumes: ["/usr/src/app/upload"],
+    databases: [
+      { engine: "postgres", reason: "Immich photo metadata & pgvector index", envKey: "DB_HOSTNAME", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Immich background ML job queue", envKey: "REDIS_HOSTNAME", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "UPLOAD_LOCATION", defaultValue: "./library", required: false, secret: false, description: "Photo library mount path", source: "blueprint" },
+      { key: "JWT_SECRET", defaultValue: "", required: true, secret: true, description: "JWT signing secret", source: "blueprint" },
+    ],
+  },
+  {
+    id: "docmost",
+    match: /docmost/i,
+    port: 3000,
+    volumes: ["/app/data/storage"],
+    databases: [
+      { engine: "postgres", reason: "Docmost collaborative wiki database", envKey: "DATABASE_URL", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Docmost WebSocket & job broker", envKey: "REDIS_URL", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "APP_URL", defaultValue: "", required: true, secret: false, description: "Canonical URL", source: "blueprint" },
+      { key: "APP_SECRET", defaultValue: "", required: true, secret: true, description: "32-char hex JWT secret", source: "blueprint" },
+    ],
+  },
+  {
+    id: "nocodb",
+    match: /nocodb/i,
+    port: 8080,
+    volumes: ["/usr/app/data"],
+    databases: [
+      { engine: "postgres", reason: "Recommended production metadata DB for NocoDB", envKey: "NC_DB", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Optional Redis cache & webhook throttling", envKey: "NC_REDIS_URL", confidence: "medium", recommended: false },
+    ],
+    envVars: [
+      { key: "NC_AUTH_JWT_SECRET", defaultValue: "", required: true, secret: true, description: "JWT signing secret", source: "blueprint" },
+      { key: "NC_PUBLIC_URL", defaultValue: "", required: false, secret: false, description: "Canonical public URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "open-webui",
+    match: /open-webui|openwebui/i,
+    port: 8080,
+    volumes: ["/app/backend/data"],
+    databases: [],
+    envVars: [
+      { key: "WEBUI_SECRET_KEY", defaultValue: "", required: true, secret: true, description: "Session & cookie signing key", source: "blueprint" },
+      { key: "OLLAMA_BASE_URL", defaultValue: "http://ollama:11434", required: false, secret: false, description: "Upstream Ollama API URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "dify",
+    match: /dify/i,
+    port: 3000,
+    volumes: ["/app/api/storage"],
+    databases: [
+      { engine: "postgres", reason: "Dify workflow & app store", envKey: "DB_HOST", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Dify Celery broker & session cache", envKey: "REDIS_HOST", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "SECRET_KEY", defaultValue: "", required: true, secret: true, description: "Dify encryption key", source: "blueprint" },
+    ],
+  },
+  {
+    id: "flowise",
+    match: /flowise/i,
+    port: 3000,
+    volumes: ["/root/.flowise"],
+    databases: [
+      { engine: "postgres", reason: "Optional PostgreSQL persistence for Flowise flows", envKey: "DATABASE_HOST", confidence: "medium", recommended: false },
+    ],
+    envVars: [
+      { key: "FLOWISE_USERNAME", defaultValue: "admin", required: false, secret: false, description: "Admin UI username", source: "blueprint" },
+      { key: "FLOWISE_PASSWORD", defaultValue: "", required: false, secret: true, description: "Admin UI password", source: "blueprint" },
+    ],
+  },
+  {
+    id: "beszel",
+    match: /beszel/i,
+    port: 8090,
+    volumes: ["/beszel_data"],
+    databases: [],
+    envVars: [
+      { key: "APP_URL", defaultValue: "", required: false, secret: false, description: "Public URL for OIDC/webhooks", source: "blueprint" },
+    ],
+  },
+  {
+    id: "plane",
+    match: /makeplane|plane-/i,
+    port: 3000,
+    volumes: [],
+    databases: [
+      { engine: "postgres", reason: "Plane issues & workspace database", envKey: "DATABASE_URL", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Plane Celery & WebSocket state", envKey: "REDIS_URL", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "SECRET_KEY", defaultValue: "", required: true, secret: true, description: "Django secret key", source: "blueprint" },
+      { key: "WEB_URL", defaultValue: "", required: true, secret: false, description: "Public HTTPS URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "twenty",
+    match: /twentycrm|\/twenty(?::|$)/i,
+    port: 3000,
+    volumes: ["/app/packages/twenty-server/.local-storage"],
+    databases: [
+      { engine: "postgres", reason: "Twenty CRM workspace database", envKey: "PG_DATABASE_URL", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Twenty CRM job queue", envKey: "REDIS_URL", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "APP_SECRET", defaultValue: "", required: true, secret: true, description: "Signing secret", source: "blueprint" },
+      { key: "SERVER_URL", defaultValue: "", required: true, secret: false, description: "Public server URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "strapi",
+    match: /strapi/i,
+    port: 1337,
+    volumes: ["/opt/app/public/uploads"],
+    databases: [{ engine: "postgres", reason: "Strapi headless CMS database", envKey: "DATABASE_HOST", confidence: "high", recommended: true }],
+    envVars: [
+      { key: "APP_KEYS", defaultValue: "", required: true, secret: true, description: "Comma-separated session keys", source: "blueprint" },
+      { key: "API_TOKEN_SALT", defaultValue: "", required: true, secret: true, description: "API token salt", source: "blueprint" },
+      { key: "ADMIN_JWT_SECRET", defaultValue: "", required: true, secret: true, description: "Admin JWT secret", source: "blueprint" },
+      { key: "JWT_SECRET", defaultValue: "", required: true, secret: true, description: "Users-permissions JWT secret", source: "blueprint" },
+    ],
+  },
+  {
+    id: "pocketbase",
+    match: /pocketbase/i,
+    port: 8080,
+    volumes: ["/pb/pb_data"],
+    databases: [],
+    envVars: [],
+  },
+  {
+    id: "wordpress",
+    match: /(?:^|\/)wordpress(?::|$)/i,
+    port: 80,
+    volumes: ["/var/www/html"],
+    databases: [{ engine: "mariadb", reason: "WordPress requires MariaDB or MySQL", envKey: "WORDPRESS_DB_HOST", confidence: "high", recommended: true }],
+    envVars: [
+      { key: "WORDPRESS_TABLE_PREFIX", defaultValue: "wp_", required: false, secret: false, description: "Database table prefix", source: "blueprint" },
+    ],
+  },
+  {
+    id: "infisical",
+    match: /infisical/i,
+    port: 8080,
+    volumes: [],
+    databases: [
+      { engine: "postgres", reason: "Infisical secrets vault database", envKey: "DB_CONNECTION_URI", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Infisical rate-limit & queue store", envKey: "REDIS_URL", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "ENCRYPTION_KEY", defaultValue: "", required: true, secret: true, description: "16-byte hex symmetric key", source: "blueprint" },
+      { key: "AUTH_SECRET", defaultValue: "", required: true, secret: true, description: "32-byte base64 JWT secret", source: "blueprint" },
+      { key: "SITE_URL", defaultValue: "", required: true, secret: false, description: "Canonical URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "listmonk",
+    match: /listmonk/i,
+    port: 9000,
+    volumes: ["/listmonk/uploads"],
+    databases: [{ engine: "postgres", reason: "Listmonk newsletter subscriber database", envKey: "LISTMONK_db__host", confidence: "high", recommended: true }],
+    envVars: [
+      { key: "LISTMONK_app__address", defaultValue: "0.0.0.0:9000", required: false, secret: false, description: "HTTP listen address", source: "blueprint" },
+    ],
+  },
+  {
+    id: "chatwoot",
+    match: /chatwoot/i,
+    port: 3000,
+    volumes: ["/app/storage"],
+    databases: [
+      { engine: "postgres", reason: "Chatwoot conversations & contacts store", envKey: "POSTGRES_HOST", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Chatwoot Sidekiq background jobs", envKey: "REDIS_URL", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "SECRET_KEY_BASE", defaultValue: "", required: true, secret: true, description: "Rails secret key base", source: "blueprint" },
+      { key: "FRONTEND_URL", defaultValue: "", required: true, secret: false, description: "Canonical HTTPS URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "qdrant",
+    match: /qdrant/i,
+    port: 6333,
+    volumes: ["/qdrant/storage"],
+    databases: [],
+    envVars: [
+      { key: "QDRANT__SERVICE__API_KEY", defaultValue: "", required: false, secret: true, description: "Vector DB API key", source: "blueprint" },
+    ],
+  },
+  {
+    id: "meilisearch",
+    match: /meilisearch/i,
+    port: 7700,
+    volumes: ["/meili_data"],
+    databases: [],
+    envVars: [
+      { key: "MEILI_MASTER_KEY", defaultValue: "", required: true, secret: true, description: "Master API key (min 16 chars)", source: "blueprint" },
+      { key: "MEILI_ENV", defaultValue: "production", required: false, secret: false, description: "Runtime mode", source: "blueprint" },
+    ],
+  },
+  {
+    id: "ollama",
+    match: /ollama/i,
+    port: 11434,
+    volumes: ["/root/.ollama"],
+    databases: [],
+    envVars: [
+      { key: "OLLAMA_ORIGINS", defaultValue: "*", required: false, secret: false, description: "Allowed CORS origins", source: "blueprint" },
+    ],
+  },
+  {
+    id: "prometheus",
+    match: /prometheus/i,
+    port: 9090,
+    volumes: ["/prometheus"],
+    databases: [],
+    envVars: [],
+  },
+  {
+    id: "loki",
+    match: /grafana\/loki/i,
+    port: 3100,
+    volumes: ["/loki"],
+    databases: [],
+    envVars: [],
+  },
+  {
+    id: "searxng",
+    match: /searxng/i,
+    port: 8080,
+    volumes: ["/etc/searxng"],
+    databases: [{ engine: "redis", reason: "SearXNG rate limiter & engine cache", envKey: "SEARXNG_REDIS_URL", confidence: "medium", recommended: false }],
+    envVars: [
+      { key: "SEARXNG_SECRET", defaultValue: "", required: true, secret: true, description: "Instance signing secret", source: "blueprint" },
+    ],
+  },
+  {
+    id: "audiobookshelf",
+    match: /audiobookshelf/i,
+    port: 13378,
+    volumes: ["/config", "/metadata", "/audiobooks"],
+    databases: [],
+    envVars: [],
+  },
+  {
+    id: "jellyfin",
+    match: /jellyfin/i,
+    port: 8096,
+    volumes: ["/config", "/cache", "/media"],
+    databases: [],
+    envVars: [],
+  },
+  {
+    id: "stirling-pdf",
+    match: /stirling-pdf|s-pdf/i,
+    port: 8080,
+    volumes: ["/configs"],
+    databases: [],
+    envVars: [
+      { key: "DOCKER_ENABLE_SECURITY", defaultValue: "false", required: false, secret: false, description: "Enable built-in login protection", source: "blueprint" },
+    ],
+  },
+  {
+    id: "it-tools",
+    match: /it-tools/i,
+    port: 80,
+    volumes: [],
+    databases: [],
+    envVars: [],
+  },
+  {
+    id: "bookstack",
+    match: /bookstack/i,
+    port: 80,
+    volumes: ["/config"],
+    databases: [{ engine: "mariadb", reason: "BookStack wiki database", envKey: "DB_HOST", confidence: "high", recommended: true }],
+    envVars: [
+      { key: "APP_KEY", defaultValue: "", required: true, secret: true, description: "Laravel encryption key", source: "blueprint" },
+      { key: "APP_URL", defaultValue: "", required: true, secret: false, description: "Canonical URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "windmill",
+    match: /windmill/i,
+    port: 8000,
+    volumes: [],
+    databases: [{ engine: "postgres", reason: "Windmill script, flow & job queue database", envKey: "DATABASE_URL", confidence: "high", recommended: true }],
+    envVars: [
+      { key: "BASE_URL", defaultValue: "", required: false, secret: false, description: "Canonical URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "activepieces",
+    match: /activepieces/i,
+    port: 80,
+    volumes: ["/root/.activepieces"],
+    databases: [
+      { engine: "postgres", reason: "Activepieces automation flows database", envKey: "AP_POSTGRES_HOST", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Activepieces BullMQ execution queue", envKey: "AP_REDIS_HOST", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "AP_ENCRYPTION_KEY", defaultValue: "", required: true, secret: true, description: "32-char hex encryption key", source: "blueprint" },
+      { key: "AP_JWT_SECRET", defaultValue: "", required: true, secret: true, description: "JWT signing secret", source: "blueprint" },
+      { key: "AP_FRONTEND_URL", defaultValue: "", required: true, secret: false, description: "Canonical URL", source: "blueprint" },
+    ],
+  },
+  {
+    id: "superset",
+    match: /superset/i,
+    port: 8088,
+    volumes: ["/app/superset_home"],
+    databases: [
+      { engine: "postgres", reason: "Superset metadata store", envKey: "SQLALCHEMY_DATABASE_URI", confidence: "high", recommended: true },
+      { engine: "redis", reason: "Superset Celery & query result cache", envKey: "REDIS_HOST", confidence: "high", recommended: true },
+    ],
+    envVars: [
+      { key: "SUPERSET_SECRET_KEY", defaultValue: "", required: true, secret: true, description: "Flask session secret key", source: "blueprint" },
+    ],
+  },
+  {
+    id: "typesense",
+    match: /typesense/i,
+    port: 8108,
+    volumes: ["/data"],
+    databases: [],
+    envVars: [
+      { key: "TYPESENSE_API_KEY", defaultValue: "", required: true, secret: true, description: "Admin API key", source: "blueprint" },
+      { key: "TYPESENSE_DATA_DIR", defaultValue: "/data", required: false, secret: false, description: "Index directory", source: "blueprint" },
+    ],
+  },
 ];
 
 export function matchCuratedAppBlueprint(imageTag = "", appName = "") {
@@ -751,6 +1194,8 @@ export function extractReadmeHints(markdown) {
     { engine: "mysql", re: /\bmysql\b/i },
     { engine: "mariadb", re: /\bmariadb\b/i },
     { engine: "mongodb", re: /\b(mongodb|mongo)\b/i },
+    { engine: "clickhouse", re: /\bclickhouse\b/i },
+    { engine: "libsql", re: /\b(libsql|sqld|turso)\b/i },
   ];
   for (const pat of dbPatterns) {
     if (pat.re.test(markdown)) mentionedDbs.push(pat.engine);
@@ -766,6 +1211,8 @@ function detectDbEngineFromImageOrName(name, image) {
   if (/mysql/.test(target)) return "mysql";
   if (/mongo/.test(target)) return "mongodb";
   if (/redis|valkey|dragonfly/.test(target)) return "redis";
+  if (/clickhouse/.test(target)) return "clickhouse";
+  if (/libsql|sqld/.test(target)) return "libsql";
   return null;
 }
 
@@ -1010,6 +1457,30 @@ function inferDatabaseFromEnvKeys(envMap, targetImage = "") {
       "redis",
       "Detected Redis cache/queue environment variables",
       keys.find((k) => /^(REDIS_URL|VALKEY_URL)$/i.test(k)) || "REDIS_URL",
+      "high",
+    );
+  }
+
+  if (
+    keys.some((k) => /^(CLICKHOUSE_URL|CLICKHOUSE_HOST|CLICKHOUSE_DATABASE_URL)$/i.test(k)) ||
+    /clickhouse/i.test(combinedValues)
+  ) {
+    addDb(
+      "clickhouse",
+      "Detected ClickHouse analytics environment variables",
+      keys.find((k) => /^(CLICKHOUSE_URL|CLICKHOUSE_DATABASE_URL)$/i.test(k)) || "CLICKHOUSE_URL",
+      "high",
+    );
+  }
+
+  if (
+    keys.some((k) => /^(LIBSQL_URL|TURSO_DATABASE_URL|SQLD_URL)$/i.test(k)) ||
+    /libsql:\/\//i.test(combinedValues)
+  ) {
+    addDb(
+      "libsql",
+      "Detected LibSQL / sqld edge SQLite environment variables",
+      keys.find((k) => /^(LIBSQL_URL|TURSO_DATABASE_URL)$/i.test(k)) || "LIBSQL_URL",
       "high",
     );
   }

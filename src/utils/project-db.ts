@@ -44,6 +44,20 @@ export const DB_ENGINE_SPECS: DbEngineSpec[] = [
     defaultPort: 27017,
     primaryEnvKey: "MONGODB_URI",
   },
+  {
+    id: "clickhouse",
+    label: "ClickHouse",
+    shortTag: "CH",
+    defaultPort: 8123,
+    primaryEnvKey: "CLICKHOUSE_URL",
+  },
+  {
+    id: "libsql",
+    label: "LibSQL",
+    shortTag: "LQ",
+    defaultPort: 8080,
+    primaryEnvKey: "LIBSQL_URL",
+  },
 ];
 
 export const DB_STORAGE_OPTIONS_MB = [512, 1024, 2048, 5120, 10240] as const;
@@ -123,7 +137,7 @@ export function resolveDbEnvUpserts({
     isSecret:
       isSecretKey(key) ||
       /:\/\/[^@]*:[^@]+@/.test(value) ||
-      /^(DATABASE_URL|REDIS_URL|MONGODB_URI|MONGO_URL|POSTGRES_URL|POSTGRESQL_URL|VALKEY_URL)$/i.test(
+      /^(DATABASE_URL|REDIS_URL|MONGODB_URI|MONGO_URL|POSTGRES_URL|POSTGRESQL_URL|VALKEY_URL|CLICKHOUSE_URL|LIBSQL_URL)$/i.test(
         key,
       ),
   }));

@@ -30,6 +30,8 @@ test("buildInternalHostHint uses allocated port or engine default", () => {
   assert.equal(buildInternalHostHint("postgres", 5439), "host.docker.internal:5439");
   assert.equal(buildInternalHostHint("redis", undefined), "host.docker.internal:6379");
   assert.equal(buildInternalHostHint("mongodb", null), "host.docker.internal:27017");
+  assert.equal(buildInternalHostHint("clickhouse", undefined), "host.docker.internal:8123");
+  assert.equal(buildInternalHostHint("libsql", undefined), "host.docker.internal:8080");
 });
 
 test("resolveDbEnvUpserts marks connection URLs with credentials as secrets", () => {
@@ -49,6 +51,19 @@ test("resolveDbEnvUpserts marks connection URLs with credentials as secrets", ()
   });
   assert.deepEqual(redis.keys, ["REDIS_URL"]);
   assert.equal(redis.upserts[0]?.isSecret, true);
+
+  const ch = resolveDbEnvUpserts({
+    engine: "clickhouse",
+    internalConnectionString: "http://hx:secret@host.docker.internal:8123/default",
+  });
+  assert.deepEqual(ch.keys, ["CLICKHOUSE_URL"]);
+  assert.equal(ch.upserts[0]?.isSecret, true);
+
+  const lq = resolveDbEnvUpserts({
+    engine: "libsql",
+    internalConnectionString: "libsql://host.docker.internal:8080",
+  });
+  assert.deepEqual(lq.keys, ["LIBSQL_URL"]);
 });
 
 test("summarizeDomainStatus computes verification and SSL flags", () => {

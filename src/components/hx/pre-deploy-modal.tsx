@@ -54,6 +54,8 @@ const DB_OPTIONS: Array<{ id: ManagedDbEngine; label: string }> = [
   { id: "mysql", label: "MySQL" },
   { id: "mariadb", label: "MariaDB" },
   { id: "mongodb", label: "MongoDB" },
+  { id: "clickhouse", label: "ClickHouse" },
+  { id: "libsql", label: "LibSQL" },
 ];
 
 const DB_LABEL_MAP = new Map<ManagedDbEngine, string>(DB_OPTIONS.map((d) => [d.id, d.label]));
@@ -64,6 +66,8 @@ const SAMPLE_PREVIEW_URIS: Record<ManagedDbEngine, string> = {
   mysql: "mysql://hosterax:secret@host.docker.internal:3306/app",
   mariadb: "mariadb://hosterax:secret@host.docker.internal:3306/app",
   mongodb: "mongodb://hosterax:secret@host.docker.internal:27017/app",
+  clickhouse: "http://hosterax:secret@host.docker.internal:8123/default",
+  libsql: "http://host.docker.internal:8080",
 };
 
 export function PreDeployModal({
@@ -99,6 +103,8 @@ export function PreDeployModal({
     mysql: false,
     mariadb: false,
     mongodb: false,
+    clickhouse: false,
+    libsql: false,
   });
 
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -140,6 +146,8 @@ export function PreDeployModal({
       mysql: false,
       mariadb: false,
       mongodb: false,
+      clickhouse: false,
+      libsql: false,
     });
 
     if (!health?.ok) return;
@@ -192,6 +200,8 @@ export function PreDeployModal({
           mysql: false,
           mariadb: false,
           mongodb: false,
+          clickhouse: false,
+          libsql: false,
         };
         for (const d of res.databases || []) {
           if (d.recommended) autoDbs[d.engine] = true;
@@ -305,6 +315,8 @@ export function PreDeployModal({
         mysql: false,
         mariadb: false,
         mongodb: false,
+        clickhouse: false,
+        libsql: false,
       };
       for (const d of res.databases || []) {
         if (d.recommended) autoDbs[d.engine] = true;
@@ -773,7 +785,7 @@ export function PreDeployModal({
               </span>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
               {DB_OPTIONS.map((opt) => {
                 const detected = detectedDbMap.get(opt.id);
                 const checked = selectedDbs[opt.id];

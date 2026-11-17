@@ -619,7 +619,19 @@ export type BackupTarget = {
   label: string;
   ports?: string;
   isContainer: boolean;
+  isVolume?: boolean;
+  volumeName?: string;
   projectName?: string;
+};
+
+export type VolumeTarget = {
+  name: string;
+  driver: string;
+  mountpoint?: string;
+  scope?: string;
+  labels?: Record<string, string>;
+  createdAt?: string | null;
+  projectName?: string | null;
 };
 
 export type BackupItem = {
@@ -699,6 +711,28 @@ export function useBackupTargets() {
       }
     },
     enabled: !!health.data?.ok,
+  });
+}
+
+export function useVolumeTargets() {
+  const eng = useEngine();
+  const health = useEngineHealth();
+  return useQuery<VolumeTarget[]>({
+    queryKey: ["backup-volumes", eng.url, eng.token],
+    queryFn: async () => {
+      try {
+        const res = await eng.call<VolumeTarget[] | { volumes?: VolumeTarget[] }>(
+          "GET",
+          "/api/backups/volumes",
+        );
+        if (Array.isArray(res)) return res;
+        return Array.isArray(res?.volumes) ? res.volumes : [];
+      } catch {
+        return [];
+      }
+    },
+    enabled: !!health.data?.ok,
+    refetchInterval: 15000,
   });
 }
 

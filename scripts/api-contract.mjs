@@ -27,7 +27,7 @@ const METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
 export const OPENAPI_FILE = path.join(ROOT, "hosterax", "engine", "src", "openapi.json");
 
-const ENGINE_FILES = ["index.mjs", "projects-api.mjs", "catalog-api.mjs", "docker-api.mjs"];
+const ENGINE_FILES = ["index.mjs", "projects-api.mjs", "catalog-api.mjs", "docker-api.mjs", "enterprise-apis.mjs"];
 const PROJECT_BASE = "/api/projects/{name}/";
 // Paths the engine only compares against to gate other behaviour (auth, magic DNS); not routes.
 const NOT_ROUTES = new Set(["/api", "/api/auth", "/webhooks"]);

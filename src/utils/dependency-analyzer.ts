@@ -1,7 +1,14 @@
 // Client-side dependency analysis types, secret generation, DB connection-string injection,
 // and offline fallback heuristics shared across App Store and Registry Explorer.
 
-export type ManagedDbEngine = "postgres" | "redis" | "mysql" | "mariadb" | "mongodb";
+export type ManagedDbEngine =
+  | "postgres"
+  | "redis"
+  | "mysql"
+  | "mariadb"
+  | "mongodb"
+  | "clickhouse"
+  | "libsql";
 
 export interface AnalyzedEnvVar {
   key: string;
@@ -273,6 +280,42 @@ export function buildConnectionEnvForDb({
     if (parts) {
       if (upperKeys.has("MONGO_HOST")) injected.MONGO_HOST = parts.host;
       if (upperKeys.has("MONGO_PORT") && parts.port) injected.MONGO_PORT = parts.port;
+    }
+    return injected;
+  }
+
+  if (engine === "clickhouse") {
+    const targetUrlKey =
+      preferredEnvKey && /CLICKHOUSE/i.test(preferredEnvKey)
+        ? preferredEnvKey
+        : upperKeys.has("CLICKHOUSE_DSN")
+          ? "CLICKHOUSE_DSN"
+          : "CLICKHOUSE_URL";
+    injected[targetUrlKey] = internalConnectionString;
+    if (parts) {
+      if (upperKeys.has("CLICKHOUSE_HOST")) injected.CLICKHOUSE_HOST = parts.host;
+      if (upperKeys.has("CLICKHOUSE_PORT") && parts.port) injected.CLICKHOUSE_PORT = parts.port;
+      if (upperKeys.has("CLICKHOUSE_USER") && parts.user) injected.CLICKHOUSE_USER = parts.user;
+      if (upperKeys.has("CLICKHOUSE_PASSWORD") && parts.password)
+        injected.CLICKHOUSE_PASSWORD = parts.password;
+      if (upperKeys.has("CLICKHOUSE_DB") && parts.database)
+        injected.CLICKHOUSE_DB = parts.database;
+    }
+    return injected;
+  }
+
+  if (engine === "libsql") {
+    const targetUrlKey =
+      preferredEnvKey && /LIBSQL|TURSO/i.test(preferredEnvKey)
+        ? preferredEnvKey
+        : upperKeys.has("TURSO_DATABASE_URL")
+          ? "TURSO_DATABASE_URL"
+          : upperKeys.has("LIBSQL_DATABASE_URL")
+            ? "LIBSQL_DATABASE_URL"
+            : "LIBSQL_URL";
+    injected[targetUrlKey] = internalConnectionString;
+    if (parts && parts.password && upperKeys.has("LIBSQL_AUTH_TOKEN")) {
+      injected.LIBSQL_AUTH_TOKEN = parts.password;
     }
     return injected;
   }

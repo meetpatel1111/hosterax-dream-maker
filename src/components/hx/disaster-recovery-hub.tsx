@@ -30,12 +30,14 @@ import { toast } from "sonner";
 import {
   useEngine,
   useBackupTargets,
+  useVolumeTargets,
   useBackupHistory,
   useS3Config,
   useRemoteS3Backups,
   useBackupSchedules,
   type BackupCursor,
   type BackupItem,
+  type VolumeTarget,
 } from "../../lib/engine";
 import { confirmAction } from "./confirm-modal";
 import {
@@ -106,12 +108,14 @@ export function DisasterRecoveryHub() {
 
   // Queries
   const targetsQuery = useBackupTargets();
+  const volumeTargetsQuery = useVolumeTargets();
   const backupsQuery = useBackupHistory();
   const s3ConfigQuery = useS3Config();
   const remoteBackupsQuery = useRemoteS3Backups();
   const schedulesQuery = useBackupSchedules();
 
   const targets = useMemo(() => targetsQuery.data || [], [targetsQuery.data]);
+  const volumeTargets = useMemo(() => volumeTargetsQuery.data || [], [volumeTargetsQuery.data]);
   const schedules = useMemo(() => schedulesQuery.data || [], [schedulesQuery.data]);
   const latestBackups = useMemo(() => backupsQuery.data?.items || [], [backupsQuery.data?.items]);
   const s3Config = s3ConfigQuery.data;
@@ -158,6 +162,7 @@ export function DisasterRecoveryHub() {
 
   // Actions loading state
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [snapshottingVolume, setSnapshottingVolume] = useState<string | null>(null);
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
@@ -362,6 +367,30 @@ export function DisasterRecoveryHub() {
       toast.error(err?.message || "Failed to create database snapshot");
     } finally {
       setIsBackingUp(false);
+    }
+  };
+
+  // Handler: Snapshot Named Docker Volume
+  const handleSnapshotVolume = async (vol: VolumeTarget) => {
+    const volProject =
+      vol.projectName || vol.labels?.["com.docker.compose.project"] || "docker";
+    setSnapshottingVolume(vol.name);
+    try {
+      const res = await engine.call<any>("POST", "/api/backups/volumes/create", {
+        volumeName: vol.name,
+        projectName: volProject,
+      });
+      toast.success(
+        `Volume "${vol.name}" snapshot created (${res.sizeMb ?? 0} MB, SHA-256 verified)${
+          res.s3Synced ? " & replicated to S3." : "."
+        }`,
+      );
+      backupsQuery.refetch();
+      volumeTargetsQuery.refetch();
+    } catch (err: any) {
+      toast.error(err?.message || `Failed to snapshot volume "${vol.name}"`);
+    } finally {
+      setSnapshottingVolume(null);
     }
   };
 
@@ -951,6 +980,67 @@ export function DisasterRecoveryHub() {
               </div>
             )}
           </div>
+
+          {/* Named Docker Volumes Overview Card */}
+          <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <HardDrive className="h-4 w-4 text-sky-400" />
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">Named Docker Volumes</h3>
+                  <p className="text-[11px] text-muted-foreground">
+                    Snapshot &amp; restore arbitrary persistent named Docker volumes (AES-256-GCM + S3 compatible).
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs text-muted-foreground font-mono">
+                {volumeTargets.length} volume{volumeTargets.length === 1 ? "" : "s"} detected
+              </span>
+            </div>
+
+            {volumeTargets.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
+                No named Docker volumes discovered yet. Volumes attached to your deployed services and
+                databases appear here automatically for instant tar.gz snapshots.
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {volumeTargets.map((vol) => {
+                  const volProject =
+                    vol.projectName || vol.labels?.["com.docker.compose.project"] || "docker";
+                  return (
+                    <div
+                      key={vol.name}
+                      className="flex flex-col justify-between rounded-lg border border-border bg-surface/40 p-4 text-xs space-y-3"
+                    >
+                      <div className="space-y-1 min-w-0">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-foreground font-mono truncate">
+                            {vol.name}
+                          </span>
+                          <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-bold text-sky-400 uppercase shrink-0">
+                            Volume
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground font-mono truncate">
+                          Project: {volProject} · Driver: {vol.driver || "local"}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={snapshottingVolume === vol.name}
+                        onClick={() => handleSnapshotVolume(vol)}
+                        className="w-full rounded-md bg-surface-2 py-1.5 text-center text-xs font-medium hover:bg-accent transition-colors disabled:opacity-50"
+                      >
+                        {snapshottingVolume === vol.name ? "Snapshotting…" : "Snapshot Volume"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -1076,11 +1166,15 @@ export function DisasterRecoveryHub() {
               onChange={(e) => setFilterDbType(e.target.value)}
               className="rounded-md border border-input bg-input/40 px-3 py-1.5 outline-none focus:border-primary"
             >
-              <option value="all">All Database Engines</option>
+              <option value="all">All Database Engines &amp; Volumes</option>
               <option value="postgres">PostgreSQL</option>
               <option value="mongo">MongoDB</option>
               <option value="mysql">MySQL</option>
+              <option value="mariadb">MariaDB</option>
               <option value="redis">Redis</option>
+              <option value="clickhouse">ClickHouse</option>
+              <option value="libsql">LibSQL (sqld)</option>
+              <option value="volume">Docker Volume</option>
             </select>
 
             <select

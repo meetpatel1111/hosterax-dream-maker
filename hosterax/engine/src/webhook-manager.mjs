@@ -7,6 +7,12 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { isSafeImageRef } from "./security.mjs";
 import { normalizeGitRepoSlug } from "./enterprise-apis.mjs";
+import {
+  SUPPORTED_GIT_PROVIDERS,
+  normalizeGitProvider,
+  verifyProviderSignature,
+  normalizeProviderWebhookEvent,
+} from "./webhook-providers.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -152,15 +158,21 @@ export class WebhookManager {
   }
 
   verifyGitHubSignature(rawBodyText, signatureHeader, secret) {
-    if (!signatureHeader || !secret) return false;
-    const hmac = crypto.createHmac("sha256", secret);
-    const digest = `sha256=${hmac.update(rawBodyText).digest("hex")}`;
-    const a = Buffer.from(String(signatureHeader));
-    const b = Buffer.from(digest);
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
+    return verifyProviderSignature({
+      provider: "github",
+      rawBodyText,
+      signatureHeader,
+      secret,
+    }).ok;
   }
 
-  async handleGitHubWebhook({
+  async handleGitHubWebhook(opts) {
+    return this.handleGitWebhook({ ...opts, provider: "github" });
+  }
+
+  async handleGitWebhook({
+    provider = "github",
+    headers = {},
     event,
     payload,
     rawBodyText,
@@ -169,18 +181,35 @@ export class WebhookManager {
     requireSignature = false,
     deliveryGuid = null,
   }) {
-    if (event === "ping" && !requireSignature) {
+    const prov = normalizeGitProvider(provider);
+    if (!prov) {
+      const err = new Error(
+        `Unsupported Git provider "${provider}". Supported: ${SUPPORTED_GIT_PROVIDERS.join(", ")}`,
+      );
+      err.status = 400;
+      throw err;
+    }
+
+    const normalized = normalizeProviderWebhookEvent({
+      provider: prov,
+      headers,
+      event,
+      payload,
+    });
+
+    if (normalized.eventType === "ping" && !requireSignature) {
       this.recordDelivery({
         projectName,
-        event,
+        provider: prov,
+        event: normalized.rawEvent || "ping",
         deliveryGuid,
         statusCode: 200,
         ok: true,
         action: "ping",
-        message: "Pong! Webhook active.",
+        message: `Pong! ${prov} webhook active.`,
         payloadJson: rawBodyText,
       });
-      return { ok: true, message: "Pong! Webhook active.", zen: payload?.zen };
+      return { ok: true, provider: prov, message: `Pong! ${prov} webhook active.`, zen: normalized.zen };
     }
 
     let project = null;
@@ -188,11 +217,9 @@ export class WebhookManager {
       project = this.db.prepare("SELECT * FROM projects WHERE name=?").get(projectName);
     }
 
-    if (!project && payload?.repository) {
-      const targetSlug = normalizeGitRepoSlug(
-        payload.repository.clone_url || payload.repository.html_url || "",
-      );
-      const repoFull = String(payload.repository.full_name || "").toLowerCase();
+    if (!project && (normalized.repoUrl || normalized.repoFullName)) {
+      const targetSlug = normalizeGitRepoSlug(normalized.repoUrl || "");
+      const repoFull = String(normalized.repoFullName || "").toLowerCase();
       const candidates = this.db
         .prepare("SELECT * FROM projects WHERE COALESCE(status,'') <> 'archived'")
         .all();
@@ -209,53 +236,74 @@ export class WebhookManager {
     if (!project) {
       this.recordDelivery({
         projectName,
-        event,
+        provider: prov,
+        event: normalized.rawEvent,
         deliveryGuid,
         statusCode: 404,
         ok: false,
         message: "No matching project found for webhook repository.",
         payloadJson: rawBodyText,
       });
-      return { ok: false, message: "No matching project found for webhook repository." };
+      return { ok: false, provider: prov, message: "No matching project found for webhook repository." };
     }
 
     const whConfig = this.getProjectWebhookConfig(project.name);
 
-    if (requireSignature || signatureHeader) {
-      if (!this.verifyGitHubSignature(rawBodyText, signatureHeader, whConfig.secret)) {
+    const hasProviderCredential = Boolean(
+      signatureHeader ||
+        headers?.["x-hub-signature-256"] ||
+        headers?.["x-hub-signature"] ||
+        headers?.["x-gitlab-token"] ||
+        headers?.["x-gitea-signature"] ||
+        headers?.["x-forgejo-signature"],
+    );
+
+    if (requireSignature || hasProviderCredential) {
+      const check = verifyProviderSignature({
+        provider: prov,
+        rawBodyText,
+        headers,
+        signatureHeader,
+        secret: whConfig.secret,
+      });
+      if (!check.ok) {
         this.recordDelivery({
           projectName: project.name,
-          event,
+          provider: prov,
+          event: normalized.rawEvent,
           deliveryGuid,
           statusCode: 401,
           ok: false,
-          message: "Invalid or missing GitHub webhook signature (HMAC-SHA256).",
+          message: check.reason,
           payloadJson: rawBodyText,
         });
-        const err = new Error("Invalid or missing GitHub webhook signature (HMAC-SHA256).");
+        const err = new Error(check.reason);
         err.status = 401;
         throw err;
       }
     }
-    if (event === "ping") {
+
+    if (normalized.eventType === "ping") {
       this.recordDelivery({
         projectName: project.name,
-        event,
+        provider: prov,
+        event: normalized.rawEvent,
         deliveryGuid,
         statusCode: 200,
         ok: true,
         action: "ping",
-        message: "Pong! Webhook active.",
+        message: `Pong! ${prov} webhook active.`,
         payloadJson: rawBodyText,
       });
-      return { ok: true, message: "Pong! Webhook active.", zen: payload?.zen };
+      return { ok: true, provider: prov, message: `Pong! ${prov} webhook active.`, zen: normalized.zen };
     }
 
-    if (event === "push") {
+    if (normalized.eventType === "push") {
       if (!whConfig.auto_deploy_push) {
         this.recordDelivery({
           projectName: project.name,
-          event,
+          provider: prov,
+          event: normalized.rawEvent,
           deliveryGuid,
           statusCode: 200,
           ok: true,
@@ -263,17 +311,21 @@ export class WebhookManager {
           message: "Push received but auto-deploy is disabled.",
           payloadJson: rawBodyText,
         });
-        return { ok: true, message: "Push received but auto-deploy is disabled for this project." };
+        return {
+          ok: true,
+          provider: prov,
+          message: "Push received but auto-deploy is disabled for this project.",
+        };
       }
 
-      const ref = payload.ref || "";
-      const branch = ref.replace("refs/heads/", "");
+      const branch = normalized.branch || "";
       const tracked = whConfig.tracked_branch || "main";
 
-      if (branch !== tracked && !ref.endsWith(`/${tracked}`)) {
+      if (branch && branch !== tracked) {
         this.recordDelivery({
           projectName: project.name,
-          event,
+          provider: prov,
+          event: normalized.rawEvent,
           deliveryGuid,
           statusCode: 200,
           ok: true,
@@ -283,19 +335,20 @@ export class WebhookManager {
         });
         return {
           ok: true,
+          provider: prov,
           message: `Push ignored on branch '${branch}' (project tracks '${tracked}').`,
         };
       }
 
-      const commitSha = payload.after || payload.head_commit?.id || "HEAD";
-      const commitMsg = payload.head_commit?.message || "Push-to-deploy";
+      const commitSha = normalized.commitSha || "HEAD";
+      const commitMsg = normalized.commitMsg || `${prov} Push-to-deploy`;
 
       if (this.runDeployment) {
         this.runDeployment(project.name, {
-          trigger: "github-webhook-push",
+          trigger: `${prov}-webhook-push`,
           commitSha,
           commitMsg,
-          branch,
+          branch: branch || tracked,
         }).catch((err) => {
           console.error(`[webhook-manager] Push-to-deploy error on ${project.name}:`, err.message);
         });
@@ -303,51 +356,55 @@ export class WebhookManager {
 
       this.recordDelivery({
         projectName: project.name,
-        event,
+        provider: prov,
+        event: normalized.rawEvent,
         deliveryGuid,
         statusCode: 200,
         ok: true,
         action: "deploy_triggered",
-        message: `Triggered push deploy on ${branch} (${commitSha.slice(0, 7)})`,
+        message: `Triggered ${prov} push deploy on ${branch || tracked} (${String(commitSha).slice(0, 7)})`,
         payloadJson: rawBodyText,
       });
 
       return {
         ok: true,
+        provider: prov,
         action: "deploy_triggered",
         project: project.name,
-        branch,
-        commit: commitSha.slice(0, 7),
+        branch: branch || tracked,
+        commit: String(commitSha).slice(0, 7),
       };
     }
 
-    if (event === "pull_request") {
-      const action = payload.action;
-      const prNumber = payload.number;
-      const prTitle = payload.pull_request?.title || `PR #${prNumber}`;
-      const branch = payload.pull_request?.head?.ref || `pr-${prNumber}`;
-      const commitSha = payload.pull_request?.head?.sha || "HEAD";
+    if (normalized.eventType === "pull_request") {
+      const action = normalized.action;
+      const prNumber = normalized.prNumber;
+      const prTitle = normalized.prTitle || `PR #${prNumber}`;
+      const branch = normalized.branch || `pr-${prNumber}`;
+      const commitSha = normalized.commitSha || "HEAD";
 
       if (action === "closed") {
         const res = await this.teardownPreview(project.name, prNumber);
         this.recordDelivery({
           projectName: project.name,
-          event,
+          provider: prov,
+          event: normalized.rawEvent,
           deliveryGuid,
           statusCode: 200,
           ok: true,
           action: "preview_torn_down",
-          message: `Closed PR #${prNumber} preview`,
+          message: `Closed ${prov} PR/MR #${prNumber} preview`,
           payloadJson: rawBodyText,
         });
-        return res;
+        return { ...res, provider: prov };
       }
 
       if (action === "opened" || action === "synchronize" || action === "reopened") {
         if (!whConfig.auto_deploy_pr) {
           this.recordDelivery({
             projectName: project.name,
-            event,
+            provider: prov,
+            event: normalized.rawEvent,
             deliveryGuid,
             statusCode: 200,
             ok: true,
@@ -355,7 +412,11 @@ export class WebhookManager {
             message: "PR preview disabled",
             payloadJson: rawBodyText,
           });
-          return { ok: true, message: "PR event received but ephemeral PR previews are disabled." };
+          return {
+            ok: true,
+            provider: prov,
+            message: "PR/MR event received but ephemeral PR previews are disabled.",
+          };
         }
 
         const res = await this.provisionPreview({
@@ -367,29 +428,31 @@ export class WebhookManager {
         });
         this.recordDelivery({
           projectName: project.name,
-          event,
+          provider: prov,
+          event: normalized.rawEvent,
           deliveryGuid,
           statusCode: 200,
           ok: true,
           action: "preview_provisioned",
-          message: `Provisioned PR #${prNumber} (${branch})`,
+          message: `Provisioned ${prov} PR/MR #${prNumber} (${branch})`,
           payloadJson: rawBodyText,
         });
-        return res;
+        return { ...res, provider: prov };
       }
     }
 
     this.recordDelivery({
       projectName: project.name,
-      event,
+      provider: prov,
+      event: normalized.rawEvent,
       deliveryGuid,
       statusCode: 200,
       ok: true,
       action: "acknowledged",
-      message: `Event '${event}' acknowledged.`,
+      message: `Event '${normalized.rawEvent}' acknowledged (${prov}).`,
       payloadJson: rawBodyText,
     });
-    return { ok: true, message: `Event '${event}' acknowledged.` };
+    return { ok: true, provider: prov, message: `Event '${normalized.rawEvent}' acknowledged.` };
   }
 
   async provisionPreview({ project, prNumber, prTitle, branch, commitSha }) {

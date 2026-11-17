@@ -261,6 +261,9 @@ export class BackupManager {
           } else if (lowerImg.includes("clickhouse") || lowerName.includes("clickhouse")) {
             dbType = "clickhouse";
             label = "ClickHouse";
+          } else if (lowerImg.includes("libsql") || lowerImg.includes("sqld") || lowerName.includes("libsql")) {
+            dbType = "libsql";
+            label = "LibSQL";
           }
 
           if (dbType) {
@@ -279,7 +282,27 @@ export class BackupManager {
       }
     } catch {}
 
-    // 2. Add projects from SQLite if they have attached databases or persistent volumes
+    // 2. Discover named Docker volumes for direct volume backups
+    try {
+      const vols = await this.listVolumes();
+      for (const v of vols) {
+        targets.push({
+          id: `vol_${v.name}`,
+          name: v.name,
+          containerName: v.name,
+          volumeName: v.name,
+          dbType: "volume",
+          image: `volume (${v.driver || "local"})`,
+          label: `Volume: ${v.name}`,
+          isContainer: false,
+          isVolume: true,
+          driver: v.driver || "local",
+          mountpoint: v.mountpoint || "",
+        });
+      }
+    } catch {}
+
+    // 3. Add projects from SQLite if they have attached databases or persistent volumes
     try {
       const projects = this.db.prepare("SELECT name, source, target, env_json FROM projects").all();
       for (const p of projects) {
@@ -302,6 +325,69 @@ export class BackupManager {
     } catch {}
 
     return targets;
+  }
+
+  /**
+   * Discover all named Docker volumes on the daemon.
+   */
+  async listVolumes({ dockerApi = null } = {}) {
+    const out = [];
+    const seen = new Set();
+    if (dockerApi && typeof dockerApi.listVolumes === "function") {
+      try {
+        const res = await dockerApi.listVolumes();
+        const vols = Array.isArray(res?.Volumes) ? res.Volumes : Array.isArray(res) ? res : [];
+        for (const v of vols) {
+          const name = String(v?.Name || v?.name || "").trim();
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          out.push({
+            name,
+            driver: String(v?.Driver || "local"),
+            mountpoint: String(v?.Mountpoint || ""),
+            labels: v?.Labels || {},
+            createdAt: v?.CreatedAt || null,
+          });
+        }
+        if (out.length > 0) return out;
+      } catch {}
+    }
+    try {
+      const res = spawnSync(
+        "docker",
+        ["volume", "ls", "--format", "{{.Name}}|{{.Driver}}|{{.Mountpoint}}"],
+        { encoding: "utf8", timeout: 4000 },
+      );
+      if (res.stdout) {
+        for (const line of res.stdout.trim().split("\n").filter(Boolean)) {
+          const [name, driver, mountpoint] = line.split("|");
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          out.push({
+            name: name.trim(),
+            driver: (driver || "local").trim(),
+            mountpoint: (mountpoint || "").trim(),
+            labels: {},
+            createdAt: null,
+          });
+        }
+      }
+    } catch {}
+    return out;
+  }
+
+  async createVolumeBackup({ volumeName, projectName = null, encrypt = false } = {}) {
+    const vol = String(volumeName || "").trim();
+    if (!vol || !isSafeContainerName(vol)) {
+      throw new Error(`Invalid Docker volume name: ${JSON.stringify(volumeName)}`);
+    }
+    return this.createBackup({
+      databaseName: vol,
+      dbType: "volume",
+      projectName: projectName || vol,
+      containerName: vol,
+      encrypt: Boolean(encrypt),
+    });
   }
 
   /**
@@ -452,6 +538,10 @@ export class BackupManager {
         await this._dumpMysql(cont, outPath, opts);
       } else if (type === "redis") {
         await this._dumpRedis(cont, outPath, opts);
+      } else if (type === "clickhouse") {
+        await this._dumpClickhouse(cont, outPath, opts);
+      } else if (type === "libsql" || type === "sqld") {
+        await this._dumpLibsql(cont, outPath, opts);
       } else {
         // Generic volume or directory backup
         await this._dumpVolume(cont, outPath, opts);
@@ -568,6 +658,8 @@ export class BackupManager {
     if (type === "mysql" || type === "mariadb")
       return this._restoreMysql(container, filePath, opts);
     if (type === "redis") return this._restoreRedis(container, filePath, opts);
+    if (type === "clickhouse") return this._restoreClickhouse(container, filePath, opts);
+    if (type === "libsql" || type === "sqld") return this._restoreLibsql(container, filePath, opts);
     return this._restoreVolume(container, filePath, opts);
   }
 
@@ -1018,9 +1110,44 @@ export class BackupManager {
     });
   }
 
-  /** Archives every named Docker volume attached to the container into one tar.gz. */
+  async _isNamedVolume(name) {
+    try {
+      await this._docker(["volume", "inspect", name], 4000);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async _dumpClickhouse(containerName, outPath, opts = {}) {
+    this._assertContainer(containerName);
+    await this._streamToFile(
+      ["exec", containerName, "sh", "-c", "tar czf - -C /var/lib/clickhouse ."],
+      outPath,
+      { encrypt: opts.encrypt },
+    );
+  }
+
+  async _dumpLibsql(containerName, outPath, opts = {}) {
+    this._assertContainer(containerName);
+    await this._streamToFile(
+      ["exec", containerName, "sh", "-c", "tar czf - -C /var/lib/sqld ."],
+      outPath,
+      { encrypt: opts.encrypt },
+    );
+  }
+
+  /** Archives a direct named volume or every named Docker volume attached to a container into one tar.gz. */
   async _dumpVolume(containerName, outPath, opts = {}) {
     this._assertContainer(containerName);
+    if (await this._isNamedVolume(containerName)) {
+      await this._streamToFile(
+        ["run", "--rm", "-v", `${containerName}:/backup:ro`, "alpine:3.20", "tar", "czf", "-", "-C", "/backup", "."],
+        outPath,
+        { encrypt: opts.encrypt },
+      );
+      return;
+    }
     const volumes = await this._volumesOf(containerName);
     if (volumes.length === 0) {
       throw new Error(
@@ -1101,8 +1228,68 @@ export class BackupManager {
     }
   }
 
+  async _restoreClickhouse(containerName, filePath, opts = {}) {
+    this._assertContainer(containerName);
+    await this._docker(["stop", containerName], 60000);
+    try {
+      await this._streamFromFile(
+        [
+          "run",
+          "--rm",
+          "-i",
+          "--volumes-from",
+          containerName,
+          "alpine:3.20",
+          "tar",
+          "xzf",
+          "-",
+          "-C",
+          "/var/lib/clickhouse",
+        ],
+        filePath,
+        { decrypt: opts.decrypt },
+      );
+    } finally {
+      await this._docker(["start", containerName]).catch(() => {});
+    }
+  }
+
+  async _restoreLibsql(containerName, filePath, opts = {}) {
+    this._assertContainer(containerName);
+    await this._docker(["stop", containerName], 60000);
+    try {
+      await this._streamFromFile(
+        [
+          "run",
+          "--rm",
+          "-i",
+          "--volumes-from",
+          containerName,
+          "alpine:3.20",
+          "tar",
+          "xzf",
+          "-",
+          "-C",
+          "/var/lib/sqld",
+        ],
+        filePath,
+        { decrypt: opts.decrypt },
+      );
+    } finally {
+      await this._docker(["start", containerName]).catch(() => {});
+    }
+  }
+
   async _restoreVolume(containerName, filePath, opts = {}) {
     this._assertContainer(containerName);
+    if (await this._isNamedVolume(containerName)) {
+      await this._streamFromFile(
+        ["run", "--rm", "-i", "-v", `${containerName}:/backup`, "alpine:3.20", "tar", "xzf", "-", "-C", "/backup"],
+        filePath,
+        { decrypt: opts.decrypt },
+      );
+      return;
+    }
     const volumes = await this._volumesOf(containerName);
     if (volumes.length === 0)
       throw new Error(`Container "${containerName}" has no named volumes to restore into.`);

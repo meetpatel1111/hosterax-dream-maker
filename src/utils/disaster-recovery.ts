@@ -356,6 +356,15 @@ export function simulateSandboxDrill(params: SandboxDrillParams): DrillCertifica
   } else if (normalizedType.includes("mysql") || normalizedType.includes("maria")) {
     verificationQuery = "SELECT DATABASE(), @@version;";
     queryResult = `${databaseName} | 8.0.36-community (1 row)`;
+  } else if (normalizedType.includes("clickhouse")) {
+    verificationQuery = "SELECT version(), count() FROM system.tables;";
+    queryResult = `24.x-alpine | OK (1 row)`;
+  } else if (normalizedType.includes("libsql") || normalizedType.includes("sqld")) {
+    verificationQuery = "SELECT sqlite_version();";
+    queryResult = `3.45.x-libsql | OK (1 row)`;
+  } else if (normalizedType.includes("volume")) {
+    verificationQuery = "tar -tzf volume.tar.gz | head -n 5";
+    queryResult = `Archive verified (${sizeMb.toFixed(1)} MB)`;
   }
 
   const randomHash = Math.random().toString(36).substring(2, 10);
@@ -489,6 +498,25 @@ export function generateEmergencyRunbookScript(params: RunbookParams): string {
       `docker cp dump.rdb ${databaseName}:/data/dump.rdb`,
       `docker restart ${databaseName}`,
       `echo "SUCCESS: Redis dump.rdb copied and server restarted."`,
+    );
+  } else if (normalizedType.includes("clickhouse")) {
+    const port = customPort || 8123;
+    lines.push(
+      `curl -sS "http://localhost:${port}/?query=CREATE+DATABASE+IF+NOT+EXISTS+recovery"`,
+      `echo "SUCCESS: ClickHouse archive extracted in $RESTORE_DIR for Native/TSV ingest on port ${port}."`,
+    );
+  } else if (normalizedType.includes("libsql") || normalizedType.includes("sqld")) {
+    const port = customPort || 8080;
+    lines.push(
+      `docker cp . ${databaseName}:/var/lib/sqld/`,
+      `docker restart ${databaseName}`,
+      `echo "SUCCESS: LibSQL / sqld data directory restored on port ${port}."`,
+    );
+  } else if (normalizedType.includes("volume")) {
+    lines.push(
+      `docker volume create "${databaseName}"`,
+      `docker run --rm -v "${databaseName}:/data" -v "$RESTORE_DIR:/backup" alpine:3.20 sh -c "rm -rf /data/* && tar -xzf /backup/archive.tar.gz -C /data"`,
+      `echo "SUCCESS: Named Docker volume '${databaseName}' restored from snapshot."`,
     );
   } else {
     lines.push(`echo "Generic volume restore completed in $RESTORE_DIR."`);

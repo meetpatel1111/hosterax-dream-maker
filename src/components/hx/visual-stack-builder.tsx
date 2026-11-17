@@ -40,6 +40,7 @@ import {
   AlertTriangle,
   RefreshCw,
   Info,
+  Search,
 } from "lucide-react";
 
 interface VisualStackBuilderProps {
@@ -124,6 +125,30 @@ export function VisualStackBuilder({
   const [deployedProjects, setDeployedProjects] = useState<
     { projectName: string; serviceName: string; status: "queued" | "warn"; note?: string }[]
   >([]);
+  const [presetCategory, setPresetCategory] = useState<string>("all");
+  const [presetSearch, setPresetSearch] = useState("");
+  const [showAllPresets, setShowAllPresets] = useState(false);
+
+  const presetCategories = useMemo(
+    () => Array.from(new Set(PRESET_STACKS.map((p) => p.category))),
+    [],
+  );
+
+  const filteredPresets = PRESET_STACKS.filter((p) => {
+    const catOk = presetCategory === "all" || p.category === presetCategory;
+    if (!catOk) return false;
+    const q = presetSearch.trim().toLowerCase();
+    if (!q) return true;
+    return (
+      p.name.toLowerCase().includes(q) ||
+      p.tagline.toLowerCase().includes(q) ||
+      p.category.toLowerCase().includes(q)
+    );
+  });
+  const visiblePresets =
+    showAllPresets || presetSearch.trim() || presetCategory !== "all"
+      ? filteredPresets
+      : filteredPresets.slice(0, 8);
 
   const activeHostFormat = useMemo(() => {
     return formatMagicDnsUrl("{name}", magicDns?.activeProvider || "sslip.io");
@@ -426,18 +451,21 @@ export function VisualStackBuilder({
 
   return (
     <div className="space-y-6">
-      {/* Top Banner & Preset Selector */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 rounded-2xl border border-border/80 bg-card/70 backdrop-blur shadow-sm">
-        <div className="space-y-1">
+      {/* Top Banner & Searchable Preset Library */}
+      <div className="space-y-4 p-5 rounded-2xl border border-border/80 bg-card/70 backdrop-blur shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+            <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary shrink-0">
               <Boxes className="w-5 h-5" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+              <h2 className="text-lg font-bold text-foreground flex flex-wrap items-center gap-2">
                 Visual Multi-Service Docker Compose Builder
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                   Compose Spec v3.8
+                </span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary border border-primary/20">
+                  {PRESET_STACKS.length} Blueprints
                 </span>
               </h2>
               <p className="text-xs text-muted-foreground">
@@ -446,22 +474,92 @@ export function VisualStackBuilder({
               </p>
             </div>
           </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative min-w-[220px] flex-1 sm:flex-none">
+              <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                aria-label="Search Compose preset templates"
+                value={presetSearch}
+                onChange={(e) => setPresetSearch(e.target.value)}
+                placeholder={`Search ${PRESET_STACKS.length} Compose stacks...`}
+                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-border bg-surface text-xs text-foreground outline-none focus:border-primary"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAllPresets((prev) => !prev)}
+              className="px-3 py-1.5 rounded-lg border border-border bg-surface hover:bg-surface-2 text-xs font-medium text-foreground whitespace-nowrap"
+            >
+              {showAllPresets ? "Show Top 8" : `Browse All (${PRESET_STACKS.length})`}
+            </button>
+          </div>
         </div>
 
-        {/* Quick Presets Pills */}
-        <div className="flex items-center flex-wrap gap-2">
-          <span className="text-xs font-semibold text-muted-foreground mr-1">Templates:</span>
-          {PRESET_STACKS.map((preset) => (
-            <button
-              key={preset.id}
-              onClick={() => loadPreset(preset.id)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border/60 bg-surface hover:bg-primary/10 hover:border-primary/40 text-xs font-medium text-foreground transition-all"
-            >
-              <span>{preset.icon}</span>
-              <span>{preset.name}</span>
-            </button>
-          ))}
+        {/* Category Filter Strip */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          <button
+            type="button"
+            onClick={() => setPresetCategory("all")}
+            className={`px-2.5 py-1 rounded-md text-[11px] font-medium whitespace-nowrap transition-colors ${
+              presetCategory === "all"
+                ? "bg-primary text-primary-foreground font-semibold"
+                : "bg-surface text-muted-foreground hover:text-foreground border border-border/60"
+            }`}
+          >
+            All ({PRESET_STACKS.length})
+          </button>
+          {presetCategories.map((cat) => {
+            const count = PRESET_STACKS.filter((p) => p.category === cat).length;
+            if (count === 0) return null;
+            return (
+              <button
+                key={cat}
+                type="button"
+                onClick={() => setPresetCategory(cat)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-medium whitespace-nowrap transition-colors ${
+                  presetCategory === cat
+                    ? "bg-primary text-primary-foreground font-semibold"
+                    : "bg-surface text-muted-foreground hover:text-foreground border border-border/60"
+                }`}
+              >
+                {cat} ({count})
+              </button>
+            );
+          })}
         </div>
+
+        {/* Preset Cards Grid */}
+        {visiblePresets.length === 0 ? (
+          <div className="text-xs text-muted-foreground py-3 px-2">
+            No Compose templates match "{presetSearch}".
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 max-h-[260px] overflow-y-auto pr-1">
+            {visiblePresets.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                onClick={() => loadPreset(preset.id)}
+                className="flex flex-col items-start text-left gap-1 p-2.5 rounded-xl border border-border/60 bg-surface hover:bg-primary/10 hover:border-primary/40 transition-all group"
+              >
+                <div className="flex items-center justify-between w-full gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground group-hover:text-primary truncate">
+                    <span>{preset.icon}</span>
+                    <span className="truncate">{preset.name}</span>
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                    {preset.stack.services.length} svc
+                  </span>
+                </div>
+                <span className="text-[11px] text-muted-foreground line-clamp-1 w-full">
+                  {preset.tagline}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Main Stack Controls & View Switcher */}

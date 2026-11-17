@@ -48,6 +48,7 @@ import {
   resolveEffectiveTarget,
   slugifyProjectName,
 } from "@/utils/new-project";
+import { BUILD_PACK_OPTIONS, type BuildPackId } from "@/utils/project-scaling";
 
 export const Route = createFileRoute("/_app/new")({
   head: () => ({
@@ -150,6 +151,7 @@ function NewProject() {
   const [pendingFiles, setPendingFiles] = useState<File[] | null>(null);
   const [pendingArchive, setPendingArchive] = useState<File | null>(null);
   const [stack, setStack] = useState("auto");
+  const [builder, setBuilder] = useState<BuildPackId>("auto");
   const [target, setTarget] = useState<"docker" | "process" | "ssh">("process");
   // "local" runs on the machine hosting the engine; otherwise the id of a server to deploy to over SSH.
   const [serverId, setServerId] = useState("local");
@@ -323,6 +325,7 @@ function NewProject() {
           path: scan.root,
           name: finalName,
           target: apiTarget,
+          builder,
           ...placement,
           ...(buildCmd ? { buildCmd } : {}),
           ...(startCmd ? { startCmd } : {}),
@@ -338,6 +341,7 @@ function NewProject() {
           tab,
           selectedTarget: chosenTarget,
           serverId,
+          builder,
           buildCmd,
           startCmd,
           port: overrides?.port || effectivePort,
@@ -396,7 +400,7 @@ function NewProject() {
     { id: "upload", label: "Folder Upload", icon: Upload },
     { id: "url", label: "From URL", icon: Link2 },
     { id: "cli", label: "CLI Push", icon: TerminalSquare },
-    { id: "template", label: "Starter Templates", icon: Layers, badge: "12+" },
+    { id: "template", label: "Starter Templates", icon: Layers, badge: "20+" },
     { id: "one-click", label: "1-Click Apps", icon: Sparkles, badge: "2,500+" },
   ];
 
@@ -871,23 +875,45 @@ function NewProject() {
               {/* Stack & Target Selection Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border/60">
                 {tab !== "docker-image" && (
-                  <Field label="Framework / Runtime" desc="Auto-detected or override manually.">
-                    {(id) => (
-                      <select
-                        id={id}
-                        value={stack}
-                        onChange={(e) => setStack(e.target.value)}
-                        className={inputCls}
-                      >
-                        <option value="auto">Auto-detect Framework</option>
-                        {STACKS.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.icon} {s.name} ({s.language})
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </Field>
+                  <>
+                    <Field label="Framework / Runtime" desc="Auto-detected or override manually.">
+                      {(id) => (
+                        <select
+                          id={id}
+                          value={stack}
+                          onChange={(e) => setStack(e.target.value)}
+                          className={inputCls}
+                        >
+                          <option value="auto">Auto-detect Framework</option>
+                          {STACKS.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.icon} {s.name} ({s.language})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </Field>
+
+                    <Field
+                      label="Build Pack / Builder"
+                      desc="Pluggable build engine: Auto, Universal, Nixpacks, Railpack, Buildpacks, Dockerfile, or Compose."
+                    >
+                      {(id) => (
+                        <select
+                          id={id}
+                          value={builder}
+                          onChange={(e) => setBuilder(e.target.value as BuildPackId)}
+                          className={inputCls}
+                        >
+                          {BUILD_PACK_OPTIONS.map((bp) => (
+                            <option key={bp.id} value={bp.id}>
+                              {bp.label} — {bp.badge}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </Field>
+                  </>
                 )}
 
                 <Field label="Target Execution Mode" desc="How HosteraX runs this app.">
@@ -1179,6 +1205,15 @@ function NewProject() {
                       : "Native Process"}
                   </span>
                 </div>
+
+                {tab !== "docker-image" && (
+                  <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
+                    <span className="text-muted-foreground">Build Pack:</span>
+                    <span className="font-semibold text-foreground font-mono">
+                      {BUILD_PACK_OPTIONS.find((b) => b.id === builder)?.label || builder}
+                    </span>
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between p-2.5 rounded-lg bg-surface/70 border border-border/60">
                   <span className="text-muted-foreground">Internal Port &amp; Health:</span>

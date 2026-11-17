@@ -19,6 +19,7 @@ import { execFile } from "node:child_process";
 import { encryptSecret, decryptSecret, encryptJson, decryptJson, isEncrypted } from "./secrets.mjs";
 import { spawn } from "./docker-scope.mjs";
 import { runOnServer } from "./docker-scope.mjs";
+import { isValidBuildPack, normalizeBuildPack } from "./buildpacks.mjs";
 
 const PM_ENUM = [
   "npm",
@@ -136,6 +137,10 @@ CREATE INDEX IF NOT EXISTS idx_server_logs_project ON server_logs(project, ts DE
     ["status", "TEXT"],
     ["deleted_at", "INTEGER"],
     ["org_id", "TEXT"],
+    ["builder", "TEXT"],
+    ["replicas", "INTEGER"],
+    ["placement_nodes_json", "TEXT"],
+    ["replica_ports_json", "TEXT"],
   ];
   for (const [c, t] of cols) {
     try {
@@ -387,6 +392,10 @@ export function createProjectsApi(ctx) {
       productionPaths: p.production_paths,
       rootDirectory: p.root_directory,
       buildImage: p.build_image,
+      builder: p.builder || "auto",
+      replicas: Math.max(1, Number(p.replicas) || 1),
+      placementNodes: parseJsonSafe(p.placement_nodes_json, []),
+      replicaPorts: parseJsonSafe(p.replica_ports_json, []),
       productionMode: p.production_mode || "host",
       port: p.port,
       publicEndpoints: parseJsonSafe(p.public_endpoints_json, []),
@@ -530,6 +539,24 @@ export function createProjectsApi(ctx) {
       if (!["git", "snapshot"].includes(b.defaultRollbackStrategy))
         bad("defaultRollbackStrategy invalid", "defaultRollbackStrategy");
       set.default_rollback_strategy = b.defaultRollbackStrategy;
+    }
+    if (b.builder !== undefined && b.builder !== null) {
+      if (!isValidBuildPack(b.builder)) {
+        bad("builder must be one of auto, universal, nixpacks, railpack, buildpacks, dockerfile, compose", "builder");
+      }
+      set.builder = normalizeBuildPack(b.builder);
+    }
+    if (b.replicas !== undefined && b.replicas !== null) {
+      const n = Number(b.replicas);
+      if (!Number.isInteger(n) || n < 1 || n > 10) {
+        bad("replicas must be an integer between 1 and 10", "replicas");
+      }
+      set.replicas = n;
+    }
+    if (b.placementNodes !== undefined || b.placement_nodes !== undefined) {
+      const nodes = b.placementNodes ?? b.placement_nodes;
+      if (!Array.isArray(nodes)) bad("placementNodes must be an array", "placementNodes");
+      set.placement_nodes_json = JSON.stringify(nodes.map((x) => String(x)).filter(Boolean));
     }
     for (const [k, [col, fn]] of Object.entries(map)) {
       if (b[k] !== undefined && b[k] !== null) set[col] = fn(b[k]);

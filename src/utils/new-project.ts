@@ -170,6 +170,7 @@ export function buildProjectCreatePayload(input: {
   startCmd: string;
   port: number;
   branch?: string;
+  builder?: string;
   rootDirectory?: string;
   healthPath?: string;
   envMap: Record<string, string>;
@@ -190,6 +191,10 @@ export function buildProjectCreatePayload(input: {
     healthPath: normalizeHealthPath(input.healthPath || "/"),
     env: input.envMap,
   };
+
+  if (input.builder && input.builder.trim()) {
+    payload.builder = input.builder.trim();
+  }
 
   if (input.serverId !== "local") {
     payload.serverId = input.serverId;

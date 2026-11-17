@@ -388,9 +388,24 @@ export class EdgeManager {
       const upstreamPort = Number(p.port);
       if (!Number.isInteger(upstreamPort) || upstreamPort < 1 || upstreamPort > 65535) continue;
 
+      let replicaPorts = [];
+      if (Number(p.replicas) > 1 && p.replica_ports_json) {
+        try {
+          const parsed = JSON.parse(p.replica_ports_json);
+          if (Array.isArray(parsed)) {
+            replicaPorts = parsed
+              .map((n) => Number(n))
+              .filter((n) => Number.isInteger(n) && n >= 1 && n <= 65535 && n !== upstreamPort);
+          }
+        } catch {}
+      }
+      const ports = Array.from(new Set([upstreamPort, ...replicaPorts]));
+
       routeList.push({
         project: p.name,
         port: upstreamPort,
+        ports,
+        healthPath: p.health_path || "/",
         hostnames: safeHostnames,
         domains: projDomains,
       });
@@ -458,6 +473,15 @@ export class EdgeManager {
       );
 
     for (const r of routeList) {
+      const upstreamTargets =
+        Array.isArray(r.ports) && r.ports.length > 1
+          ? r.ports.map((p) => `127.0.0.1:${p}`).join(" ")
+          : `127.0.0.1:${r.port}`;
+      const isBalanced = Array.isArray(r.ports) && r.ports.length > 1;
+      const lbDirectives = isBalanced
+        ? `    lb_policy least_conn\n    health_uri ${r.healthPath || "/"}\n    health_interval 15s\n`
+        : "";
+
       for (const host of r.hostnames) {
         const isPrivate = this.isPrivateOrLoopbackHost(host);
         const mwLines = compileCaddyMiddlewares(middlewaresFor(host, r.project));
@@ -470,7 +494,8 @@ export class EdgeManager {
           content += mwBlock;
           content += `  header X-Forwarded-Proto http\n`;
           content += `  header X-Real-IP {remote_host}\n`;
-          content += `  reverse_proxy 127.0.0.1:${r.port} {\n`;
+          content += `  reverse_proxy ${upstreamTargets} {\n`;
+          content += lbDirectives;
           content += `    header_up Host {upstream_hostport}\n`;
           content += `    header_up X-Forwarded-Host {host}\n`;
           content += `  }\n`;
@@ -485,7 +510,8 @@ export class EdgeManager {
           }
           content += `  header X-Forwarded-Proto https\n`;
           content += `  header X-Real-IP {remote_host}\n`;
-          content += `  reverse_proxy 127.0.0.1:${r.port} {\n`;
+          content += `  reverse_proxy ${upstreamTargets} {\n`;
+          content += lbDirectives;
           content += `    header_up Host {upstream_hostport}\n`;
           content += `    header_up X-Forwarded-Host {host}\n`;
           content += `  }\n`;
@@ -503,7 +529,8 @@ export class EdgeManager {
           }
           content += `  header X-Forwarded-Proto {scheme}\n`;
           content += `  header X-Real-IP {remote_host}\n`;
-          content += `  reverse_proxy 127.0.0.1:${r.port} {\n`;
+          content += `  reverse_proxy ${upstreamTargets} {\n`;
+          content += lbDirectives;
           content += `    header_up Host {upstream_hostport}\n`;
           content += `    header_up X-Forwarded-Host {host}\n`;
           content += `  }\n`;
@@ -797,9 +824,9 @@ http {
       `    proxy_set_header Host $host;\n` +
       `  }\n\n`;
 
-    const upstreamBlock = (port) =>
+    const upstreamBlock = (upstreamTarget) =>
       `  location / {\n` +
-      `    proxy_pass http://127.0.0.1:${port};\n` +
+      `    proxy_pass ${upstreamTarget};\n` +
       `    proxy_http_version 1.1;\n` +
       `    proxy_set_header Upgrade $http_upgrade;\n` +
       `    proxy_set_header Connection "upgrade";\n` +
@@ -819,8 +846,18 @@ http {
 
     for (const r of routeList) {
       const safeProject = String(r.project).replace(/[^A-Za-z0-9_.-]/g, "_");
+      const safeUpName = String(r.project).toLowerCase().replace(/[^a-z0-9_]/g, "_");
       const siteConfPath = path.join(this.openrestySitesDir, `${safeProject}.conf`);
       let conf = `# OpenResty configuration for project: ${safeProject}\n`;
+      const isBalanced = Array.isArray(r.ports) && r.ports.length > 1;
+      let proxyTarget = `http://127.0.0.1:${r.port}`;
+      if (isBalanced) {
+        const upGroup = `hx_up_${safeUpName}`;
+        conf += `upstream ${upGroup} {\n  least_conn;\n${r.ports
+          .map((p) => `  server 127.0.0.1:${p} max_fails=3 fail_timeout=15s;`)
+          .join("\n")}\n}\n\n`;
+        proxyTarget = `http://${upGroup}`;
+      }
 
       for (const host of r.hostnames) {
         const dom = r.domains.find((d) => d.hostname === host);
@@ -849,7 +886,7 @@ http {
         if (haveTls && forceHttps) {
           conf += `  location / { return 301 https://$host$request_uri; }\n}\n\n`;
         } else {
-          conf += upstreamBlock(r.port) + `}\n\n`;
+          conf += upstreamBlock(proxyTarget) + `}\n\n`;
         }
 
         if (haveTls) {
@@ -863,7 +900,7 @@ http {
           ) {
             conf += `  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;\n`;
           }
-          conf += acmeBlock + upstreamBlock(r.port) + `}\n\n`;
+          conf += acmeBlock + upstreamBlock(proxyTarget) + `}\n\n`;
         }
       }
 

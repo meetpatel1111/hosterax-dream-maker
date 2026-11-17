@@ -151,6 +151,17 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/audit-logs": {
+      "get": {
+        "summary": "GET /api/audit-logs",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
     "/api/auth/2fa/disable": {
       "post": {
         "summary": "POST /api/auth/2fa/disable",
@@ -450,6 +461,17 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/backups/drills": {
+      "get": {
+        "summary": "GET /api/backups/drills",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
     "/api/backups/page": {
       "get": {
         "summary": "GET /api/backups/page",
@@ -654,6 +676,39 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/backups/volumes": {
+      "get": {
+        "summary": "GET /api/backups/volumes",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/backups/volumes/create": {
+      "post": {
+        "summary": "POST /api/backups/volumes/create",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/catalog/analyze-dependencies": {
+      "post": {
+        "summary": "POST /api/catalog/analyze-dependencies",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/catalog-api.mjs"
+      }
+    },
     "/api/catalog/apps": {
       "get": {
         "summary": "GET /api/catalog/apps",
@@ -804,6 +859,17 @@
           }
         },
         "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/databases/query": {
+      "post": {
+        "summary": "POST /api/databases/query",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
       }
     },
     "/api/deployments": {
@@ -1014,6 +1080,17 @@
             }
           }
         ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/docker/containers/run": {
+      "post": {
+        "summary": "POST /api/docker/containers/run",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
@@ -1267,6 +1344,66 @@
           }
         },
         "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/edge/middlewares": {
+      "get": {
+        "summary": "GET /api/edge/middlewares",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "post": {
+        "summary": "POST /api/edge/middlewares",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/edge/middlewares/{param4}": {
+      "delete": {
+        "summary": "DELETE /api/edge/middlewares/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "patch": {
+        "summary": "PATCH /api/edge/middlewares/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
       }
     },
     "/api/edge/settings": {
@@ -2003,6 +2140,17 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/metrics/history": {
+      "get": {
+        "summary": "GET /api/metrics/history",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/metrics/prometheus": {
       "get": {
         "summary": "GET /api/metrics/prometheus",
@@ -2098,6 +2246,69 @@
             }
           }
         ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/oauth/authorize": {
+      "post": {
+        "summary": "POST /api/oauth/authorize",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/oauth/clients": {
+      "get": {
+        "summary": "GET /api/oauth/clients",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "post": {
+        "summary": "POST /api/oauth/clients",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/oauth/clients/{param4}": {
+      "delete": {
+        "summary": "DELETE /api/oauth/clients/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/oauth/token": {
+      "post": {
+        "summary": "POST /api/oauth/token",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
@@ -2374,6 +2585,48 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/previews/{param3}/sleep": {
+      "post": {
+        "summary": "POST /api/previews/{param}/sleep",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/previews/{param3}/wake": {
+      "post": {
+        "summary": "POST /api/previews/{param}/wake",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
     "/api/projects": {
       "get": {
         "summary": "GET /api/projects",
@@ -2382,7 +2635,7 @@
             "description": "See the engine source for the response shape."
           }
         },
-        "x-source": "hosterax/engine/src/index.mjs"
+        "x-source": "hosterax/engine/src/projects-api.mjs"
       },
       "post": {
         "summary": "POST /api/projects",
@@ -2391,7 +2644,7 @@
             "description": "See the engine source for the response shape."
           }
         },
-        "x-source": "hosterax/engine/src/index.mjs"
+        "x-source": "hosterax/engine/src/projects-api.mjs"
       }
     },
     "/api/projects/{name}/auto-deploy": {
@@ -3310,7 +3563,7 @@
             "description": "See the engine source for the response shape."
           }
         },
-        "x-source": "hosterax/engine/src/index.mjs"
+        "x-source": "hosterax/engine/src/projects-api.mjs"
       },
       "get": {
         "summary": "GET /api/projects/{param}",
@@ -3786,6 +4039,25 @@
           }
         },
         "x-source": "hosterax/engine/src/index.mjs"
+      },
+      "post": {
+        "summary": "POST /api/projects/{param}/previews",
+        "parameters": [
+          {
+            "name": "param3",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
       }
     },
     "/api/projects/{param3}/quotas": {
@@ -3865,6 +4137,27 @@
           },
           {
             "name": "param5",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/projects/{param3}/scale": {
+      "post": {
+        "summary": "POST /api/projects/{param}/scale",
+        "parameters": [
+          {
+            "name": "param3",
             "in": "path",
             "required": true,
             "schema": {
@@ -4084,27 +4377,6 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
-    "/api/projects/{param3}/webhooks/github": {
-      "post": {
-        "summary": "POST /api/projects/{param}/webhooks/github",
-        "parameters": [
-          {
-            "name": "param3",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "default": {
-            "description": "See the engine source for the response shape."
-          }
-        },
-        "x-source": "hosterax/engine/src/index.mjs"
-      }
-    },
     "/api/projects/ensure": {
       "post": {
         "summary": "POST /api/projects/ensure",
@@ -4211,6 +4483,59 @@
           }
         },
         "x-source": "hosterax/engine/src/projects-api.mjs"
+      }
+    },
+    "/api/public/status": {
+      "get": {
+        "summary": "GET /api/public/status",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/security/policy": {
+      "get": {
+        "summary": "GET /api/security/policy",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "put": {
+        "summary": "PUT /api/security/policy",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/security/scan": {
+      "post": {
+        "summary": "POST /api/security/scan",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/security/scans": {
+      "get": {
+        "summary": "GET /api/security/scans",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
       }
     },
     "/api/self-heal/events": {
@@ -4438,6 +4763,98 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
+    "/api/siem/deliveries": {
+      "get": {
+        "summary": "GET /api/siem/deliveries",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/siem/sinks": {
+      "get": {
+        "summary": "GET /api/siem/sinks",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "post": {
+        "summary": "POST /api/siem/sinks",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/siem/sinks/{param4}": {
+      "delete": {
+        "summary": "DELETE /api/siem/sinks/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "patch": {
+        "summary": "PATCH /api/siem/sinks/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/siem/sinks/{param4}/test": {
+      "post": {
+        "summary": "POST /api/siem/sinks/{param}/test",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
     "/api/stats": {
       "get": {
         "summary": "GET /api/stats",
@@ -4447,6 +4864,160 @@
           }
         },
         "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/status-page": {
+      "get": {
+        "summary": "GET /api/status-page",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "put": {
+        "summary": "PUT /api/status-page",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/status-page/components": {
+      "post": {
+        "summary": "POST /api/status-page/components",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/status-page/components/{param4}": {
+      "delete": {
+        "summary": "DELETE /api/status-page/components/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "patch": {
+        "summary": "PATCH /api/status-page/components/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/status-page/incidents": {
+      "post": {
+        "summary": "POST /api/status-page/incidents",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/status-page/incidents/{param4}": {
+      "delete": {
+        "summary": "DELETE /api/status-page/incidents/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      },
+      "patch": {
+        "summary": "PATCH /api/status-page/incidents/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/status-page/probe-all": {
+      "post": {
+        "summary": "POST /api/status-page/probe-all",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/status-page/probe/{param4}": {
+      "post": {
+        "summary": "POST /api/status-page/probe/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
       }
     },
     "/api/system": {
@@ -4463,6 +5034,28 @@
     "/api/system/gpu": {
       "get": {
         "summary": "GET /api/system/gpu",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/system/logs": {
+      "get": {
+        "summary": "GET /api/system/logs",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/system/logs/test": {
+      "post": {
+        "summary": "POST /api/system/logs/test",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
@@ -4748,50 +5341,187 @@
         "x-source": "hosterax/engine/src/index.mjs"
       }
     },
-    "/api/webhooks/github": {
+    "/api/vault/groups": {
       "get": {
-        "summary": "Any method /api/webhooks/github",
-        "x-method-unspecified": true,
+        "summary": "GET /api/vault/groups",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
           }
         },
-        "x-source": "hosterax/engine/src/index.mjs"
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
       },
       "post": {
-        "summary": "Any method /api/webhooks/github",
-        "x-method-unspecified": true,
+        "summary": "POST /api/vault/groups",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
           }
         },
-        "x-source": "hosterax/engine/src/index.mjs"
-      },
-      "put": {
-        "summary": "Any method /api/webhooks/github",
-        "x-method-unspecified": true,
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/vault/groups/{param4}": {
+      "delete": {
+        "summary": "DELETE /api/vault/groups/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
           }
         },
-        "x-source": "hosterax/engine/src/index.mjs"
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
       },
       "patch": {
-        "summary": "Any method /api/webhooks/github",
-        "x-method-unspecified": true,
+        "summary": "PATCH /api/vault/groups/{param}",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/vault/groups/{param4}/reveal": {
+      "get": {
+        "summary": "GET /api/vault/groups/{param}/reveal",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/vault/groups/{param4}/sync": {
+      "post": {
+        "summary": "POST /api/vault/groups/{param}/sync",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/webhooks/bitbucket": {
+      "post": {
+        "summary": "POST /api/webhooks/bitbucket",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
           }
         },
         "x-source": "hosterax/engine/src/index.mjs"
-      },
-      "delete": {
-        "summary": "Any method /api/webhooks/github",
-        "x-method-unspecified": true,
+      }
+    },
+    "/api/webhooks/deliveries": {
+      "get": {
+        "summary": "GET /api/webhooks/deliveries",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/webhooks/deliveries/{param4}/replay": {
+      "post": {
+        "summary": "POST /api/webhooks/deliveries/{param}/replay",
+        "parameters": [
+          {
+            "name": "param4",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/enterprise-apis.mjs"
+      }
+    },
+    "/api/webhooks/forgejo": {
+      "post": {
+        "summary": "POST /api/webhooks/forgejo",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/webhooks/gitea": {
+      "post": {
+        "summary": "POST /api/webhooks/gitea",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/webhooks/github": {
+      "post": {
+        "summary": "POST /api/webhooks/github",
+        "responses": {
+          "default": {
+            "description": "See the engine source for the response shape."
+          }
+        },
+        "x-source": "hosterax/engine/src/index.mjs"
+      }
+    },
+    "/api/webhooks/gitlab": {
+      "post": {
+        "summary": "POST /api/webhooks/gitlab",
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."
@@ -4864,38 +5594,6 @@
       },
       "post": {
         "summary": "POST /mcp",
-        "responses": {
-          "default": {
-            "description": "See the engine source for the response shape."
-          }
-        },
-        "x-source": "hosterax/engine/src/index.mjs"
-      }
-    },
-    "/webhooks/github": {
-      "post": {
-        "summary": "POST /webhooks/github",
-        "responses": {
-          "default": {
-            "description": "See the engine source for the response shape."
-          }
-        },
-        "x-source": "hosterax/engine/src/index.mjs"
-      }
-    },
-    "/webhooks/github/{rest3}": {
-      "post": {
-        "summary": "POST /webhooks/github/{path}",
-        "parameters": [
-          {
-            "name": "rest3",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
         "responses": {
           "default": {
             "description": "See the engine source for the response shape."

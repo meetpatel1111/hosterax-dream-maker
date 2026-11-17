@@ -28,6 +28,13 @@ import {
   filterPreviewEnvironments,
   formatRelativeTime,
 } from "../../utils/preview-environments";
+import {
+  WEBHOOK_PROVIDER_SPECS,
+  getWebhookProviderSpec,
+  buildPublicWebhookUrl,
+  buildApiWebhookSimulatorPayload,
+  type GitWebhookProvider,
+} from "../../utils/webhooks-multi";
 
 function isHibernated(status: string) {
   return status === "stopped" || status === "sleeping";
@@ -62,6 +69,7 @@ export function PreviewEnvironmentsManager() {
   const [activeBotPreview, setActiveBotPreview] = useState<PRPreview | null>(null);
 
   // Webhook Tester State
+  const [webhookProvider, setWebhookProvider] = useState<GitWebhookProvider>("github");
   const [webhookEventProject, setWebhookEventProject] = useState("");
   const [simulatedEventType, setSimulatedEventType] = useState<"opened" | "synchronize" | "closed">(
     "opened",
@@ -69,6 +77,11 @@ export function PreviewEnvironmentsManager() {
   const [webhookPrNumber, setWebhookPrNumber] = useState<number>(201);
   const [webhookBranch, setWebhookBranch] = useState("feat/preview-smoke");
   const [isDispatchingWebhook, setIsDispatchingWebhook] = useState(false);
+
+  const activeProviderSpec = useMemo(
+    () => getWebhookProviderSpec(webhookProvider),
+    [webhookProvider],
+  );
 
   useEffect(() => {
     if (projects.length > 0 && !newProjectName) {
@@ -177,7 +190,7 @@ export function PreviewEnvironmentsManager() {
     }
   };
 
-  // Handler: Dispatch GitHub Webhook Event to Real Project Webhook Receiver
+  // Handler: Dispatch Multi-Provider Webhook Event to Real Project Webhook Receiver
   const handleDispatchWebhook = async () => {
     const targetProject = webhookEventProject || projects[0]?.name || "";
     if (!targetProject) {
@@ -189,32 +202,21 @@ export function PreviewEnvironmentsManager() {
     setIsDispatchingWebhook(true);
 
     try {
-      const payload = {
+      const sim = buildApiWebhookSimulatorPayload({
+        provider: webhookProvider,
+        projectName: targetProject,
         action: simulatedEventType,
-        number: prNumber,
-        pull_request: {
-          number: prNumber,
-          title: `PR #${prNumber}: ${branch}`,
-          head: {
-            ref: branch,
-            sha: "HEAD",
-          },
-        },
-        repository: {
-          name: targetProject,
-        },
-      };
+        prNumber,
+        branch,
+      });
 
-      const res = await engine.call<{ action?: string }>(
-        "POST",
-        `/api/projects/${encodeURIComponent(targetProject)}/webhooks/github`,
-        payload,
-        { headers: { "x-github-event": "pull_request" } },
-      );
+      const res = await engine.call<{ action?: string }>("POST", sim.endpointPath, sim.body, {
+        headers: sim.headers,
+      });
 
       await previewsQuery.refetch();
       toast.success(
-        `Webhook pull_request.${simulatedEventType} processed${res?.action ? ` (${res.action})` : ""}.`,
+        `${activeProviderSpec.label} webhook (${simulatedEventType}) processed${res?.action ? ` (${res.action})` : ""}.`,
       );
       if (simulatedEventType === "opened") {
         setWebhookPrNumber((n) => n + 1);
@@ -245,8 +247,8 @@ export function PreviewEnvironmentsManager() {
                 </span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Automatic isolated container environments for GitHub/GitLab Pull Requests, custom
-                ephemeral subdomains, auto-hibernation, and PR bot comments.
+                Automatic isolated container environments for GitHub, GitLab, Gitea/Forgejo &amp;
+                Bitbucket Pull/Merge Requests, ephemeral subdomains, and auto-hibernation.
               </p>
             </div>
           </div>
@@ -337,7 +339,7 @@ export function PreviewEnvironmentsManager() {
         {(
           [
             { id: "fleet", label: `Active Fleet (${allPreviews.length})` },
-            { id: "webhooks", label: "GitHub / GitLab Webhook Automation" },
+            { id: "webhooks", label: "Git Webhook Automation (4 Providers)" },
             { id: "bot", label: "PR Bot Comment Preview" },
             { id: "scaletozero", label: "Scale-to-Zero & RAM Optimization" },
           ] as const
@@ -538,35 +540,71 @@ export function PreviewEnvironmentsManager() {
         </div>
       )}
 
-      {/* Tab 2: GitHub / GitLab Webhooks Automation */}
+      {/* Tab 2: Multi-Provider Git Webhooks Automation */}
       {activeTab === "webhooks" && (
         <div className="space-y-6 max-w-3xl">
           <div className="rounded-xl border border-border bg-card p-6 space-y-4">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                <Webhook className="h-4 w-4 text-primary" />
-                GitHub &amp; GitLab Webhook Integration
-              </h3>
-              <p className="text-xs text-muted-foreground">
-                Connect your repository webhooks to automatically trigger ephemeral previews
-                whenever a PR is opened, updated, or closed.
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <Webhook className="h-4 w-4 text-primary" />
+                  Multi-Provider Git Webhook Integration
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Connect GitHub, GitLab, Gitea/Forgejo, or Bitbucket webhooks to automatically build
+                  pushes and spin up ephemeral PR/MR previews.
+                </p>
+              </div>
+            </div>
+
+            {/* Provider Selector Pills */}
+            <div className="flex flex-wrap gap-2">
+              {WEBHOOK_PROVIDER_SPECS.map((spec) => {
+                const selected = webhookProvider === spec.id;
+                return (
+                  <button
+                    key={spec.id}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setWebhookProvider(spec.id)}
+                    className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all ${
+                      selected
+                        ? "border-primary bg-primary/15 text-primary font-semibold"
+                        : "border-border bg-surface text-muted-foreground hover:text-foreground"
+                    }`}
+                  >
+                    {spec.label}
+                  </button>
+                );
+              })}
             </div>
 
             <div className="space-y-3 text-xs">
               <label className="block space-y-1">
-                <span className="font-medium text-foreground">Payload URL</span>
+                <span className="font-medium text-foreground">
+                  {activeProviderSpec.label} Public Webhook URL (per project)
+                </span>
                 <div className="flex items-center gap-2">
                   <input
                     readOnly
-                    value={`${window.location.origin}/api/webhooks/github`}
+                    value={buildPublicWebhookUrl(
+                      engine.url,
+                      webhookProvider,
+                      webhookEventProject || "project",
+                    )}
                     className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs outline-none"
                   />
                   <button
+                    type="button"
+                    aria-label="Copy webhook URL"
                     onClick={() =>
                       copyToClipboard(
-                        `${window.location.origin}/api/webhooks/github`,
-                        "Webhook Payload URL",
+                        buildPublicWebhookUrl(
+                          engine.url,
+                          webhookProvider,
+                          webhookEventProject || "project",
+                        ),
+                        `${activeProviderSpec.label} Webhook URL`,
                       )
                     }
                     className="rounded-md border border-border bg-surface-2 px-3 py-2 hover:bg-accent"
@@ -576,29 +614,39 @@ export function PreviewEnvironmentsManager() {
                 </div>
               </label>
 
-              <label className="block space-y-1">
-                <span className="font-medium text-foreground">Content type</span>
-                <input
-                  readOnly
-                  value="application/json"
-                  className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs outline-none"
-                />
-              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="block space-y-1">
+                  <span className="font-medium text-foreground">Event Header</span>
+                  <input
+                    readOnly
+                    value={activeProviderSpec.eventHeader}
+                    className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs outline-none"
+                  />
+                </label>
+                <label className="block space-y-1">
+                  <span className="font-medium text-foreground">Signature Verification</span>
+                  <input
+                    readOnly
+                    value={`${activeProviderSpec.signatureHeader} · ${activeProviderSpec.signatureMethod}`}
+                    className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs outline-none"
+                  />
+                </label>
+              </div>
 
               <div className="rounded-lg bg-surface/50 p-4 border border-border space-y-2">
-                <div className="font-semibold text-foreground">Events to check:</div>
+                <div className="font-semibold text-foreground">
+                  {activeProviderSpec.label} Events to Subscribe:
+                </div>
                 <ul className="list-disc pl-5 space-y-1 text-muted-foreground text-[11px]">
+                  {activeProviderSpec.defaultEvents.map((ev) => (
+                    <li key={ev}>
+                      <strong className="text-foreground">{ev}</strong>
+                    </li>
+                  ))}
                   <li>
-                    <strong className="text-foreground">Pull requests</strong> (Spins up or updates
-                    ephemeral preview container)
-                  </li>
-                  <li>
-                    <strong className="text-foreground">Pushes</strong> (Deploys new commits to
-                    staging or active preview branches)
-                  </li>
-                  <li>
-                    <strong className="text-foreground">Branch or tag deletion</strong> (Tears down
-                    ephemeral containers automatically)
+                    <strong className="text-foreground">Signature protection</strong> (Verified via{" "}
+                    <code className="font-mono">{activeProviderSpec.signatureHeader}</code> using
+                    per-project webhook secret)
                   </li>
                 </ul>
               </div>
@@ -610,11 +658,11 @@ export function PreviewEnvironmentsManager() {
             <div>
               <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
                 <Send className="h-4 w-4 text-emerald-400" />
-                Live Webhook Delivery Simulator
+                Live {activeProviderSpec.label} Webhook Delivery Simulator
               </h3>
               <p className="text-xs text-muted-foreground">
-                Dispatch simulated GitHub webhook payloads to test ephemeral preview automation in
-                real-time without committing to GitHub.
+                Dispatch provider-native {activeProviderSpec.label} webhook payloads directly to
+                the HosteraX engine receiver to verify ephemeral preview provisioning.
               </p>
             </div>
 

@@ -22,6 +22,10 @@ export interface DbProject {
   stack: string;
   branch: string;
   version: string;
+  builder?: string;
+  replicas?: number;
+  placement_nodes?: string[];
+  replica_ports?: number[];
   status: "idle" | "building" | "running" | "ready" | "failed" | "stopped";
   created_at: number;
   updated_at: number;
@@ -63,7 +67,7 @@ export interface DbManagedDatabase {
   id: string;
   project: string;
   name: string;
-  engine: "postgres" | "mysql" | "mongodb" | "redis" | "sqlite";
+  engine: "postgres" | "mysql" | "mariadb" | "mongodb" | "redis" | "sqlite" | "clickhouse" | "libsql";
   port: number;
   status: "provisioning" | "running" | "stopped" | "error";
   size_mb: number;
@@ -276,6 +280,9 @@ export interface ProjectCreateRequest {
   port?: number;
   stack?: string;
   branch?: string;
+  builder?: string;
+  replicas?: number;
+  placementNodes?: string[];
   env?: Record<string, string>;
 }
 
@@ -286,6 +293,9 @@ export interface ProjectPatchRequest {
   start_command?: string;
   port?: number;
   target?: string;
+  builder?: string;
+  replicas?: number;
+  placementNodes?: string[];
 }
 
 // ── Deployments API ──
@@ -334,7 +344,7 @@ export type EnvGetResponse = Record<string, string>;
 // ── Databases API ──
 export interface DatabaseCreateRequest {
   name: string;
-  engine: "postgres" | "mysql" | "mongodb" | "redis" | "sqlite";
+  engine: "postgres" | "mysql" | "mariadb" | "mongodb" | "redis" | "sqlite" | "clickhouse" | "libsql";
   size_mb?: number;
 }
 

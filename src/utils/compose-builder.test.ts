@@ -262,8 +262,11 @@ test("buildStackDeploymentPlan orders dependencies first, parses resource quotas
 });
 
 test("all PRESET_STACKS validate without errors", () => {
-  assert.ok(PRESET_STACKS.length >= 4);
+  assert.ok(PRESET_STACKS.length >= 25, `Expected >=25 presets, got ${PRESET_STACKS.length}`);
+  const seenIds = new Set<string>();
   for (const preset of PRESET_STACKS) {
+    assert.equal(seenIds.has(preset.id), false, `Duplicate preset id: ${preset.id}`);
+    seenIds.add(preset.id);
     const val = validateComposeStack(preset.stack);
     assert.equal(val.valid, true, `Preset "${preset.name}" had errors: ${val.errors.join(", ")}`);
     const yaml = generateDockerComposeYaml(preset.stack);

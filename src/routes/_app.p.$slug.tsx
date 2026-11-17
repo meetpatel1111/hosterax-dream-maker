@@ -13,6 +13,7 @@ import {
   usePRPreviews,
   useProjectWebhookConfig,
   useScaleToZero,
+  useServerNodes,
 } from "@/lib/engine";
 import { DeploymentDiffModal } from "@/components/hx/deployment-diff";
 import { HealthMetrics } from "@/components/hx/health-metrics";
@@ -73,6 +74,18 @@ import {
   resolveDbEnvUpserts,
   summarizeDomainStatus,
 } from "@/utils/project-db";
+import {
+  BUILD_PACK_OPTIONS,
+  clampReplicas,
+  normalizePlacementNodes,
+  type BuildPackId,
+} from "@/utils/project-scaling";
+import {
+  WEBHOOK_PROVIDER_SPECS,
+  getWebhookProviderSpec,
+  buildPublicWebhookUrl,
+  type GitWebhookProvider,
+} from "@/utils/webhooks-multi";
 
 export const Route = createFileRoute("/_app/p/$slug")({
   head: ({ params }) => ({
@@ -132,6 +145,9 @@ function ProjectPage() {
             start_command: ep.start_cmd || null,
             port: ep.port || ep.route?.upstream_port || 3000,
             target_type: ep.target || "process",
+            builder: ep.builder || "auto",
+            replicas: Number(ep.replicas) || 1,
+            placement_nodes: Array.isArray(ep.placement_nodes) ? ep.placement_nodes : [],
             server_name:
               ep.serverId && ep.serverId !== "local" ? ep.serverName || ep.serverId : null,
             health_path: ep.health_path || ep.healthPath || "/",
@@ -170,6 +186,9 @@ function ProjectPage() {
             port: found.port || 3000,
             health_path: found.health_path || found.healthPath || "/",
             target_type: found.target || "process",
+            builder: found.builder || "auto",
+            replicas: Number(found.replicas) || 1,
+            placement_nodes: Array.isArray(found.placement_nodes) ? found.placement_nodes : [],
             workspace_type: "none",
             build_timeout_minutes: 30,
             created_at: found.created_at
@@ -279,6 +298,11 @@ function ProjectPage() {
             <h1 className="text-2xl font-semibold tracking-tight">{project.name}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <StatusBadge status={project.status} />
+              {(project.replicas ?? 1) > 1 && (
+                <span className="rounded bg-primary/15 px-1.5 py-0.5 text-[11px] font-semibold text-primary font-mono">
+                  {project.replicas}x replicas
+                </span>
+              )}
               {"server_name" in project && project.server_name && (
                 <span
                   className="flex items-center gap-1 rounded bg-surface-2 px-1.5 py-0.5"
@@ -1826,8 +1850,8 @@ function DatabasesTab({
           </div>
         ) : dbs.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
-            No companion databases attached yet. Provision PostgreSQL, Redis, MySQL, MariaDB, or
-            MongoDB above and auto-wire credentials into{" "}
+            No companion databases attached yet. Provision PostgreSQL, Redis, MySQL, MariaDB,
+            MongoDB, ClickHouse, or LibSQL above and auto-wire credentials into{" "}
             <span className="font-mono">{environment}</span>.
           </div>
         ) : (
@@ -2003,7 +2027,7 @@ function DatabasesTab({
             <div className="space-y-4">
               <div>
                 <div className="mb-1.5 text-xs font-medium text-muted-foreground">Engine</div>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                   {DB_ENGINE_SPECS.map((spec) => (
                     <button
                       key={spec.id}
@@ -2118,16 +2142,24 @@ function DatabasesTab({
 
 function Settings({ project, onDelete }: { project: any; onDelete: () => void }) {
   const engine = useEngine();
+  const qc = useQueryClient();
   const { data: scaleZero, refetch: refetchScaleZero } = useScaleToZero(project.name);
+  const { data: serverNodes = [] } = useServerNodes();
   const [name, setName] = useState(project.name);
   const [branch, setBranch] = useState(project.branch || "main");
+  const [builder, setBuilder] = useState<BuildPackId>((project.builder || "auto") as BuildPackId);
   const [buildCmd, setBuildCmd] = useState(project.build_command ?? "");
   const [startCmd, setStartCmd] = useState(project.start_command ?? "");
   const [port, setPort] = useState(project.port ?? 3000);
   const [healthPath, setHealthPath] = useState(project.health_path || "/");
   const [scaleZeroEnabled, setScaleZeroEnabled] = useState(false);
   const [idleMinutes, setIdleMinutes] = useState(15);
+  const [replicas, setReplicas] = useState<number>(clampReplicas(project.replicas ?? 1));
+  const [placementNodes, setPlacementNodes] = useState<string[]>(
+    normalizePlacementNodes(project.placement_nodes || []),
+  );
   const [busy, setBusy] = useState(false);
+  const [scalingBusy, setScalingBusy] = useState(false);
 
   useEffect(() => {
     if (scaleZero) {
@@ -2136,12 +2168,47 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
     }
   }, [scaleZero]);
 
+  useEffect(() => {
+    setReplicas(clampReplicas(project.replicas ?? 1));
+    setPlacementNodes(normalizePlacementNodes(project.placement_nodes || []));
+    setBuilder((project.builder || "auto") as BuildPackId);
+  }, [project.replicas, project.placement_nodes, project.builder]);
+
+  function togglePlacementNode(nodeId: string) {
+    setPlacementNodes((prev) =>
+      prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId],
+    );
+  }
+
+  async function applyScaling() {
+    setScalingBusy(true);
+    try {
+      const targetReplicas = clampReplicas(replicas);
+      const res = await engine.call<{ replicas: number; ports?: number[]; message?: string }>(
+        "POST",
+        `/api/projects/${encodeURIComponent(project.name)}/scale`,
+        {
+          replicas: targetReplicas,
+          placementNodes: normalizePlacementNodes(placementNodes),
+        },
+      );
+      toast.success(res?.message || `Scaled ${project.name} to ${res?.replicas ?? targetReplicas} replica(s)`);
+      await qc.invalidateQueries({ queryKey: ["project", project.slug] });
+      await qc.invalidateQueries({ queryKey: ["engine-projects"] });
+    } catch (e: any) {
+      toast.error(e.message || "Failed to apply horizontal scaling");
+    } finally {
+      setScalingBusy(false);
+    }
+  }
+
   async function save() {
     setBusy(true);
     try {
       await engine.call("PATCH", `/api/projects/${project.name}`, {
         name,
         branch,
+        builder,
         build_command: buildCmd,
         start_command: startCmd,
         port: Number(port),
@@ -2154,6 +2221,7 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
       });
 
       refetchScaleZero();
+      await qc.invalidateQueries({ queryKey: ["project", project.slug] });
       toast.success("Settings & Scale-to-Zero configuration saved");
     } catch (e: any) {
       toast.error(e.message || "Failed to update settings");
@@ -2164,6 +2232,91 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
 
   return (
     <div className="space-y-4">
+      {/* Horizontal Replicas & Cluster Node Placement */}
+      <div className="rounded-lg border border-border bg-card p-6 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold flex items-center gap-2">
+              <Server className="h-4 w-4 text-primary" />
+              <span>Horizontal Replicas &amp; Node Placement</span>
+            </div>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Run multiple load-balanced container/process instances across your edge reverse proxy
+              (Caddy &amp; OpenResty multi-upstream round-robin).
+            </p>
+          </div>
+          <span className="rounded-md border border-primary/30 bg-primary/10 px-2.5 py-1 font-mono text-xs font-semibold text-primary">
+            {replicas} {replicas === 1 ? "Replica" : "Replicas"}
+          </span>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2 pt-2 border-t border-border/50">
+          <Field label="Target Replica Count (1 – 10)">
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                aria-label="Target replica count slider"
+                min={1}
+                max={10}
+                value={replicas}
+                onChange={(e) => setReplicas(clampReplicas(Number(e.target.value)))}
+                className="flex-1 accent-primary"
+              />
+              <input
+                type="number"
+                aria-label="Target replica count"
+                min={1}
+                max={10}
+                value={replicas}
+                onChange={(e) => setReplicas(clampReplicas(Number(e.target.value)))}
+                className="w-20 rounded-md border border-input bg-input/40 px-2.5 py-1.5 text-sm font-mono text-center outline-none focus:border-primary"
+              />
+            </div>
+          </Field>
+
+          <Field label="Preferred Placement Nodes">
+            {serverNodes.length === 0 ? (
+              <div className="rounded-md border border-border/60 bg-surface/40 px-3 py-2 text-xs text-muted-foreground">
+                Local Engine Node (primary host)
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {serverNodes.map((node) => {
+                  const active = placementNodes.includes(node.id);
+                  return (
+                    <button
+                      key={node.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => togglePlacementNode(node.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                        active
+                          ? "border-primary bg-primary/15 text-primary"
+                          : "border-border bg-surface/50 text-muted-foreground hover:text-foreground"
+                      }`}
+                    >
+                      <Server className="h-3 w-3" />
+                      <span>{node.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Field>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={applyScaling}
+            disabled={scalingBusy}
+            className="rounded-md border border-primary/40 bg-primary/15 px-4 py-2 text-xs font-semibold text-primary hover:bg-primary/25 disabled:opacity-50"
+          >
+            {scalingBusy ? "Scaling Replicas..." : "Apply Scaling"}
+          </button>
+        </div>
+      </div>
+
       {/* Scale-to-Zero & Compute Optimization (Temps Benchmark) */}
       <div className="rounded-lg border border-border bg-card p-6 space-y-4">
         <div className="flex items-center justify-between">
@@ -2216,7 +2369,7 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
 
       <div className="rounded-lg border border-border bg-card p-6 space-y-4">
         <div className="text-sm font-medium">General</div>
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-3">
           <Field label="Project name">
             <input value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
           </Field>
@@ -2226,6 +2379,20 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
               onChange={(e) => setBranch(e.target.value)}
               className={inputCls}
             />
+          </Field>
+          <Field label="Build Pack">
+            <select
+              aria-label="Build Pack"
+              value={builder}
+              onChange={(e) => setBuilder(e.target.value as BuildPackId)}
+              className={inputCls}
+            >
+              {BUILD_PACK_OPTIONS.map((bp) => (
+                <option key={bp.id} value={bp.id}>
+                  {bp.label} ({bp.badge})
+                </option>
+              ))}
+            </select>
           </Field>
         </div>
         <Field label="Build command">
@@ -2305,6 +2472,7 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
   const { data: config, refetch: refetchConfig } = useProjectWebhookConfig(projectName);
   const { data: previews = [], refetch: refetchPreviews } = usePRPreviews(projectName);
 
+  const [provider, setProvider] = useState<GitWebhookProvider>("github");
   const [trackedBranch, setTrackedBranch] = useState(
     config?.tracked_branch || project.branch || "main",
   );
@@ -2314,6 +2482,8 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedSecret, setCopiedSecret] = useState(false);
 
+  const providerSpec = getWebhookProviderSpec(provider);
+
   useEffect(() => {
     if (config) {
       setTrackedBranch(config.tracked_branch || "main");
@@ -2322,8 +2492,8 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
     }
   }, [config]);
 
-  // Public, HMAC-verified endpoint (GitHub cannot send a bearer token). Must be reachable from the internet.
-  const webhookUrl = `${engine.url}/webhooks/github/${projectName}`;
+  // Public, signature-verified endpoint for the selected Git provider
+  const webhookUrl = buildPublicWebhookUrl(engine.url, provider, projectName);
   const webhookSecret = config?.secret || "Generating...";
 
   async function handleSaveConfig() {
@@ -2334,7 +2504,7 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
         auto_deploy_push: autoDeployPush ? 1 : 0,
         auto_deploy_pr: autoDeployPr ? 1 : 0,
       });
-      toast.success("GitHub Webhook settings saved!");
+      toast.success("Git Webhook settings saved!");
       refetchConfig();
     } catch (e: any) {
       toast.error(e.message || "Failed to save webhook settings");
@@ -2374,18 +2544,18 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
 
   return (
     <div className="space-y-6">
-      {/* GitHub Webhook Configuration Card */}
+      {/* Multi-Provider Git Webhook Configuration Card */}
       <div className="rounded-xl border bg-card/60 p-6 shadow-sm space-y-5">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2.5">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
               <Webhook className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="text-base font-semibold">GitHub Webhook & Push-to-Deploy</h3>
+              <h3 className="text-base font-semibold">Git Webhooks &amp; Push-to-Deploy</h3>
               <p className="text-xs text-muted-foreground">
-                Automatically trigger zero-downtime builds on git push and spin up ephemeral PR
-                previews.
+                Automatically trigger zero-downtime builds on push and spin up ephemeral PR/MR
+                previews from GitHub, GitLab, Gitea/Forgejo, or Bitbucket.
               </p>
             </div>
           </div>
@@ -2394,11 +2564,30 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+        {/* Provider Switcher */}
+        <div className="flex flex-wrap gap-2">
+          {WEBHOOK_PROVIDER_SPECS.map((spec) => (
+            <button
+              key={spec.id}
+              type="button"
+              aria-pressed={provider === spec.id}
+              onClick={() => setProvider(spec.id)}
+              className={`rounded-md border px-3 py-1.5 text-xs font-medium transition-colors ${
+                provider === spec.id
+                  ? "border-primary bg-primary/15 text-primary font-semibold"
+                  : "border-border bg-muted/20 text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {spec.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
           {/* Payload URL */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Payload URL (GitHub Webhook)
+              Payload URL ({providerSpec.label} Webhook)
             </label>
             <div className="flex items-center gap-2">
               <input
@@ -2408,6 +2597,8 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
                 className="w-full font-mono text-xs rounded-md border border-input bg-muted/40 px-3 py-2 text-foreground"
               />
               <button
+                type="button"
+                aria-label="Copy Webhook URL"
                 onClick={() => handleCopy(webhookUrl, false)}
                 className="rounded-md border border-input bg-card p-2 hover:bg-muted"
                 title="Copy Webhook URL"
@@ -2424,7 +2615,7 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
           {/* Webhook Secret */}
           <div className="space-y-1.5">
             <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Secret Token (HMAC-SHA256)
+              Secret Token ({providerSpec.signatureHeader} · {providerSpec.signatureMethod})
             </label>
             <div className="flex items-center gap-2">
               <input
@@ -2434,6 +2625,8 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
                 className="w-full font-mono text-xs rounded-md border border-input bg-muted/40 px-3 py-2 text-foreground"
               />
               <button
+                type="button"
+                aria-label="Copy Webhook Secret"
                 onClick={() => handleCopy(webhookSecret, true)}
                 className="rounded-md border border-input bg-card p-2 hover:bg-muted"
                 title="Copy Secret"
@@ -2446,6 +2639,16 @@ function WebhooksTab({ projectName, project }: { projectName: string; project: a
               </button>
             </div>
           </div>
+        </div>
+
+        <div className="rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground flex flex-wrap gap-x-4 gap-y-1">
+          <span>
+            Events:{" "}
+            <strong className="text-foreground">{providerSpec.defaultEvents.join(" · ")}</strong>
+          </span>
+          <span>
+            Header: <code className="font-mono text-foreground">{providerSpec.eventHeader}</code>
+          </span>
         </div>
 
         {/* Automation Toggles */}
