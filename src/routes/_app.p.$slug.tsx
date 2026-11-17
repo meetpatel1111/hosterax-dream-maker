@@ -2192,7 +2192,9 @@ function Settings({ project, onDelete }: { project: any; onDelete: () => void })
           placementNodes: normalizePlacementNodes(placementNodes),
         },
       );
-      toast.success(res?.message || `Scaled ${project.name} to ${res?.replicas ?? targetReplicas} replica(s)`);
+      toast.success(
+        res?.message || `Scaled ${project.name} to ${res?.replicas ?? targetReplicas} replica(s)`,
+      );
       await qc.invalidateQueries({ queryKey: ["project", project.slug] });
       await qc.invalidateQueries({ queryKey: ["engine-projects"] });
     } catch (e: any) {

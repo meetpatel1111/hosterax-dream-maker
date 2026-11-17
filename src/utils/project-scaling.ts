@@ -1,11 +1,5 @@
 export type BuildPackId =
-  | "auto"
-  | "universal"
-  | "nixpacks"
-  | "railpack"
-  | "buildpacks"
-  | "dockerfile"
-  | "compose";
+  "auto" | "universal" | "nixpacks" | "railpack" | "buildpacks" | "dockerfile" | "compose";
 
 export interface BuildPackOption {
   id: BuildPackId;

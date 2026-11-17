@@ -438,7 +438,7 @@ function NewProject() {
               role="tab"
               aria-selected={isActive}
               onClick={() => setTab(t.id)}
-              className={`flex flex-1 min-w-[138px] items-center justify-center gap-2 rounded-lg px-3.5 py-2.5 text-sm font-medium whitespace-nowrap shrink-0 transition-all ${
+              className={`flex flex-1 min-w-fit items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs sm:text-[13px] font-medium whitespace-nowrap transition-all ${
                 isActive
                   ? "bg-primary text-primary-foreground shadow-md font-semibold"
                   : "text-muted-foreground hover:bg-accent/60 hover:text-foreground"

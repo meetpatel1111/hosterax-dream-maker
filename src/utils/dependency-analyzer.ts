@@ -2,13 +2,7 @@
 // and offline fallback heuristics shared across App Store and Registry Explorer.
 
 export type ManagedDbEngine =
-  | "postgres"
-  | "redis"
-  | "mysql"
-  | "mariadb"
-  | "mongodb"
-  | "clickhouse"
-  | "libsql";
+  "postgres" | "redis" | "mysql" | "mariadb" | "mongodb" | "clickhouse" | "libsql";
 
 export interface AnalyzedEnvVar {
   key: string;
@@ -298,8 +292,7 @@ export function buildConnectionEnvForDb({
       if (upperKeys.has("CLICKHOUSE_USER") && parts.user) injected.CLICKHOUSE_USER = parts.user;
       if (upperKeys.has("CLICKHOUSE_PASSWORD") && parts.password)
         injected.CLICKHOUSE_PASSWORD = parts.password;
-      if (upperKeys.has("CLICKHOUSE_DB") && parts.database)
-        injected.CLICKHOUSE_DB = parts.database;
+      if (upperKeys.has("CLICKHOUSE_DB") && parts.database) injected.CLICKHOUSE_DB = parts.database;
     }
     return injected;
   }

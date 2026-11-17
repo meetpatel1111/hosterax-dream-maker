@@ -372,8 +372,7 @@ export function DisasterRecoveryHub() {
 
   // Handler: Snapshot Named Docker Volume
   const handleSnapshotVolume = async (vol: VolumeTarget) => {
-    const volProject =
-      vol.projectName || vol.labels?.["com.docker.compose.project"] || "docker";
+    const volProject = vol.projectName || vol.labels?.["com.docker.compose.project"] || "docker";
     setSnapshottingVolume(vol.name);
     try {
       const res = await engine.call<any>("POST", "/api/backups/volumes/create", {
@@ -989,7 +988,8 @@ export function DisasterRecoveryHub() {
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Named Docker Volumes</h3>
                   <p className="text-[11px] text-muted-foreground">
-                    Snapshot &amp; restore arbitrary persistent named Docker volumes (AES-256-GCM + S3 compatible).
+                    Snapshot &amp; restore arbitrary persistent named Docker volumes (AES-256-GCM +
+                    S3 compatible).
                   </p>
                 </div>
               </div>
@@ -1000,8 +1000,8 @@ export function DisasterRecoveryHub() {
 
             {volumeTargets.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border p-6 text-center text-xs text-muted-foreground">
-                No named Docker volumes discovered yet. Volumes attached to your deployed services and
-                databases appear here automatically for instant tar.gz snapshots.
+                No named Docker volumes discovered yet. Volumes attached to your deployed services
+                and databases appear here automatically for instant tar.gz snapshots.
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

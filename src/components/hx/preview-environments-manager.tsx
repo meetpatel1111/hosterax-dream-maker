@@ -160,10 +160,7 @@ export function PreviewEnvironmentsManager() {
     const actionLabel = hibernated ? "Woken Up" : "Hibernated (Scale-to-Zero)";
 
     try {
-      await engine.call(
-        "POST",
-        `/api/previews/${encodeURIComponent(preview.id)}/${endpoint}`,
-      );
+      await engine.call("POST", `/api/previews/${encodeURIComponent(preview.id)}/${endpoint}`);
       toast.success(`Environment #${preview.pr_number} ${actionLabel}`);
       await previewsQuery.refetch();
     } catch (err: any) {
@@ -551,8 +548,8 @@ export function PreviewEnvironmentsManager() {
                   Multi-Provider Git Webhook Integration
                 </h3>
                 <p className="text-xs text-muted-foreground">
-                  Connect GitHub, GitLab, Gitea/Forgejo, or Bitbucket webhooks to automatically build
-                  pushes and spin up ephemeral PR/MR previews.
+                  Connect GitHub, GitLab, Gitea/Forgejo, or Bitbucket webhooks to automatically
+                  build pushes and spin up ephemeral PR/MR previews.
                 </p>
               </div>
             </div>
@@ -614,8 +611,8 @@ export function PreviewEnvironmentsManager() {
                 </div>
               </label>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <label className="block space-y-1">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <label className="block space-y-1 sm:col-span-4">
                   <span className="font-medium text-foreground">Event Header</span>
                   <input
                     readOnly
@@ -623,14 +620,12 @@ export function PreviewEnvironmentsManager() {
                     className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs outline-none"
                   />
                 </label>
-                <label className="block space-y-1">
+                <div className="block space-y-1 sm:col-span-8">
                   <span className="font-medium text-foreground">Signature Verification</span>
-                  <input
-                    readOnly
-                    value={`${activeProviderSpec.signatureHeader} · ${activeProviderSpec.signatureMethod}`}
-                    className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs outline-none"
-                  />
-                </label>
+                  <div className="w-full rounded-md border border-input bg-input/40 px-3 py-2 font-mono text-xs break-all text-foreground">
+                    {activeProviderSpec.signatureHeader} · {activeProviderSpec.signatureMethod}
+                  </div>
+                </div>
               </div>
 
               <div className="rounded-lg bg-surface/50 p-4 border border-border space-y-2">
@@ -661,8 +656,8 @@ export function PreviewEnvironmentsManager() {
                 Live {activeProviderSpec.label} Webhook Delivery Simulator
               </h3>
               <p className="text-xs text-muted-foreground">
-                Dispatch provider-native {activeProviderSpec.label} webhook payloads directly to
-                the HosteraX engine receiver to verify ephemeral preview provisioning.
+                Dispatch provider-native {activeProviderSpec.label} webhook payloads directly to the
+                HosteraX engine receiver to verify ephemeral preview provisioning.
               </p>
             </div>
 

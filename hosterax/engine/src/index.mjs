@@ -3944,14 +3944,15 @@ const server = http.createServer((req, res) =>
   }
 
   // Git provider webhooks (GitHub, GitLab, Gitea/Forgejo, Bitbucket) — public, signature verified.
+  let webhookMatch;
   if (
-    (m = url.pathname.match(
+    (webhookMatch = url.pathname.match(
       /^\/webhooks\/(github|gitlab|gitea|forgejo|bitbucket)(?:\/([^/]+))?$/i,
     )) &&
     req.method === "POST"
   ) {
-    const provider = normalizeGitProvider(m[1]);
-    const project = m[2] ? decodeURIComponent(m[2]) : null;
+    const provider = normalizeGitProvider(webhookMatch[1]);
+    const project = webhookMatch[2] ? decodeURIComponent(webhookMatch[2]) : null;
     let raw;
     try {
       raw = await readRawBody(req, 5 * 1024 * 1024);

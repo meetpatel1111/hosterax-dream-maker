@@ -97,8 +97,7 @@ export function buildApiWebhookSimulatorPayload({
 
   if (provider === "gitlab") {
     const state = action === "closed" ? "closed" : "opened";
-    const glAction =
-      action === "synchronize" ? "update" : action === "closed" ? "close" : "open";
+    const glAction = action === "synchronize" ? "update" : action === "closed" ? "close" : "open";
     return {
       endpointPath: `/api/projects/${cleanProj}/webhooks/gitlab`,
       headers: { "x-gitlab-event": "Merge Request Hook" },
@@ -150,9 +149,7 @@ export function buildApiWebhookSimulatorPayload({
   const isGitea = provider === "gitea" || provider === "forgejo";
   return {
     endpointPath: `/api/projects/${cleanProj}/webhooks/${isGitea ? "gitea" : "github"}`,
-    headers: isGitea
-      ? { "x-gitea-event": "pull_request" }
-      : { "x-github-event": "pull_request" },
+    headers: isGitea ? { "x-gitea-event": "pull_request" } : { "x-github-event": "pull_request" },
     body: {
       action,
       number: prNumber,

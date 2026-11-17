@@ -1232,7 +1232,9 @@ export const PRESET_STACKS: {
             { key: "POSTGRES_DB", value: "authentik" },
             { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_POSTGRES}" },
           ],
-          volumes: [{ hostPath: "ak_pgdata", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "ak_pgdata", containerPath: "/var/lib/postgresql/data", mode: "rw" },
+          ],
           dependsOn: [],
           restartPolicy: "unless-stopped",
           isPublic: false,
@@ -1424,7 +1426,9 @@ export const PRESET_STACKS: {
             { key: "REDIS_HOSTNAME", value: "redis" },
             { key: "IMMICH_MACHINE_LEARNING_URL", value: "http://immich-machine-learning:3003" },
           ],
-          volumes: [{ hostPath: "immich_upload", containerPath: "/usr/src/app/upload", mode: "rw" }],
+          volumes: [
+            { hostPath: "immich_upload", containerPath: "/usr/src/app/upload", mode: "rw" },
+          ],
           dependsOn: ["database", "redis", "immich-machine-learning"],
           restartPolicy: "unless-stopped",
           isPublic: true,
@@ -1453,7 +1457,9 @@ export const PRESET_STACKS: {
             { key: "POSTGRES_DB", value: "immich" },
             { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_IMMICHDB}" },
           ],
-          volumes: [{ hostPath: "immich_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "immich_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" },
+          ],
           dependsOn: [],
           restartPolicy: "unless-stopped",
           isPublic: false,
@@ -1783,7 +1789,8 @@ export const PRESET_STACKS: {
     icon: "💼",
     stack: {
       name: "twenty-crm",
-      description: "Modern open-source Salesforce alternative with customizable objects and workflows.",
+      description:
+        "Modern open-source Salesforce alternative with customizable objects and workflows.",
       services: [
         {
           id: "svc-tw-srv",
@@ -1837,7 +1844,9 @@ export const PRESET_STACKS: {
             { key: "POSTGRES_DB", value: "default" },
             { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_TWENTY}" },
           ],
-          volumes: [{ hostPath: "twenty_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "twenty_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" },
+          ],
           dependsOn: [],
           restartPolicy: "unless-stopped",
           isPublic: false,
@@ -1913,7 +1922,9 @@ export const PRESET_STACKS: {
             { key: "POSTGRES_DB", value: "plane" },
             { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_PLANE}" },
           ],
-          volumes: [{ hostPath: "plane_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "plane_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" },
+          ],
           dependsOn: [],
           restartPolicy: "unless-stopped",
           isPublic: false,
@@ -2259,7 +2270,9 @@ export const PRESET_STACKS: {
             { key: "POSTGRES_DB", value: "gitea" },
             { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_GITEA}" },
           ],
-          volumes: [{ hostPath: "gitea_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "gitea_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" },
+          ],
           dependsOn: [],
           restartPolicy: "unless-stopped",
           isPublic: false,
@@ -2305,7 +2318,9 @@ export const PRESET_STACKS: {
             { key: "database__connection__password", value: "${SERVICE_PASSWORD_GHOSTDB}" },
             { key: "database__connection__database", value: "ghost" },
           ],
-          volumes: [{ hostPath: "ghost_content", containerPath: "/var/lib/ghost/content", mode: "rw" }],
+          volumes: [
+            { hostPath: "ghost_content", containerPath: "/var/lib/ghost/content", mode: "rw" },
+          ],
           dependsOn: ["mysql"],
           restartPolicy: "unless-stopped",
           isPublic: true,
@@ -2372,7 +2387,9 @@ export const PRESET_STACKS: {
             { key: "POSTGRES_DB", value: "umami" },
             { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_UMAMI}" },
           ],
-          volumes: [{ hostPath: "umami_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "umami_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" },
+          ],
           dependsOn: [],
           restartPolicy: "unless-stopped",
           isPublic: false,
@@ -2440,8 +2457,7 @@ export const PRESET_STACKS: {
     icon: "☁️",
     stack: {
       name: "nextcloud-hub",
-      description:
-        "Self-hosted file sync, calendar, contacts, and team collaboration platform.",
+      description: "Self-hosted file sync, calendar, contacts, and team collaboration platform.",
       services: [
         {
           id: "svc-nx-app",
@@ -2588,7 +2604,9 @@ export const PRESET_STACKS: {
             { key: "REDIS_URL", value: "redis://redis:6379" },
             { key: "FILE_STORAGE", value: "local" },
           ],
-          volumes: [{ hostPath: "outline_data", containerPath: "/var/lib/outline/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "outline_data", containerPath: "/var/lib/outline/data", mode: "rw" },
+          ],
           dependsOn: ["postgres", "redis"],
           restartPolicy: "unless-stopped",
           isPublic: true,
@@ -2605,7 +2623,9 @@ export const PRESET_STACKS: {
             { key: "POSTGRES_DB", value: "outline" },
             { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_OUTLINE}" },
           ],
-          volumes: [{ hostPath: "outline_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "outline_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" },
+          ],
           dependsOn: [],
           restartPolicy: "unless-stopped",
           isPublic: false,
@@ -3075,7 +3095,9 @@ export const PRESET_STACKS: {
             { key: "POSTGRES_DB", value: "medusa" },
             { key: "POSTGRES_PASSWORD", value: "${SERVICE_PASSWORD_MEDUSA}" },
           ],
-          volumes: [{ hostPath: "medusa_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" }],
+          volumes: [
+            { hostPath: "medusa_pg", containerPath: "/var/lib/postgresql/data", mode: "rw" },
+          ],
           dependsOn: [],
           restartPolicy: "unless-stopped",
           isPublic: false,
@@ -3097,4 +3119,3 @@ export const PRESET_STACKS: {
     },
   },
 ];
-

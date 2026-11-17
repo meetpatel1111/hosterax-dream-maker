@@ -498,7 +498,7 @@ export function VisualStackBuilder({
         </div>
 
         {/* Category Filter Strip */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
             onClick={() => setPresetCategory("all")}
@@ -790,7 +790,7 @@ export function VisualStackBuilder({
             </div>
 
             {/* Quick Add Presets Bar */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
               <span className="text-[11px] text-muted-foreground whitespace-nowrap">
                 Quick add:
               </span>
